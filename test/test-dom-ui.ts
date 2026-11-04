@@ -92,6 +92,29 @@ console.log('--- DOM UI Layer Verification ---');
       }
     }
 
+    get firstChild(): MockElement | null {
+      return this.children[0] ?? null;
+    }
+
+    appendChild(child: MockElement): MockElement {
+      this.children.push(child);
+      return child;
+    }
+
+    insertBefore(newNode: MockElement, refNode: MockElement | null): MockElement {
+      if (!refNode) {
+        this.children.push(newNode);
+        return newNode;
+      }
+      const idx = this.children.indexOf(refNode);
+      if (idx >= 0) {
+        this.children.splice(idx, 0, newNode);
+      } else {
+        this.children.push(newNode);
+      }
+      return newNode;
+    }
+
     getAttribute(attr: string): string | null {
       return this.attributes[attr] ?? null;
     }
@@ -147,7 +170,7 @@ console.log('--- DOM UI Layer Verification ---');
   const mockDoc = {
     body: mockBody,
     createElement: (tag: string) => new MockElement(tag),
-    getElementById: (id: string) => elementsById[id] ?? null,
+    getElementById: (id: string) => elementsById[id] ?? mockBody.querySelector('#' + id) ?? null,
   };
 
   (globalThis as any).document = mockDoc;
@@ -270,7 +293,7 @@ console.log('--- DOM UI Layer Verification ---');
   );
 
   // 6. インスペクタボタンの存在検証
-  const inspectBtn = container.querySelector('#dom-inspect-btn');
+  const inspectBtn = container.querySelector('#dom-inspect-btn') ?? mockBody.querySelector('#dom-inspect-btn');
   assert.ok(inspectBtn, 'Inspector button (#dom-inspect-btn) must exist in HUD header');
 
   // インスペクタ開閉メソッドの安全動作検証

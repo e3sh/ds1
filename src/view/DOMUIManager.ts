@@ -54,6 +54,7 @@ export interface DOMUICallbacks {
 
 export class DOMUIManager {
   private container: HTMLElement | null = null;
+  private topBarEl: HTMLElement | null = null;
   private callbacks: DOMUICallbacks = {};
   private isTacticalMarkerEnabled: boolean = true;
 
@@ -151,7 +152,11 @@ export class DOMUIManager {
     if (!target) {
       target = document.createElement('div');
       target.id = containerId;
-      document.body.appendChild(target);
+      if (typeof document.body?.appendChild === 'function') {
+        document.body.appendChild(target);
+      } else if (Array.isArray((document.body as any)?.children)) {
+        (document.body as any).children.push(target);
+      }
     }
     this.container = target;
     this.buildTopBar();
@@ -166,14 +171,19 @@ export class DOMUIManager {
       topBar.id = 'game-top-bar';
       topBar.className = 'game-top-bar';
       const app = document.getElementById('app');
-      if (app && app.firstChild) {
+      if (app && app.firstChild && typeof app.insertBefore === 'function') {
         app.insertBefore(topBar, app.firstChild);
-      } else if (app) {
+      } else if (app && typeof app.appendChild === 'function') {
         app.appendChild(topBar);
-      } else {
-        document.body.insertBefore(topBar, document.body.firstChild);
+      } else if (document.body && typeof document.body.insertBefore === 'function') {
+        document.body.insertBefore(topBar, document.body.firstChild ?? null);
+      } else if (document.body && typeof document.body.appendChild === 'function') {
+        document.body.appendChild(topBar);
+      } else if (Array.isArray((document.body as any)?.children)) {
+        (document.body as any).children.unshift(topBar);
       }
     }
+    this.topBarEl = topBar;
 
     topBar.innerHTML = `
       <div class="top-bar-branding">
@@ -612,11 +622,11 @@ export class DOMUIManager {
     this.targetStatusTagEl = this.container.querySelector('#dom-target-status-tag');
     this.targetBodyEl = this.container.querySelector('#dom-target-body');
 
-    this.markerBtnEl = (document.getElementById('dom-marker-btn') ?? this.container.querySelector('#dom-marker-btn')) as HTMLButtonElement | null;
-    this.soundBtnEl = (document.getElementById('dom-sound-btn') ?? this.container.querySelector('#dom-sound-btn')) as HTMLButtonElement | null;
-    this.giveupBtnEl = (document.getElementById('dom-giveup-btn') ?? this.container.querySelector('#dom-giveup-btn')) as HTMLButtonElement | null;
-    this.saveQuitBtnEl = (document.getElementById('dom-savequit-btn') ?? this.container.querySelector('#dom-savequit-btn')) as HTMLButtonElement | null;
-    this.inspectBtnEl = (document.getElementById('dom-inspect-btn') ?? this.container.querySelector('#dom-inspect-btn')) as HTMLButtonElement | null;
+    this.markerBtnEl = (document.getElementById('dom-marker-btn') ?? this.topBarEl?.querySelector('#dom-marker-btn') ?? this.container.querySelector('#dom-marker-btn')) as HTMLButtonElement | null;
+    this.soundBtnEl = (document.getElementById('dom-sound-btn') ?? this.topBarEl?.querySelector('#dom-sound-btn') ?? this.container.querySelector('#dom-sound-btn')) as HTMLButtonElement | null;
+    this.giveupBtnEl = (document.getElementById('dom-giveup-btn') ?? this.topBarEl?.querySelector('#dom-giveup-btn') ?? this.container.querySelector('#dom-giveup-btn')) as HTMLButtonElement | null;
+    this.saveQuitBtnEl = (document.getElementById('dom-savequit-btn') ?? this.topBarEl?.querySelector('#dom-savequit-btn') ?? this.container.querySelector('#dom-savequit-btn')) as HTMLButtonElement | null;
+    this.inspectBtnEl = (document.getElementById('dom-inspect-btn') ?? this.topBarEl?.querySelector('#dom-inspect-btn') ?? this.container.querySelector('#dom-inspect-btn')) as HTMLButtonElement | null;
     this.inspectorModal = new InspectorModal();
     this.titleModalEl = this.container.querySelector('#dom-title-modal');
     this.gameoverModalEl = this.container.querySelector('#dom-gameover-modal');
@@ -641,7 +651,7 @@ export class DOMUIManager {
     this.openCustomBtnEl = this.container.querySelector('#dom-open-custom-btn');
     this.customBackBtnEl = this.container.querySelector('#dom-custom-back-btn');
     this.autoplayControlsEl = this.container.querySelector('#dom-autoplay-controls');
-    this.autoplayToggleBtnEl = (document.getElementById('dom-autoplay-toggle-btn') ?? this.container.querySelector('#dom-autoplay-toggle-btn')) as HTMLButtonElement | null;
+    this.autoplayToggleBtnEl = (document.getElementById('dom-autoplay-toggle-btn') ?? this.topBarEl?.querySelector('#dom-autoplay-toggle-btn') ?? this.container.querySelector('#dom-autoplay-toggle-btn')) as HTMLButtonElement | null;
     this.autoplayTakeoverBtnEl = this.container.querySelector('#dom-autoplay-takeover-btn');
     this.autoplayExitBtnEl = this.container.querySelector('#dom-autoplay-exit-btn');
     this.autoplaySpeedBtns[1] = this.container.querySelector('#dom-autoplay-spd-1');
@@ -1154,7 +1164,7 @@ export class DOMUIManager {
     const shareInput = this.container?.querySelector('#dom-share-code-input') as HTMLInputElement | null;
     const shareStartBtn = this.container?.querySelector('#dom-share-code-start-btn') as HTMLElement | null;
 
-    const hudSavePresetBtn = (document.getElementById('dom-save-preset-btn') ?? this.container?.querySelector('#dom-save-preset-btn')) as HTMLElement | null;
+    const hudSavePresetBtn = (document.getElementById('dom-save-preset-btn') ?? this.topBarEl?.querySelector('#dom-save-preset-btn') ?? this.container?.querySelector('#dom-save-preset-btn')) as HTMLElement | null;
     const gameoverSaveBtn = this.container?.querySelector('#dom-gameover-save-preset-btn') as HTMLElement | null;
     const clearSaveBtn = this.container?.querySelector('#dom-clear-save-preset-btn') as HTMLElement | null;
 

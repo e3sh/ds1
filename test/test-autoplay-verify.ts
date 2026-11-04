@@ -79,6 +79,29 @@ class MockElement {
     }
   }
 
+  get firstChild(): MockElement | null {
+    return this.children[0] ?? null;
+  }
+
+  appendChild(child: MockElement): MockElement {
+    this.children.push(child);
+    return child;
+  }
+
+  insertBefore(newNode: MockElement, refNode: MockElement | null): MockElement {
+    if (!refNode) {
+      this.children.push(newNode);
+      return newNode;
+    }
+    const idx = this.children.indexOf(refNode);
+    if (idx >= 0) {
+      this.children.splice(idx, 0, newNode);
+    } else {
+      this.children.push(newNode);
+    }
+    return newNode;
+  }
+
   getAttribute(attr: string): string | null {
     return this.attributes[attr] ?? null;
   }
@@ -130,7 +153,7 @@ console.log('Testing 1: Slimmed title modal and isolated custom tuning modal str
   const mockDoc = {
     body: mockBody,
     createElement: (tag: string) => new MockElement(tag),
-    getElementById: (id: string) => elementsById[id] ?? null,
+    getElementById: (id: string) => elementsById[id] ?? mockBody.querySelector('#' + id) ?? null,
   };
   (globalThis as any).document = mockDoc;
 
