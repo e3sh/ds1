@@ -1,0 +1,26 @@
+{
+  "name": "ds1ish",
+  "private": true,
+  "version": "1.0.0",
+  "description": "DS1ish - A Retro & Modern Dragon Slayer-like Procedural Action-Puzzle RPG",
+  "license": "MIT",
+  "homepage": "https://e3sh.github.io/ds1/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/e3sh/ds1.git"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "tsx test/run-all.ts",
+    "simulate": "tsx scripts/simulate.ts",
+    "evaluate": "tsx scripts/evaluate-params.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.2"
+  }
+}

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="DS1ish - A Retro & Modern Dragon Slayer-like Action-Puzzle RPG (1984年PC-8801版『ドラゴンスレイヤー』のコアメカニクスをベースにプロシージャル生成とモダンQoLを統合した非公式ファンメイドWebゲーム)" />
+    <title>DS1ish - Dragon Slayer-like Action Puzzle RPG</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- 画面最上段：ゲームタイトルとアクションボタングループのトップバー -->
+      <header id="game-top-bar" class="game-top-bar"></header>
+
+      <!-- メインコンテンツ領域（2カラム） -->
+      <div id="game-main-content">
+        <!-- メインゲームエリア（左側/中央） -->
+        <div id="main-column">
+          <div id="game-container">
+            <canvas id="game-canvas" width="480" height="352"></canvas>
+          </div>
+          <div id="help-panel">
+            <p><strong>[操作方法]</strong> 矢印キー / WASD / テンキー: 移動 (8方向対応) | Space: 待機 / 拾う / 置く</p>
+            <p>[魔法操作] M / 1〜9: 魔法選択 | X または Enter: 魔法発動 | T: マーカー切替 | Esc: マップ閉じ</p>
+          </div>
+          <!-- 装備・アイテム＆足元ガイドバッジ（マップ画面下・ガタつき防止） -->
+          <div id="hero-equipment-strip" class="status-tags-row">
+            <span class="tag-badge" id="dom-badge-item">ITEM: NONE</span>
+            <span class="tag-badge sword-badge" id="dom-badge-sword">NO SWORD</span>
+            <span class="tag-badge" id="dom-special-status"></span>
+          </div>
+        </div>
+
+        <!-- DOM UI層（右側） -->
+        <div id="dom-ui-layer"></div>
+      </div>
+    </div>
+    <script type="module" src="./src/index.ts"></script>
+  </body>
+</html>

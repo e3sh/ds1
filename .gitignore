@@ -1,0 +1,25 @@
+# 依存関係
+node_modules/
+
+# ビルド成果物
+dist/
+
+# ログ・キャッシュ
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.eslintcache
+
+# 環境変数・機密情報
+.env
+.env.local
+.env.*.local
+
+# OS・エディタ固有ファイル
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
