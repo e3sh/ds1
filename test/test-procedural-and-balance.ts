@@ -6,6 +6,7 @@ import { ChestSystem } from '../src/systems/ChestSystem.js';
 import { CombatSystem } from '../src/systems/CombatSystem.js';
 import { ProceduralMapGenerator } from '../src/systems/ProceduralMapGenerator.js';
 import { GameEngine } from '../src/core/GameEngine.js';
+import { TuningPresetResolver } from '../src/config/TuningPresetResolver.js';
 
 console.log('--- Phase 8 & Procedural Standard Dungeon Verification ---');
 
@@ -191,6 +192,57 @@ console.log('Testing 4: Procedural Standard Map generation, determinism & solvab
   assert.strictEqual(engineReport.isSolvable, true);
 
   console.log('✓ 4. Procedural Standard Map generation & solvability across 15 configurations verified.');
+}
+
+// ==========================================
+// 5. 完全オリジナル加算モード vs 指数インフレモードの検証
+// ==========================================
+console.log('Testing 5: Authentic Classic Additive Mode vs Exponential Inflation Mode...');
+{
+  const classicPreset = TuningPresetResolver.getAuthenticClassicPreset();
+  assert.strictEqual(classicPreset.progressionConfig.ruleMode, 'CLASSIC');
+  assert.strictEqual(classicPreset.progressionConfig.powerStoneGrowthRate, 0);
+  assert.strictEqual(classicPreset.progressionConfig.powerStoneFlatBonus, 2500);
+  assert.strictEqual(classicPreset.progressionConfig.coinScalingMode, 'LINEAR');
+  assert.strictEqual(classicPreset.progressionConfig.dragonDefRatio, 0.025);
+
+  // パワーストーン成長比較
+  // A. クラシック加算モード: 常に +2,500 固定 (初代仕様)
+  let classicStr = 10;
+  for (let i = 0; i < 15; i++) {
+    classicStr += Player.calculatePowerStoneGain(classicStr, classicPreset.progressionConfig);
+  }
+  assert.strictEqual(classicStr, 37510, 'Classic additive mode should result in exactly 37,510 STR after 15 stones (+2,500 each)');
+  // 160個奉納で等倍ドラゴン首 DEF 400,000 を突破
+  let fullClassicStr = 10;
+  for (let i = 0; i < 160; i++) {
+    fullClassicStr += Player.calculatePowerStoneGain(fullClassicStr, classicPreset.progressionConfig);
+  }
+  assert.strictEqual(fullClassicStr, 400010, 'Classic additive mode should result in 400,010 STR after 160 stones, defeating 400,000 DEF dragon');
+
+  // B. 指数モード: 15個で 350,000 超のインフレ
+  const expPreset = TuningPresetResolver.resolve('STANDARD_ROOMS');
+  assert.strictEqual(expPreset.progressionConfig.ruleMode, 'EXPONENTIAL');
+  let expStr = 10;
+  for (let i = 0; i < 15; i++) {
+    expStr += Player.calculatePowerStoneGain(expStr, expPreset.progressionConfig);
+  }
+  assert.ok(expStr >= 350000, 'Exponential mode should reach >= 350,000 STR');
+
+  // コイン機能比較
+  const playerClassic = new Player({ experience: 2000 });
+  playerClassic.gold = 5;
+  const resClassic = playerClassic.healAtHome(classicPreset.progressionConfig);
+  assert.strictEqual(resClassic.goldExpGained, 0, 'Classic mode gives no EXP from coins');
+  assert.strictEqual(resClassic.goldBonusHp, 50, 'Classic mode gives exactly gold * 10 HP');
+
+  const playerExp = new Player({ experience: 2000 });
+  playerExp.gold = 5;
+  const resExp = playerExp.healAtHome(expPreset.progressionConfig);
+  assert.ok(resExp.goldExpGained >= 1500, 'Exponential mode gives non-combat EXP from coins');
+  assert.ok(resExp.goldBonusHp >= 1000, 'Exponential mode gives percentage overheal HP from coins');
+
+  console.log('✓ 5. Authentic Classic Additive Mode vs Exponential Inflation Mode verified.');
 }
 
 console.log('--- ✓ All Phase 8 & Procedural Dungeon Tests Passed Successfully! ---');

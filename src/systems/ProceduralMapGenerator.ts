@@ -7,6 +7,7 @@ import {
   DungeonArchetype,
   DungeonTuningParams,
   ResolvedDungeonTuningParams,
+  RuleMode,
 } from '../models/Types.js';
 import { WorldMap } from '../models/WorldMap.js';
 import { Player } from '../models/Player.js';
@@ -27,6 +28,7 @@ export interface ProceduralMapOptions {
   pacing?: PlayPacingMode;
   topology?: DungeonTopology;
   archetype?: DungeonArchetype;
+  ruleMode?: RuleMode;
   chestCount?: number;
   graveCount?: number;
   dragonCenter?: Position;
@@ -232,11 +234,18 @@ export class ProceduralMapGenerator {
     const difficulty: MapDifficulty = options?.difficulty ?? 'NORMAL';
     const pacing: PlayPacingMode = options?.pacing ?? 'STANDARD';
     const archetype: DungeonArchetype = options?.archetype ?? 'BALANCED';
+    const effectiveOverrides: DungeonTuningParams = {
+      ...options?.tuningParams,
+      progressionConfig: {
+        ...options?.tuningParams?.progressionConfig,
+        ...(options?.ruleMode ? { ruleMode: options.ruleMode } : {}),
+      },
+    };
     const tuningParams = TuningPresetResolver.resolve(
       topology,
       difficulty,
       pacing,
-      options?.tuningParams,
+      effectiveOverrides,
       archetype
     );
 

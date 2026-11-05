@@ -32,5 +32,8 @@ import './test-autoplay-continuous-warp.js';
 import './test-autoplay-isolated-target.js';
 import './test-home-relocation-and-respawn.js';
 import './test-autoplay-home-relocation.js';
+import './test-autoplay-combat-control.js';
+import './test-autoplay-pingpong-telemetry.js';
+import './test-autoplay-threat-and-potion.js';
 
 

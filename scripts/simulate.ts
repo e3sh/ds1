@@ -1,5 +1,5 @@
 import { SimulationRunner, SimulationConfig } from '../src/simulation/SimulationRunner.js';
-import { DungeonTopology, MapDifficulty, PlayPacingMode } from '../src/models/Types.js';
+import { DungeonTopology, MapDifficulty, PlayPacingMode, RuleMode } from '../src/models/Types.js';
 import { BotSkillProfile, GraveSealPolicy, GraveSealTiming } from '../src/ai/AutoPlayBot.js';
 
 function parseArgs(): SimulationConfig {
@@ -38,6 +38,9 @@ function parseArgs(): SimulationConfig {
       if (!raw.includes('=')) i++;
     } else if (key === '--pacing' && val) {
       config.pacing = val as PlayPacingMode;
+      if (!raw.includes('=')) i++;
+    } else if (key === '--ruleMode' && val) {
+      config.ruleMode = val as RuleMode;
       if (!raw.includes('=')) i++;
     } else if (key === '--botProfile' && val) {
       config.botProfile = val as BotSkillProfile;

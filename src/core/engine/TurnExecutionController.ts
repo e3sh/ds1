@@ -487,7 +487,12 @@ export class TurnExecutionController {
       this.engine.getAudio().playHomeHeal();
       let msg = `我が家に帰還！ HPが全快（EXP基準: ${home.newHp.toLocaleString()}）した！`;
       if (home.goldConverted > 0) {
-        msg += ` 所持コイン${home.goldConverted}枚がHPへ+${home.goldBonusHp}上乗せされた！`;
+        msg += ` 所持コイン${home.goldConverted}枚を奉納！ HP+${home.goldBonusHp.toLocaleString()}上乗せ`;
+        if (home.goldExpGained > 0) {
+          msg += `＆EXP+${home.goldExpGained.toLocaleString()}獲得！`;
+        } else {
+          msg += `！`;
+        }
       }
       if (home.powerStoneConverted) {
         msg += ` パワーストーンを奉納しSTR+${home.strGained}！`;

@@ -6,6 +6,7 @@ export interface PlayerInitOptions {
   hp?: number;
   strength?: number;
   experience?: number;
+  progressionConfig?: DungeonTuningParams['progressionConfig'];
 }
 
 export interface PlayerSaveData {
@@ -36,6 +37,7 @@ export interface HomeEventResult {
   newHp: number;
   goldConverted: number;
   goldBonusHp: number;
+  goldExpGained: number;
   powerStoneConverted: boolean;
   strGained: number;
   crownConverted: boolean;
@@ -75,6 +77,9 @@ export class Player {
   // 8歩周期カウンター
   public stepCountSinceStone: number;
 
+  // ゲームルール/進行チューニング設定のキャッシュ
+  public activeProgressionConfig?: DungeonTuningParams['progressionConfig'];
+
   constructor(opts?: PlayerInitOptions) {
     this.pos = { x: opts?.x ?? 8, y: opts?.y ?? 8 };
     this.dir = 'DOWN';
@@ -99,6 +104,7 @@ export class Player {
     this.deathInfo = null;
 
     this.stepCountSinceStone = 0;
+    this.activeProgressionConfig = opts?.progressionConfig;
   }
 
   public reset(opts?: PlayerInitOptions): void {
@@ -122,8 +128,10 @@ export class Player {
     this.canDiagonal = false;
     this.isStageCleared = false;
     this.deathInfo = null;
-
     this.stepCountSinceStone = 0;
+    if (opts?.progressionConfig !== undefined) {
+      this.activeProgressionConfig = opts.progressionConfig;
+    }
   }
 
   public takeDamage(dmg: number, source?: DamageSource, currentTurn?: number): void {
@@ -178,10 +186,12 @@ export class Player {
   }
 
   /**
-   * パワーストーン1個奉納時のSTR上昇量を算出 (インフレ成長曲線)
-   * - 1個目 (現在STR < 1,000): +1,000 (序盤初期ブースト)
-   * - 2個目以降 (現在STR >= 1,000): floor(現在STR * rate) + flat (上限 655,350)
-   *   デフォルト: rate=0.36, flat=2000 (約15個でドラゴン首 DEF 300,000〜400,000 を突破可能)
+   * パワーストーン1個奉納時のSTR上昇量を算出
+   * - クラシック加算モード (ruleMode === 'CLASSIC' または rate === 0): 常に固定 flatBonus (+2,500)
+   * - 指数インフレモード (ruleMode === 'EXPONENTIAL'):
+   *   - 1個目 (現在STR < 1,000): +1,000 (序盤初期ブースト)
+   *   - 2個目以降 (現在STR >= 1,000): floor(現在STR * rate) + flat (上限 655,350)
+   *     デフォルト: rate=0.36, flat=2000
    */
   public static calculatePowerStoneGain(
     currentStrength: number,
@@ -189,6 +199,13 @@ export class Player {
   ): number {
     const MAX_STR = Player.MAX_STR;
     if (currentStrength >= MAX_STR) return 0;
+
+    const isClassic = progressionConfig?.ruleMode === 'CLASSIC' || (progressionConfig?.powerStoneGrowthRate === 0);
+    if (isClassic) {
+      const flat = progressionConfig?.powerStoneFlatBonus ?? 2500;
+      return Math.min(flat, MAX_STR - currentStrength);
+    }
+
     const rate = progressionConfig?.powerStoneGrowthRate ?? 0.36;
     const flat = progressionConfig?.powerStoneFlatBonus ?? 2000;
     const rawGain =
@@ -199,9 +216,13 @@ export class Player {
   }
 
   public healAtHome(progressionConfig?: DungeonTuningParams['progressionConfig']): HomeEventResult {
+    const config = progressionConfig ?? this.activeProgressionConfig;
+    if (progressionConfig) {
+      this.activeProgressionConfig = progressionConfig;
+    }
+
     const prevHp = this.hp;
     const goldConverted = this.gold;
-    const goldBonusHp = this.gold * 10;
     const powerStoneConverted = this.holdItem === 'POWER_STONE';
     const crownConverted = this.holdItem === 'CROWN';
     const deathPurified = this.hasDeath;
@@ -217,6 +238,26 @@ export class Player {
       this.isStageCleared = true;
     }
 
+    // コイン（GOLD）奉納による非戦闘EXP加算 & オーバーヒール
+    let goldExpGained = 0;
+    let goldBonusHp = 0;
+    if (goldConverted > 0) {
+      const isExponentialMode = config?.coinScalingMode === 'EXPONENTIAL' ||
+        (config?.ruleMode === 'EXPONENTIAL') ||
+        (!config?.ruleMode && (config?.expCurveMode === 'DAMPED_POWER' || config?.expCurveMode === 'PHASE_CAPPED'));
+      if (isExponentialMode) {
+        // 指数モード: 1枚につき固定300 EXP + 現在EXPの2%スケーリング
+        const rawExp = goldConverted * 300 + Math.floor(this.experience * 0.02 * goldConverted);
+        goldExpGained = this.addExperience(rawExp);
+        // オーバーヒールHP: 1枚につき固定100 HP + 新EXPの5%スケーリング
+        goldBonusHp = goldConverted * 100 + Math.floor(this.experience * 0.05 * goldConverted);
+      } else {
+        // クラシック仕様 (CLASSIC_LINEAR または ruleMode === 'CLASSIC'): 1枚につきHP+10
+        goldExpGained = 0;
+        goldBonusHp = goldConverted * 10;
+      }
+    }
+
     // 我が家に帰還時の回復: EXPが基本、GOLDによる一時上乗せ（上限 655,350）
     this.maxHp = Math.min(Player.MAX_HP, this.experience + goldBonusHp);
     this.hp = this.maxHp;
@@ -226,7 +267,7 @@ export class Player {
     let strGained = 0;
     // パワーストーンを持っていればインフレ成長曲線に基づきSTR上昇
     if (powerStoneConverted) {
-      strGained = Player.calculatePowerStoneGain(this.strength, progressionConfig);
+      strGained = Player.calculatePowerStoneGain(this.strength, config);
       this.strength += strGained;
       this.holdItem = 'NONE';
     }
@@ -243,6 +284,7 @@ export class Player {
       newHp: this.hp,
       goldConverted,
       goldBonusHp,
+      goldExpGained,
       powerStoneConverted,
       strGained,
       crownConverted,

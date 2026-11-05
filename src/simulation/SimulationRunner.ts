@@ -7,6 +7,7 @@ import {
   DungeonTopology,
   MapDifficulty,
   PlayPacingMode,
+  RuleMode,
 } from '../models/Types.js';
 
 export interface SimulationConfig {
@@ -15,6 +16,7 @@ export interface SimulationConfig {
   topology?: DungeonTopology;
   difficulty?: MapDifficulty;
   pacing?: PlayPacingMode;
+  ruleMode?: RuleMode;
   botProfile?: BotSkillProfile;
   baseSeed?: number;
   strategyTuning?: BotStrategyTuning;
@@ -57,6 +59,7 @@ export class SimulationRunner {
         topology,
         difficulty,
         pacing,
+        ruleMode: config.ruleMode,
       });
 
       const bot = new AutoPlayBot({

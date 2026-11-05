@@ -54,6 +54,10 @@ export class BotNavigator {
     this.unreachableTargets.clear();
   }
 
+  public getUnreachableCount(): number {
+    return this.unreachableTargets.size;
+  }
+
   public updateUnreachableTargets(): void {
     for (const [key, remaining] of this.unreachableTargets.entries()) {
       if (remaining <= 1) {
@@ -882,8 +886,8 @@ export class BotNavigator {
     const candidates: { enemy: EnemyInstance; dist: number }[] = [];
     for (const enemy of enemies) {
       if (!enemy.isAlive || enemy.isPermanentlyFrozen) continue;
-      const threat = ThreatEvaluator.evaluateThreat(player, enemy);
-      if (threat === 'ONE_SHOT' || threat === 'SAFE') {
+      const details = ThreatEvaluator.evaluateThreatDetails(player, enemy);
+      if ((details.overallThreat === 'ONE_SHOT' || details.overallThreat === 'SAFE') && !details.isLethalOneShot) {
         const dist = map.getTorusDistance(player.pos, enemy.pos).manhattan;
         candidates.push({ enemy, dist });
       }

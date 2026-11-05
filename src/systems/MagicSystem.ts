@@ -108,7 +108,7 @@ export class MagicSystem {
         return this.castJump(player, map, ghosts);
 
       case 'RETURN':
-        return this.castReturn(player, map);
+        return this.castReturn(player, map, systemInfo);
 
       case 'MAP':
         return this.castMap(player);
@@ -372,10 +372,10 @@ export class MagicSystem {
   /**
    * RETURN: 本物の我が家へ瞬時テレポート
    */
-  private static castReturn(player: Player, map: WorldMap): CastResult {
+  private static castReturn(player: Player, map: WorldMap, systemInfo?: SystemSaveData): CastResult {
     player.magic = Math.max(0, player.magic - 1);
     player.pos = { ...map.homePos };
-    MovementSystem.lastHomeEvent = player.healAtHome();
+    MovementSystem.lastHomeEvent = player.healAtHome(systemInfo?.tuningParams?.progressionConfig);
 
     return {
       success: true,

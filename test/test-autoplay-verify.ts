@@ -188,6 +188,7 @@ console.log('Testing 1: Slimmed title modal and isolated custom tuning modal str
   assert.ok(container.querySelector('#dom-proc-difficulty'), 'Difficulty select must exist in custom modal');
   assert.ok(container.querySelector('#dom-proc-pacing'), 'Pacing select must exist in custom modal');
   assert.ok(container.querySelector('#dom-proc-archetype'), 'Archetype select must exist in custom modal');
+  assert.ok(container.querySelector('#dom-proc-rule-mode'), 'Rule Mode select must exist in custom modal');
   assert.ok(container.querySelector('#dom-procedural-btn'), 'Quick play button must exist in custom modal');
   assert.ok(container.querySelector('#dom-quick-autoplay-btn'), 'Quick autoplay button must exist in custom modal');
 
@@ -200,6 +201,7 @@ console.log('Testing 1: Slimmed title modal and isolated custom tuning modal str
   assert.ok(container.querySelector('#dom-share-code-autoplay-btn'), 'Share code autoplay button must exist in custom modal');
 
   // 詳細パラメータ要素
+  assert.ok(container.querySelector('#dom-debug-rule-mode'), 'Debug Rule Mode select must exist');
   assert.ok(container.querySelector('#dom-debug-toggle-btn'), 'Debug toggle button must exist');
   assert.ok(container.querySelector('#dom-debug-launch-btn'), 'Debug launch button must exist');
   assert.ok(container.querySelector('#dom-debug-autoplay-btn'), 'Debug autoplay button must exist');

@@ -9,6 +9,7 @@ import {
   DungeonArchetype,
   MapDifficulty,
   PlayPacingMode,
+  RuleMode,
 } from '../models/Types.js';
 import { MagicDefinition } from '../config/MagicTable.js';
 import { WorldMap } from '../models/WorldMap.js';
@@ -414,6 +415,13 @@ export class DOMUIManager {
                   <option value="ARMORY">ARMORY (武器庫・予備剣多数)</option>
                 </select>
               </div>
+              <div style="flex: 1; min-width: 150px;">
+                <label for="dom-proc-rule-mode" style="font-size: 11px; color: #aaa; display: block; margin-bottom: 2px;">ルール体系 (Rule Mode):</label>
+                <select id="dom-proc-rule-mode" style="width: 100%; background: #0a1826; color: #eee; border: 1px solid #336699; padding: 4px; border-radius: 3px; font-size: 12px;">
+                  <option value="EXPONENTIAL" selected>EXPONENTIAL (指数・インフレ成長)</option>
+                  <option value="CLASSIC">CLASSIC (初代完全オリジナル加算)</option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -490,6 +498,13 @@ export class DOMUIManager {
                   <option value="SANCTUARY">SANCTUARY (聖域)</option>
                   <option value="WARP_NEXUS">WARP_NEXUS (ワープ迷宮)</option>
                   <option value="ARMORY">ARMORY (武器庫)</option>
+                </select>
+              </div>
+              <div style="flex: 1; min-width: 130px;">
+                <label style="font-size: 11px; color: #ccc;">ルールモード:</label>
+                <select id="dom-debug-rule-mode" style="width: 100%; background: #081420; color: #fff; border: 1px solid #336699; padding: 4px; font-size: 11px;">
+                  <option value="EXPONENTIAL" selected>EXPONENTIAL (指数成長)</option>
+                  <option value="CLASSIC">CLASSIC (初代加算モード)</option>
                 </select>
               </div>
             </div>
@@ -820,6 +835,7 @@ export class DOMUIManager {
         const diffSelect = this.container?.querySelector('#dom-debug-diff') as HTMLSelectElement | null;
         const paceSelect = this.container?.querySelector('#dom-debug-pacing') as HTMLSelectElement | null;
         const archSelect = this.container?.querySelector('#dom-debug-archetype') as HTMLSelectElement | null;
+        const ruleSelect = this.container?.querySelector('#dom-debug-rule-mode') as HTMLSelectElement | null;
         const chestsInput = this.container?.querySelector('#dom-debug-chests') as HTMLInputElement | null;
         const gravesInput = this.container?.querySelector('#dom-debug-graves') as HTMLInputElement | null;
         const enemyAtkInput = this.container?.querySelector('#dom-debug-enemy-atk') as HTMLInputElement | null;
@@ -829,6 +845,7 @@ export class DOMUIManager {
         const diff = (diffSelect?.value as MapDifficulty) ?? 'NORMAL';
         const pace = (paceSelect?.value as PlayPacingMode) ?? 'STANDARD';
         const arch = (archSelect?.value as DungeonArchetype) ?? 'BALANCED';
+        const rule = (ruleSelect?.value as RuleMode) ?? 'EXPONENTIAL';
         const seedVal = seedInput?.value ? parseInt(seedInput.value, 10) : 123456;
         const chestsVal = chestsInput?.value ? parseInt(chestsInput.value, 10) : 100;
         const gravesVal = gravesInput?.value ? parseInt(gravesInput.value, 10) : 20;
@@ -853,6 +870,7 @@ export class DOMUIManager {
             difficulty: diff,
             pacing: pace,
             archetype: arch,
+            ruleMode: rule,
             chestCount: chestsVal,
             graveCount: gravesVal,
             tuningParams: {
@@ -865,7 +883,7 @@ export class DOMUIManager {
           const report = ProceduralMapGenerator.generateDungeon(map, options);
           reportBox.innerHTML = `
             <div style="color: #ffd54f; font-weight: bold;">[PROCEDURAL SOLVABILITY REPORT]</div>
-            <div>Seed: ${report.seed} | Topo: ${topo} | Diff: ${diff} | Arch: ${arch}</div>
+            <div>Seed: ${report.seed} | Topo: ${topo} | Diff: ${diff} | Arch: ${arch} | Rule: ${rule}</div>
             <div>Solvable: <strong style="color: ${report.isSolvable ? '#81c784' : '#e57373'}">${report.isSolvable ? 'PASS (クリア可能)' : 'FAIL'}</strong></div>
             <div>宝箱: ${report.counts.chests}個 | 墓: ${report.counts.graves}基 (開口: ${report.counts.openGraves})</div>
             <div>重複ゼロ: ${report.hasZeroOverlaps ? 'OK' : 'FAIL'} | 内部壁BLOCK化: ${report.internalWallsAreBlocks ? 'OK' : 'FAIL'}</div>
@@ -962,11 +980,13 @@ export class DOMUIManager {
           const diffSelect = this.container?.querySelector('#dom-proc-difficulty') as HTMLSelectElement | null;
           const paceSelect = this.container?.querySelector('#dom-proc-pacing') as HTMLSelectElement | null;
           const archSelect = this.container?.querySelector('#dom-proc-archetype') as HTMLSelectElement | null;
+          const ruleSelect = this.container?.querySelector('#dom-proc-rule-mode') as HTMLSelectElement | null;
           const options: ProceduralMapOptions = {
             topology: (topoSelect?.value as DungeonTopology) ?? 'MULTI_SECTOR',
             difficulty: (diffSelect?.value as MapDifficulty) ?? 'NORMAL',
             pacing: (paceSelect?.value as PlayPacingMode) ?? 'STANDARD',
             archetype: (archSelect?.value as DungeonArchetype) ?? 'BALANCED',
+            ruleMode: (ruleSelect?.value as RuleMode) ?? 'EXPONENTIAL',
           };
           this.closeCustomModal();
           this.callbacks.onStartProceduralGame(options);
@@ -1001,6 +1021,7 @@ export class DOMUIManager {
           const diffSelect = this.container?.querySelector('#dom-debug-diff') as HTMLSelectElement | null;
           const paceSelect = this.container?.querySelector('#dom-debug-pacing') as HTMLSelectElement | null;
           const archSelect = this.container?.querySelector('#dom-debug-archetype') as HTMLSelectElement | null;
+          const ruleSelect = this.container?.querySelector('#dom-debug-rule-mode') as HTMLSelectElement | null;
           const chestsInput = this.container?.querySelector('#dom-debug-chests') as HTMLInputElement | null;
           const gravesInput = this.container?.querySelector('#dom-debug-graves') as HTMLInputElement | null;
           const enemyAtkInput = this.container?.querySelector('#dom-debug-enemy-atk') as HTMLInputElement | null;
@@ -1012,6 +1033,7 @@ export class DOMUIManager {
             difficulty: (diffSelect?.value as MapDifficulty) ?? 'NORMAL',
             pacing: (paceSelect?.value as PlayPacingMode) ?? 'STANDARD',
             archetype: (archSelect?.value as DungeonArchetype) ?? 'BALANCED',
+            ruleMode: (ruleSelect?.value as RuleMode) ?? 'EXPONENTIAL',
             chestCount: chestsInput?.value ? parseInt(chestsInput.value, 10) : undefined,
             graveCount: gravesInput?.value ? parseInt(gravesInput.value, 10) : undefined,
             tuningParams: (enemyAtkInput?.value || dragonDefInput?.value) ? {
@@ -1036,11 +1058,13 @@ export class DOMUIManager {
           const diffSelect = this.container?.querySelector('#dom-proc-difficulty') as HTMLSelectElement | null;
           const paceSelect = this.container?.querySelector('#dom-proc-pacing') as HTMLSelectElement | null;
           const archSelect = this.container?.querySelector('#dom-proc-archetype') as HTMLSelectElement | null;
+          const ruleSelect = this.container?.querySelector('#dom-proc-rule-mode') as HTMLSelectElement | null;
           const options: ProceduralMapOptions = {
             topology: (topoSelect?.value as DungeonTopology) ?? 'MULTI_SECTOR',
             difficulty: (diffSelect?.value as MapDifficulty) ?? 'NORMAL',
             pacing: (paceSelect?.value as PlayPacingMode) ?? 'STANDARD',
             archetype: (archSelect?.value as DungeonArchetype) ?? 'BALANCED',
+            ruleMode: (ruleSelect?.value as RuleMode) ?? 'EXPONENTIAL',
           };
           this.closeCustomModal();
           this.callbacks.onStartAutoPlayVerify(options);
@@ -1075,6 +1099,7 @@ export class DOMUIManager {
           const diffSelect = this.container?.querySelector('#dom-debug-diff') as HTMLSelectElement | null;
           const paceSelect = this.container?.querySelector('#dom-debug-pacing') as HTMLSelectElement | null;
           const archSelect = this.container?.querySelector('#dom-debug-archetype') as HTMLSelectElement | null;
+          const ruleSelect = this.container?.querySelector('#dom-debug-rule-mode') as HTMLSelectElement | null;
           const chestsInput = this.container?.querySelector('#dom-debug-chests') as HTMLInputElement | null;
           const gravesInput = this.container?.querySelector('#dom-debug-graves') as HTMLInputElement | null;
           const enemyAtkInput = this.container?.querySelector('#dom-debug-enemy-atk') as HTMLInputElement | null;
@@ -1086,6 +1111,7 @@ export class DOMUIManager {
             difficulty: (diffSelect?.value as MapDifficulty) ?? 'NORMAL',
             pacing: (paceSelect?.value as PlayPacingMode) ?? 'STANDARD',
             archetype: (archSelect?.value as DungeonArchetype) ?? 'BALANCED',
+            ruleMode: (ruleSelect?.value as RuleMode) ?? 'EXPONENTIAL',
             chestCount: chestsInput?.value ? parseInt(chestsInput.value, 10) : undefined,
             graveCount: gravesInput?.value ? parseInt(gravesInput.value, 10) : undefined,
             tuningParams: (enemyAtkInput?.value || dragonDefInput?.value) ? {

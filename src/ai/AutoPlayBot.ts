@@ -1,4 +1,4 @@
-import { Direction, Position, TileType } from '../models/Types.js';
+import { Direction, Position, TileType, ResolvedDungeonTuningParams } from '../models/Types.js';
 import { GameEngine } from '../core/GameEngine.js';
 import { Player } from '../models/Player.js';
 import { WorldMap } from '../models/WorldMap.js';
@@ -65,9 +65,22 @@ export class AutoPlayBot {
   private itemSwapTurns: number = 0;
   private readonly MAX_ITEM_SWAP_TURNS: number = 10;
 
+  // 2マスピンポン往復・局所スタック制御
+  public pingPongCount: number = 0;
+  public forceWanderTurns: number = 0;
+  private eightStepTurns: number = 0;
+  private readonly MAX_EIGHT_STEP_TURNS: number = 16;
+
+  // テレメトリ＆内部ステータス表示用
+  public currentTargetDesc: string = '初期化中';
+  public lastDecidedActionDesc: string = '待機';
+
   // 決戦前防御力・MP育成完了フラグ（フェーズ振動防止）
   public defenseReady: boolean = false;
   private defensePrepTurns: number = 0;
+
+  // アクティブチューニングパラメータ（ゲームエンジンから注入）
+  public activeTuning?: ResolvedDungeonTuningParams;
 
   constructor(opts: AutoPlayBotOptions = {}) {
     this.profile = opts.profile ?? 'STANDARD';
@@ -87,6 +100,57 @@ export class AutoPlayBot {
     this.eightStepController = new EightStepController(this.botNav);
     this.graveSealTactics = new GraveSealTactics(this.botNav);
     this.homeRelocationTactics = new HomeRelocationTactics(this.botNav);
+  }
+
+  /**
+   * ルールモードやドラゴンの生存首DEFに基づく動的な目標STRを算出
+   */
+  public getEffectiveTargetStr(dragon?: Dragon): number {
+    const livingHeads = dragon ? dragon.heads.filter(h => h.isAlive) : [];
+    const maxHeadDef = livingHeads.length > 0 ? Math.max(...livingHeads.map(h => h.def)) : 0;
+    if (maxHeadDef > 0) {
+      return maxHeadDef + 1000;
+    }
+    const isClassic = this.activeTuning?.progressionConfig.ruleMode === 'CLASSIC';
+    return isClassic ? 11000 : 350000;
+  }
+
+  /**
+   * ルールモードおよびフィールド全体の敵の攻撃力に応じた目標防御力(EXP)を算出
+   */
+  public getEffectiveTargetDefenseExp(enemies?: EnemyInstance[]): number {
+    const isClassic = this.activeTuning?.progressionConfig.ruleMode === 'CLASSIC';
+    if (this.tuning.targetDefenseExp !== undefined && this.tuning.targetDefenseExp !== 350000 && this.tuning.targetDefenseExp !== 450000) {
+      return this.tuning.targetDefenseExp;
+    }
+    if (isClassic) {
+      return 15000;
+    }
+    let target = this.tuning.targetDefenseExp ?? 450000;
+    if (enemies && enemies.length > 0) {
+      const living = enemies.filter(e => e.isAlive);
+      if (living.length > 0) {
+        const maxAtk = Math.max(...living.map(e => e.atk));
+        if (maxAtk > target) {
+          target = Math.min(655350, maxAtk);
+        }
+      }
+    }
+    return target;
+  }
+
+  /**
+   * ルールモードに応じた早期墓封じ可能STRを算出
+   */
+  public getEffectiveGraveSealEarlyStr(): number {
+    const isClassic = this.activeTuning?.progressionConfig.ruleMode === 'CLASSIC';
+    if (this.tuning.graveSealEarlyStr !== undefined && this.tuning.graveSealEarlyStr !== 30000) {
+      return this.tuning.graveSealEarlyStr;
+    }
+    if (isClassic) {
+      return 2500;
+    }
+    return this.tuning.graveSealEarlyStr ?? 30000;
   }
 
   // ==========================================================================
@@ -351,6 +415,9 @@ export class AutoPlayBot {
   // ==========================================================================
 
   public decideAction(engine: GameEngine): BotAction {
+    if (typeof engine.getActiveTuningParams === 'function') {
+      this.activeTuning = engine.getActiveTuningParams();
+    }
     const player = engine.getPlayer();
     const map = engine.getMap ? engine.getMap() : (engine as any).getWorldMap();
     const enemies = engine.getEnemies().filter(e => e.isAlive);
@@ -363,13 +430,17 @@ export class AutoPlayBot {
     this.botNav.updateUnreachableTargets();
     this.updateTargetLock(map, player);
 
-    // 0. 強制徘徊脱出フラグが立っている場合
-    if (this.botNav.forceWanderNextTurn) {
+    // 0. 強制安全離脱（ピンポン回避やスタック救出による複数ターンの安全徘徊）
+    if (this.botNav.forceWanderNextTurn || this.forceWanderTurns > 0) {
       this.botNav.forceWanderNextTurn = false;
+      if (this.forceWanderTurns > 0) {
+        this.forceWanderTurns--;
+      }
       this.itemToPickupPos = null;
       this.tempDroppedKeyPos = null;
       this.eightStepController.clearEightStepState();
       this.clearTargetLock();
+      this.currentTargetDesc = `安全離脱・徘徊中 [残り ${this.forceWanderTurns}T]`;
       return this.botNav.wanderSafe(player, map, enemies, dragon, this.turnsInPhase);
     }
 
@@ -380,45 +451,120 @@ export class AutoPlayBot {
     const emergencyAction = this.checkEmergency(player, map, enemies, dragon);
     if (emergencyAction) return emergencyAction;
 
-    // 3. 振動（ピンポン往復・周回ループ）検知と強制脱出
-    // ※アイテム持ち替え作業中または8歩周期調整中は正常な往復なので誤判定防止
-    const isHandlingItemSwap = this.itemToPickupPos !== null || this.tempDroppedKeyPos !== null || this.eightStepController.eightStepTargetChestPos !== null;
-    const rLen = this.botNav.recentPositions.length;
-    if (rLen >= 3 && !isHandlingItemSwap) {
-      let isStuckOrLooping = false;
-      for (let lookback = 2; lookback <= Math.min(5, rLen); lookback++) {
-        const prev = this.botNav.recentPositions[rLen - lookback];
-        if (prev && prev.x === player.pos.x && prev.y === player.pos.y) {
-          isStuckOrLooping = true;
-          break;
-        }
+    // 3. 8歩周期およびアイテム持ち替えの停滞監視
+    if (this.eightStepController.eightStepTargetChestPos !== null) {
+      this.eightStepTurns++;
+      if (this.eightStepTurns >= this.MAX_EIGHT_STEP_TURNS) {
+        this.eightStepController.clearEightStepState();
+        this.eightStepTurns = 0;
       }
-      if (isStuckOrLooping) {
-        this.botNav.oscillationCount++;
-      } else {
-        this.botNav.oscillationCount = Math.max(0, this.botNav.oscillationCount - 1);
-      }
+    } else {
+      this.eightStepTurns = 0;
     }
 
-    if (this.botNav.oscillationCount >= 3) {
-      this.tempDroppedKeyPos = null;
-      this.itemToPickupPos = null;
-      this.botNav.oscillationCount = 0;
-      return this.botNav.wanderSafe(player, map, enemies, dragon, this.turnsInPhase);
-    }
-
-    // 4. アイテム持ち替え経過ターン監視
-    if (this.itemToPickupPos !== null) {
+    if (this.itemToPickupPos !== null || this.tempDroppedKeyPos !== null) {
       this.itemSwapTurns++;
       if (this.itemSwapTurns >= this.MAX_ITEM_SWAP_TURNS) {
         this.itemToPickupPos = null;
         this.tempDroppedKeyPos = null;
         this.itemSwapTurns = 0;
         this.clearTargetLock();
+        this.forceWanderTurns = 3;
+        this.currentTargetDesc = '持ち替えタイムアウト脱出';
         return this.botNav.wanderSafe(player, map, enemies, dragon, this.turnsInPhase);
       }
     } else {
       this.itemSwapTurns = 0;
+    }
+
+    // 4. 2マス往復（ピンポン挙動）および周回ループの厳格検知
+    // ※アイテム持ち替えや8歩周期は意図的な短距離往復のため、誤検知を防止する
+    const isHandlingItemSwap = this.itemToPickupPos !== null || this.tempDroppedKeyPos !== null;
+    const isHandlingEightStep = this.eightStepController.eightStepTargetChestPos !== null;
+    const rLen = this.botNav.recentPositions.length;
+
+    let isPingPong = false;
+    let isStuckOrLooping = false;
+    let prev1: Position | null = null;
+
+    if (!isHandlingItemSwap && !isHandlingEightStep) {
+      // step() 経由の場合、現在地 player.pos は既に recordPosition() されて末尾に入っている
+      const lastRecorded = rLen > 0 ? this.botNav.recentPositions[rLen - 1] : null;
+      const offset = (lastRecorded && lastRecorded.x === player.pos.x && lastRecorded.y === player.pos.y) ? 1 : 0;
+
+      prev1 = rLen >= (1 + offset) ? this.botNav.recentPositions[rLen - 1 - offset] : null;
+      const prev2 = rLen >= (2 + offset) ? this.botNav.recentPositions[rLen - 2 - offset] : null;
+
+      // 直近2マスでの反復: 現在地が2手前(prev2)と同一で、かつ1手前(prev1)と異なる (A -> B -> A)
+      if (prev1 && prev2 && player.pos.x === prev2.x && player.pos.y === prev2.y && (player.pos.x !== prev1.x || player.pos.y !== prev1.y)) {
+        isPingPong = true;
+      }
+
+      isStuckOrLooping = isPingPong;
+      if (!isStuckOrLooping && rLen >= (2 + offset)) {
+        for (let lookback = 2 + offset; lookback <= Math.min(5 + offset, rLen); lookback++) {
+          const prev = this.botNav.recentPositions[rLen - lookback];
+          if (prev && prev.x === player.pos.x && prev.y === player.pos.y) {
+            isStuckOrLooping = true;
+            break;
+          }
+        }
+      }
+
+      if (isStuckOrLooping) {
+        this.botNav.oscillationCount++;
+        if (isPingPong) {
+          this.pingPongCount++;
+        }
+      } else {
+        this.botNav.oscillationCount = Math.max(0, this.botNav.oscillationCount - 1);
+        this.pingPongCount = Math.max(0, this.pingPongCount - 1);
+      }
+    }
+
+    // 5. ピンポン往復・局所ループ検出時の多層エスケープ
+    if (this.pingPongCount >= 2 || this.botNav.oscillationCount >= 3) {
+      // (a) 現在ロックしていたターゲットを即座にブラックリスト（40ターン除外）
+      if (this.lockedChestPos) {
+        this.botNav.markTargetUnreachable(this.lockedChestPos, 40);
+      }
+      if (this.lockedItemPos) {
+        this.botNav.markTargetUnreachable(this.lockedItemPos, 40);
+      }
+      this.clearTargetLock();
+      this.tempDroppedKeyPos = null;
+      this.itemToPickupPos = null;
+      this.eightStepController.clearEightStepState();
+
+      // (b) 直前にいたマス（1手前）を引き返し抑止タイルに指定
+      if (prev1) {
+        this.botNav.recentEvadedTile = { ...prev1 };
+        this.botNav.recentEvadedTurns = 5;
+      }
+
+      // (c) 3〜4ターンの連続安全徘徊へ移行
+      this.forceWanderTurns = 3;
+      this.botNav.oscillationCount = 0;
+      this.pingPongCount = 0;
+
+      // (d) 隣接に敵がいる場合、FREEZE または FLASH で無力化
+      const adjacentEnemies = this.botNav.getAdjacentEnemies(player.pos, enemies, map);
+      if (adjacentEnemies.length > 0 && player.magic > 0 && !player.hasDeath) {
+        if (MagicSystem.canCast(player, 'FREEZE').allowed) {
+          const adjTarget = adjacentEnemies.find(({ enemy }) => !enemy.isPermanentlyFrozen);
+          if (adjTarget) {
+            this.currentTargetDesc = `ピンポン脱出: FREEZE敵足止め (${adjTarget.enemy.name})`;
+            return { type: 'MAGIC', magic: 'FREEZE' };
+          }
+        }
+        if (MagicSystem.canCast(player, 'FLASH').allowed) {
+          this.currentTargetDesc = 'ピンポン脱出: FLASH全敵足止め';
+          return { type: 'MAGIC', magic: 'FLASH' };
+        }
+      }
+
+      this.currentTargetDesc = '⚠️ ピンポン往復検知: 安全離脱徘徊';
+      return this.botNav.wanderSafe(player, map, enemies, dragon, this.turnsInPhase);
     }
 
     // 5. 各フェーズの主戦略行動
@@ -452,6 +598,7 @@ export class AutoPlayBot {
     this.turnsInPhase++;
 
     const action = this.decideAction(engine);
+    this.lastDecidedActionDesc = this.formatActionDesc(action);
 
     switch (action.type) {
       case 'MOVE':
@@ -485,11 +632,19 @@ export class AutoPlayBot {
 
   public handleStuckRescue(): void {
     this.botNav.forceWanderNextTurn = true;
+    this.forceWanderTurns = 4;
     this.itemToPickupPos = null;
     this.tempDroppedKeyPos = null;
     this.eightStepController.clearEightStepState();
+    if (this.lockedChestPos) {
+      this.botNav.markTargetUnreachable(this.lockedChestPos, 40);
+    }
+    if (this.lockedItemPos) {
+      this.botNav.markTargetUnreachable(this.lockedItemPos, 40);
+    }
     this.clearTargetLock();
     this.botNav.clearPositionHistory();
+    this.currentTargetDesc = '⚠️ スタック救出: 連続安全徘徊';
   }
 
   // ==========================================================================
@@ -511,28 +666,38 @@ export class AutoPlayBot {
     }
 
     // 2. ドラゴン討伐条件達成状況の計算:
-    // 剣所持 ＋ STR >= 350,000 ＋ (EXP >= 12,000 または斜め移動解禁) ＋ 最低MP備蓄
+    // 剣所持 ＋ STR >= targetStr ＋ (EXP >= 12,000 または斜め移動解禁) ＋ 最低MP備蓄 ＋ フィールド脅威度評価
     const livingHeads = dragon ? dragon.heads.filter(h => h.isAlive) : [];
-    const maxHeadDef = livingHeads.length > 0 ? Math.max(...livingHeads.map(h => h.def)) : 0;
-    const targetStr = Math.max(350000, maxHeadDef > 0 ? maxHeadDef + 1000 : 350000);
+    const targetStr = this.getEffectiveTargetStr(dragon);
     const canDamageDragon = player.hasSword && player.strength >= targetStr;
     const hasDiagonal = player.experience >= 12000 || player.canDiagonal;
-    const targetDefense = this.tuning.targetDefenseExp ?? 350000;
+    const targetDefense = this.getEffectiveTargetDefenseExp(enemies);
 
     if (canDamageDragon && (hasDiagonal || this.profile === 'NOVICE')) {
       if (this.currentPhase === 'POWER_RUSH') {
         this.defensePrepTurns++;
       }
+      const livingEnemies = enemies ? enemies.filter(e => e.isAlive) : [];
+      const hasLethalEnemy = livingEnemies.some(
+        e => ThreatEvaluator.evaluateThreat(player, e) === 'LETHAL'
+      );
       const hasNearbyHuntableEnemy = enemies && enemies.some(
         e => e.isAlive && !e.isPermanentlyFrozen &&
              ThreatEvaluator.evaluateThreat(player, e) === 'ONE_SHOT' &&
              map.getTorusDistance(player.pos, e.pos).manhattan <= 35
       );
       const minDragonMagic = Math.min(3, this.tuning.maxTargetMagic);
-      const hasEnoughMagic = player.magic >= minDragonMagic || (player.magic >= 1 && (this.defensePrepTurns > 40 || player.experience >= targetDefense)) || this.defensePrepTurns > 60;
-      const hasMinDefense = player.experience >= targetDefense || !hasNearbyHuntableEnemy || this.defensePrepTurns > 60;
+      // 防御力・MP・HPの十分性を総合評価: 首討伐後の激化と王冠脱出（魔法封印）に耐えうる備蓄
+      const hasEnoughMagic = player.magic >= minDragonMagic ||
+        (player.magic >= 2 && player.experience >= targetDefense) ||
+        (this.defensePrepTurns > 60 && player.magic >= 1) ||
+        (this.defensePrepTurns > 100);
+      const hasEnoughHp = player.hp >= player.maxHp * 0.7 || player.hp >= 50000;
+      const hasMinDefense = (player.experience >= targetDefense && !hasLethalEnemy) ||
+        (!hasNearbyHuntableEnemy && !hasLethalEnemy && player.experience >= 50000) ||
+        (this.defensePrepTurns > 150 && !hasLethalEnemy && player.experience >= 100000);
 
-      if ((hasMinDefense && hasEnoughMagic) || this.currentPhase === 'RELOCATE_HOME' || this.currentPhase === 'DRAGON_SLAY') {
+      if ((hasMinDefense && hasEnoughMagic && hasEnoughHp) || this.currentPhase === 'RELOCATE_HOME' || this.currentPhase === 'DRAGON_SLAY') {
         this.defenseReady = true;
       }
     }
@@ -587,13 +752,14 @@ export class AutoPlayBot {
     }
 
     // 3. 序盤墓封鎖 (GRAVE_SEAL) の判定
+    const earlyGraveStr = this.getEffectiveGraveSealEarlyStr();
     const canDoEarlyGraveSeal =
       effectivePolicy !== 'NONE' &&
       this.tuning.graveSealTiming === 'EARLY' &&
       !this.graveSealTactics.graveSealAborted &&
       this.graveSealTactics.totalGraveSealTurns < 60 &&
       player.hasSword &&
-      player.strength >= this.tuning.graveSealEarlyStr &&
+      player.strength >= earlyGraveStr &&
       defeatedCount === 0;
 
     if (canDoEarlyGraveSeal && enemies) {
@@ -669,6 +835,7 @@ export class AutoPlayBot {
       const isEscapePhase = dragon.isAllHeadsDefeated || this.currentPhase === 'CROWN_ESCAPE';
       if (!isEscapePhase || hasPowerStone || (player.holdItem === 'NONE' && isPinch && player.magic >= 2)) {
         if (MagicSystem.canCast(player, 'RETURN').allowed && !player.isFlying) {
+          this.currentTargetDesc = '🚨 緊急退避: RETURN魔法帰還';
           return { type: 'MAGIC', magic: 'RETURN' };
         }
       }
@@ -679,15 +846,18 @@ export class AutoPlayBot {
             ({ enemy }) => ThreatEvaluator.evaluateThreat(player, enemy) === 'LETHAL' && !enemy.isPermanentlyFrozen
           );
           if (adjLethal) {
+            this.currentTargetDesc = `🚨 緊急回避: FREEZE詠唱 (${adjLethal.enemy.name})`;
             return { type: 'MAGIC', magic: 'FREEZE' };
           }
         }
         if (MagicSystem.canCast(player, 'FLASH').allowed) {
+          this.currentTargetDesc = '🚨 緊急回避: FLASH詠唱';
           return { type: 'MAGIC', magic: 'FLASH' };
         }
       }
 
       if (player.hasDeath && nearestCross && crossDist <= 5) {
+        this.currentTargetDesc = '✝️ 十字架で死神浄化へ移動';
         const dirCross = this.botNav.findPath(player.pos, nearestCross, map, player, enemies, player.canDiagonal, dragon);
         if (dirCross) return this.handleMoveOrBreak(dirCross, player, map);
       }
@@ -702,15 +872,20 @@ export class AutoPlayBot {
         const distToHome = map.getTorusDistance(player.pos, homePos).chebyshev;
         if (distToHome <= 2) {
           if (map.getItem(player.pos) === 'NONE' && map.getBaseTile(player.pos) !== 'HOME') {
+            this.currentTargetDesc = '💍 我が家近傍でRING手放し';
             return { type: 'SPACE' };
           }
           const safeDir = this.botNav.findAdjacentSafeEmptyFloor(player.pos, map, enemies, dragon, player);
-          if (safeDir) return { type: 'MOVE', dir: safeDir };
+          if (safeDir) {
+            this.currentTargetDesc = '💍 RING手放し空床へ移動';
+            return { type: 'MOVE', dir: safeDir };
+          }
         }
       }
 
       const dirToHome = this.botNav.findPath(player.pos, homePos, map, player, enemies, player.canDiagonal, dragon);
       if (dirToHome) {
+        this.currentTargetDesc = '🚨 緊急退避: 我が家全回復帰還へ移動';
         return this.handleMoveOrBreak(dirToHome, player, map);
       }
 
@@ -794,6 +969,7 @@ export class AutoPlayBot {
     }
 
     if (!player.hasSword) {
+      this.currentTargetDesc = '🗡️ 剣（SWORD）回収へ移動';
       const swordCandidates = this.botNav.findNearestItemCandidates(player.pos, 'SWORD', map, enemies, player, 5, {
         lockedItemPos: this.lockedItemPos,
         lockedItemType: this.lockedItemType,
@@ -810,18 +986,46 @@ export class AutoPlayBot {
     }
 
     if (player.hasSword && player.holdItem === 'NONE') {
+      // 1. 最優先: POTION回収 (MP備蓄)
       if (player.magic < this.tuning.maxTargetMagic) {
         const potionCandidates = this.botNav.findNearestItemCandidates(player.pos, 'POTION', map, enemies, player, 5, {
           lockedItemPos: this.lockedItemPos,
           lockedItemType: this.lockedItemType,
           hysteresisBonus: this.TARGET_HYSTERESIS_BONUS,
         });
+        const maxPotionDist = player.magic <= 1 ? 25 : 15;
         for (const potionPos of potionCandidates) {
           const pDist = map.getTorusDistance(player.pos, potionPos).manhattan;
-          if (pDist <= 15) {
+          if (pDist <= maxPotionDist) {
+            this.currentTargetDesc = `🧪 ポーション回収 (${potionPos.x}, ${potionPos.y})`;
             const dir = this.botNav.findPath(player.pos, potionPos, map, player, enemies, false, dragon);
             if (dir) {
               this.setLockedItem(potionPos, 'POTION');
+              return this.handleMoveOrBreak(dir, player, map);
+            }
+          }
+        }
+        this.clearItemLock();
+      }
+
+      // 2. 近傍のコイン回収 (非戦闘EXP獲得による早期魔法解禁: EXPONENTIAL限定、MP備蓄優先)
+      const isClassic = this.activeTuning?.progressionConfig.ruleMode === 'CLASSIC';
+      const isSafeFromEnemies = !enemies.some(
+        e => e.isAlive && !e.isPermanentlyFrozen && map.getTorusDistance(player.pos, e.pos).chebyshev <= 3
+      );
+      if (!isClassic && player.experience < 12000 && isSafeFromEnemies && (player.magic >= 1 || player.experience < 2000)) {
+        const coinCandidates = this.botNav.findNearestItemCandidates(player.pos, 'COIN', map, enemies, player, 5, {
+          lockedItemPos: this.lockedItemPos,
+          lockedItemType: this.lockedItemType,
+          hysteresisBonus: this.TARGET_HYSTERESIS_BONUS,
+        });
+        for (const coinPos of coinCandidates) {
+          const cDist = map.getTorusDistance(player.pos, coinPos).manhattan;
+          if (cDist <= 10) {
+            this.currentTargetDesc = `🪙 コイン回収 (${coinPos.x}, ${coinPos.y})`;
+            const dir = this.botNav.findPath(player.pos, coinPos, map, player, enemies, false, dragon);
+            if (dir) {
+              this.setLockedItem(coinPos, 'COIN');
               return this.handleMoveOrBreak(dir, player, map);
             }
           }
@@ -835,6 +1039,7 @@ export class AutoPlayBot {
         hysteresisBonus: this.TARGET_HYSTERESIS_BONUS,
       });
       for (const keyPos of keyCandidates) {
+        this.currentTargetDesc = `🗝️ 鍵（KEY）回収へ移動 (${keyPos.x}, ${keyPos.y})`;
         const dir = this.botNav.findPath(player.pos, keyPos, map, player, enemies, false, dragon);
         if (dir) {
           this.setLockedItem(keyPos, 'KEY');
@@ -848,6 +1053,7 @@ export class AutoPlayBot {
   }
 
   private actGraveSeal(player: Player, map: WorldMap, enemies: EnemyInstance[], dragon: Dragon): BotAction {
+    this.currentTargetDesc = '🪦 墓封鎖戦術実行中';
     return this.graveSealTactics.actGraveSeal(player, map, enemies, dragon, {
       tuning: this.tuning,
       profile: this.profile,
@@ -868,6 +1074,10 @@ export class AutoPlayBot {
     const floorItem = map.getItem(curPos);
     const floorObj = map.getObject(curPos);
 
+    const isClassic = this.activeTuning?.progressionConfig.ruleMode === 'CLASSIC';
+    const targetStr = this.getEffectiveTargetStr(dragon);
+    const targetDefense = this.getEffectiveTargetDefenseExp();
+
     // 0. 手持ちが宝箱開錠・育成に不要な道具（RING や CROSS）の場合、安全な空床で手放す
     if (player.holdItem !== 'NONE' && player.holdItem !== 'KEY' && player.holdItem !== 'POWER_STONE') {
       const isCurSafe = this.botNav.isSafeEmptyFloor(curPos, map, enemies, dragon, player);
@@ -884,6 +1094,8 @@ export class AutoPlayBot {
     // 1. パワーストーン所持中なら我が家へ最速帰還＆奉納！
     if (player.holdItem === 'POWER_STONE') {
       this.eightStepController.clearEightStepState();
+      this.tempDroppedKeyPos = null;
+      this.currentTargetDesc = `💎 パワーストーン奉納帰還 -> HOME(${map.realHomePos.x}, ${map.realHomePos.y})`;
       if (MagicSystem.canCast(player, 'RETURN').allowed && !player.isFlying) {
         return { type: 'MAGIC', magic: 'RETURN' };
       }
@@ -892,14 +1104,43 @@ export class AutoPlayBot {
       return this.botNav.wanderSafe(player, map, enemies, dragon, this.turnsInPhase);
     }
 
+    // 我が家に到達した場合はアイテム一時置き状態を完全クリア
+    if (curPos.x === map.realHomePos.x && curPos.y === map.realHomePos.y) {
+      this.tempDroppedKeyPos = null;
+      this.itemToPickupPos = null;
+    }
+
     // 1-B. 8歩周期宝箱開錠モード中なら歩数調整＆確定開錠を最優先！
     if (this.eightStepController.eightStepTargetChestPos !== null) {
+      this.currentTargetDesc = `📦 8歩周期調整 [歩数:${player.stepCountSinceStone}/8] -> 宝箱(${this.eightStepController.eightStepTargetChestPos.x}, ${this.eightStepController.eightStepTargetChestPos.y})`;
       const eightStepAction = this.eightStepController.handleEightStepCycle(player, map, enemies, dragon);
       if (eightStepAction) return eightStepAction;
     }
 
+    // 1-C. コイン奉納による早期魔法解禁・オーバーヒール帰還
+    // （EXPONENTIALモード時、コイン所持時、未解禁魔法があり換金で到達見込みがある場合や、近傍に家がある場合）
+    if (!isClassic && player.gold >= 2 && player.experience < 12000 && this.itemToPickupPos === null) {
+      this.currentTargetDesc = `🪙 コイン早期換金帰還 [所持:${player.gold}枚] -> HOME`;
+      if (MagicSystem.canCast(player, 'RETURN').allowed && !player.isFlying) {
+        return { type: 'MAGIC', magic: 'RETURN' };
+      }
+      const distToHome = map.getTorusDistance(curPos, map.realHomePos).manhattan;
+      if (distToHome <= 15 || player.gold >= 3) {
+        const dirToHome = this.botNav.findPath(curPos, map.realHomePos, map, player, enemies, player.canDiagonal, dragon);
+        if (dirToHome) return this.handleMoveOrBreak(dirToHome, player, map);
+      }
+    }
+
     // 2. 宝箱開錠後のアイテム持ち替え制御 (Hands-Free Rule)
-    const isValuableItem = floorItem === 'POWER_STONE' || (floorItem === 'POTION' && player.magic < this.tuning.maxTargetMagic);
+    const isSafeAround = !enemies.some(
+      e => e.isAlive && !e.isPermanentlyFrozen && map.getTorusDistance(curPos, e.pos).chebyshev <= 4
+    );
+    // 鍵所持中の一時置きを伴うコイン回収は、MPに余裕があり周囲が安全で、かつ本当にコインEXP/オーバーヒールが必要な局面のみに厳格限定
+    const needCoinWithKey = !isClassic && isSafeAround && player.magic >= 2 &&
+      (player.experience < 2000 || player.hp < player.maxHp * 0.4);
+    const isValuableItem = floorItem === 'POWER_STONE' ||
+      (floorItem === 'POTION' && player.magic < this.tuning.maxTargetMagic) ||
+      (floorItem === 'COIN' && needCoinWithKey);
 
     if (isValuableItem && player.holdItem === 'KEY') {
       if (floorItem === 'POWER_STONE' && player.stepCountSinceStone === 0) {
@@ -918,6 +1159,7 @@ export class AutoPlayBot {
 
       this.eightStepController.clearEightStepState();
       this.itemToPickupPos = { ...curPos };
+      this.currentTargetDesc = `🔄 鍵一時置き退避 [足元:${floorItem}]`;
       const stepDir = this.findAdjacentDropTile(curPos, map, enemies, dragon, player);
       if (stepDir) {
         return { type: 'MOVE', dir: stepDir };
@@ -929,8 +1171,10 @@ export class AutoPlayBot {
                           map.getBaseTile(curPos) !== 'WALL_STATIC' && map.getBaseTile(curPos) !== 'WARP';
       if (canDropHere) {
         this.tempDroppedKeyPos = { ...curPos };
+        this.currentTargetDesc = '🔄 鍵を床に置く';
         return { type: 'SPACE' };
       } else {
+        this.currentTargetDesc = '🔄 鍵置き場所を探して移動';
         const stepDir = this.findAdjacentDropTile(curPos, map, enemies, dragon, player);
         if (stepDir) {
           return { type: 'MOVE', dir: stepDir };
@@ -941,6 +1185,7 @@ export class AutoPlayBot {
     if (player.holdItem === 'NONE' && this.itemToPickupPos !== null) {
       if (curPos.x === this.itemToPickupPos.x && curPos.y === this.itemToPickupPos.y) {
         if (floorItem !== 'NONE') {
+          this.currentTargetDesc = `🔄 退避アイテム取得 [${floorItem}]`;
           const action: BotAction = { type: 'SPACE' };
           this.itemToPickupPos = null;
           return action;
@@ -948,6 +1193,7 @@ export class AutoPlayBot {
           this.itemToPickupPos = null;
         }
       } else {
+        this.currentTargetDesc = `🔄 退避アイテムへ戻る (${this.itemToPickupPos.x}, ${this.itemToPickupPos.y})`;
         const dir = this.botNav.findPath(curPos, this.itemToPickupPos, map, player, enemies, player.canDiagonal, dragon);
         if (dir) return this.handleMoveOrBreak(dir, player, map);
         else this.itemToPickupPos = null;
@@ -958,8 +1204,10 @@ export class AutoPlayBot {
       if (map.getItem(this.tempDroppedKeyPos) === 'KEY') {
         if (curPos.x === this.tempDroppedKeyPos.x && curPos.y === this.tempDroppedKeyPos.y) {
           this.tempDroppedKeyPos = null;
+          this.currentTargetDesc = '🔄 一時置きした鍵を再回収';
           return { type: 'SPACE' };
         } else {
+          this.currentTargetDesc = `🔄 一時置き鍵へ戻る (${this.tempDroppedKeyPos.x}, ${this.tempDroppedKeyPos.y})`;
           const dir = this.botNav.findPath(curPos, this.tempDroppedKeyPos, map, player, enemies, player.canDiagonal, dragon);
           if (dir) return this.handleMoveOrBreak(dir, player, map);
           else this.tempDroppedKeyPos = null;
@@ -969,12 +1217,14 @@ export class AutoPlayBot {
       }
     }
 
-    if (player.holdItem === 'NONE' && (floorItem === 'KEY' || isValuableItem)) {
+    if (player.holdItem === 'NONE' && (floorItem === 'KEY' || floorItem === 'COIN' || isValuableItem)) {
+      this.currentTargetDesc = `📦 足元アイテム取得 [${floorItem}]`;
       return { type: 'SPACE' };
     }
 
     // 3. 宝箱開錠（8歩周期の活用）
     if (floorObj === 'CHEST' && player.holdItem === 'KEY' && this.itemToPickupPos === null) {
+      this.currentTargetDesc = `🔓 宝箱開錠 (${curPos.x}, ${curPos.y})`;
       return { type: 'SPACE' };
     }
 
@@ -985,10 +1235,12 @@ export class AutoPlayBot {
       if (MagicSystem.canCast(player, 'FREEZE').allowed) {
         const target = adjacentTargets.find(({ enemy }) => !enemy.isPermanentlyFrozen);
         if (target) {
+          this.currentTargetDesc = `❄️ FREEZE詠唱: 隣接危険敵足止め (${target.enemy.name})`;
           return { type: 'MAGIC', magic: 'FREEZE' };
         }
       }
       if (MagicSystem.canCast(player, 'FLASH').allowed) {
+        this.currentTargetDesc = '⚡ FLASH詠唱: 全敵足止め';
         return { type: 'MAGIC', magic: 'FLASH' };
       }
     }
@@ -996,22 +1248,65 @@ export class AutoPlayBot {
     for (const { enemy, dir } of adjacentTargets) {
       const threat = ThreatEvaluator.evaluateThreat(player, enemy);
       if (threat === 'ONE_SHOT') {
+        this.currentTargetDesc = `⚔️ 隣接敵撃破 (${enemy.name})`;
         return { type: 'MOVE', dir };
       }
     }
 
-    // 4-B. RETURN魔法解禁・斜め移動解禁・決戦前EXP（防御力・HP）育成
-    if (player.hasSword && player.strength >= 1000) {
-      const needReturn = player.experience < 2000;
-      const needDiagonal = player.experience < 12000 && !player.canDiagonal;
-      const targetDefense = this.tuning.targetDefenseExp;
+    // 4-B. 成長段階に応じた安全な敵追尾狩り（序盤の投機的遠征抑制 / 終盤の防御EXP育成）
+    if (player.hasSword) {
+      const isStrDone = player.strength >= targetStr;
       const needExp = player.experience < targetDefense;
-      if (needReturn || needDiagonal || needExp) {
+      const needDiagonal = !player.canDiagonal && player.experience < 12000;
+      const needReturn = player.experience < 2000;
+
+      let maxHuntDist = 0;
+
+      if (isStrDone) {
+        // 【終盤: 決戦前準備段階 (player.strength >= targetStr)】
+        // ドラゴンの首を攻撃できる目標STRに到達した後は、敵を圧倒できる戦力があるため、
+        // ドラゴン戦・王冠脱出戦に必要な防御力と最大HP（targetDefenseExp）を仕上げるための能動的敵追尾狩りを有効化
+        if (needExp || needDiagonal) {
+          maxHuntDist = 45;
+        }
+      } else {
+        // 【序盤〜中盤: STR育成段階 (player.strength < targetStr)】
+        // 本作の仕様（SpawnSystem）では敵を2体倒すごとに出現モンスターのランクが+1されるため、
+        // パワーストーン回収（STR育成）が進んでいない段階で敵を倒しまくると強敵が出現し事故死を招く。
+        if (!isClassic) {
+          // EXPONENTIAL モード:
+          // 序盤の魔法解禁（RETURN: 2,000 / BREAK: 4,000 / 斜め移動: 12,000）は
+          // 敵ランクを上げない「無害なコインの回収・換金（非戦闘EXP）」で行う。
+          // そのため遠距離敵追尾狩り（maxDist = 20）を廃止し、
+          // 鍵所持中は追尾狩りを行わず宝箱開錠を最優先、手ぶら時は極近傍（距離2マス以内）の安全な敵のみに抑制。
+          if (player.holdItem !== 'KEY') {
+            maxHuntDist = 2;
+          }
+        } else {
+          // CLASSIC モード:
+          // コイン換金でEXPが入らないため戦闘でEXPを稼ぐ必要があるが、
+          // 序盤からむやみに遠征してキルランクを暴走させないよう、現在のSTRに応じた安全な距離に抑制。
+          if (player.holdItem === 'KEY') {
+            // 鍵所持中は宝箱開錠を最優先
+            maxHuntDist = 2;
+          } else if (needDiagonal || needReturn || needExp) {
+            if (player.strength < 3000) {
+              maxHuntDist = 3; // 最序盤: 目の前〜ごく近傍のみ
+            } else if (player.strength < 6000) {
+              maxHuntDist = 5; // 序盤: 近傍のみ
+            } else {
+              maxHuntDist = 8; // 中盤: 周辺8マス以内
+            }
+          }
+        }
+      }
+
+      if (maxHuntDist > 0) {
         const safeCandidates = this.botNav.findNearestSafeEnemyCandidates(player, enemies, map, 15);
         for (const safeEnemy of safeCandidates) {
           const dist = map.getTorusDistance(curPos, safeEnemy.pos).manhattan;
-          const maxDist = (needReturn || needDiagonal) ? 20 : (player.strength >= 350000 ? 45 : 5);
-          if (dist <= maxDist) {
+          if (dist <= maxHuntDist) {
+            this.currentTargetDesc = `⚔️ 敵狩り [${safeEnemy.name}(${safeEnemy.pos.x}, ${safeEnemy.pos.y}) dist:${dist}]`;
             const dir = this.botNav.findPath(curPos, safeEnemy.pos, map, player, enemies, player.canDiagonal, dragon);
             if (dir) return this.handleMoveOrBreak(dir, player, map);
           }
@@ -1019,18 +1314,20 @@ export class AutoPlayBot {
       }
     }
 
-    // 5. 鍵を持っている場合: 最寄りの宝箱へ向かう（近傍POTIONの一時回収も含む）
+    // 5. 鍵を持っている場合: 最寄りの宝箱へ向かう（近傍POTIONの一時回収、厳格限定の近傍コイン回収も含む）
     if (player.holdItem === 'KEY') {
+      // 5-A. 近傍POTIONの一時回収（最優先！MP枯渇を徹底防止）
       if (player.magic < this.tuning.maxTargetMagic && this.itemToPickupPos === null && this.tempDroppedKeyPos === null) {
         const potionCandidates = this.botNav.findNearestItemCandidates(curPos, 'POTION', map, enemies, player, 5, {
           lockedItemPos: this.lockedItemPos,
           lockedItemType: this.lockedItemType,
           hysteresisBonus: this.TARGET_HYSTERESIS_BONUS,
         });
-        const maxDist = player.strength >= 350000 ? 25 : 12;
+        const maxDist = player.magic <= 1 ? 30 : (player.strength >= targetStr ? 25 : 12);
         for (const candidate of potionCandidates) {
           const pDist = map.getTorusDistance(curPos, candidate).manhattan;
           if (pDist <= maxDist) {
+            this.currentTargetDesc = `🧪 ポーション回収 (${candidate.x}, ${candidate.y}) dist:${pDist}`;
             const dir = this.botNav.findPath(curPos, candidate, map, player, enemies, player.canDiagonal, dragon);
             if (dir) {
               this.setLockedItem(candidate, 'POTION');
@@ -1040,12 +1337,15 @@ export class AutoPlayBot {
         }
       }
 
-      if (player.strength < 350000) {
+      // 5-B. 宝箱へ向かう（STR未到達時）
+      if (player.strength < targetStr) {
         const chestCandidates = this.botNav.findNearestChestCandidates(curPos, map, enemies, player, 5, {
           lockedChestPos: this.lockedChestPos,
           hysteresisBonus: this.TARGET_HYSTERESIS_BONUS,
         });
         for (const chestPos of chestCandidates) {
+          const cDist = map.getTorusDistance(curPos, chestPos).manhattan;
+          this.currentTargetDesc = `📦 宝箱へ移動 (${chestPos.x}, ${chestPos.y}) dist:${cDist}`;
           const dir = this.botNav.findPath(curPos, chestPos, map, player, enemies, player.canDiagonal, dragon);
           if (dir) {
             this.setLockedChest(chestPos);
@@ -1053,8 +1353,30 @@ export class AutoPlayBot {
           }
         }
         this.clearChestLock();
+
+        // 5-C. 近傍コインの一時回収 (宝箱開錠前、MP余裕・周囲安全・真に必要な局面のみ厳格限定)
+        if (needCoinWithKey && this.itemToPickupPos === null && this.tempDroppedKeyPos === null) {
+          const coinCandidates = this.botNav.findNearestItemCandidates(curPos, 'COIN', map, enemies, player, 5, {
+            lockedItemPos: this.lockedItemPos,
+            lockedItemType: this.lockedItemType,
+            hysteresisBonus: this.TARGET_HYSTERESIS_BONUS,
+          });
+          const maxCoinDist = player.experience < 2000 ? 5 : 2;
+          for (const coinPos of coinCandidates) {
+            const cDist = map.getTorusDistance(curPos, coinPos).manhattan;
+            if (cDist <= maxCoinDist) {
+              this.currentTargetDesc = `🪙 コイン回収 (${coinPos.x}, ${coinPos.y}) dist:${cDist}`;
+              const dir = this.botNav.findPath(curPos, coinPos, map, player, enemies, player.canDiagonal, dragon);
+              if (dir) {
+                this.setLockedItem(coinPos, 'COIN');
+                return this.handleMoveOrBreak(dir, player, map);
+              }
+            }
+          }
+        }
       } else {
-        // STR 350,000 達成後は宝箱開錠不要。即座に鍵を手放して手ぶらでPOTION回収・敵狩りへ
+        // 目標STR達成後は宝箱開錠不要。即座に鍵を手放して手ぶらでPOTION回収・敵狩りへ
+        this.currentTargetDesc = '🗝️ 鍵を手放す（目標STR達成）';
         if (floorItem === 'NONE' && floorObj === 'NONE') {
           return { type: 'SPACE' };
         }
@@ -1072,7 +1394,7 @@ export class AutoPlayBot {
     // 6. 手ぶらの場合: 床のパワーストーン、POTION、最寄りの鍵を回収
     if (player.holdItem === 'NONE') {
       const needMagic = player.magic < this.tuning.maxTargetMagic;
-      const strDone = player.strength >= 350000;
+      const strDone = player.strength >= targetStr;
 
       if (strDone && needMagic) {
         const potionCandidates = this.botNav.findNearestItemCandidates(curPos, 'POTION', map, enemies, player, 5, {
@@ -1081,6 +1403,8 @@ export class AutoPlayBot {
           hysteresisBonus: this.TARGET_HYSTERESIS_BONUS,
         });
         for (const nearestPotion of potionCandidates) {
+          const pDist = map.getTorusDistance(curPos, nearestPotion).manhattan;
+          this.currentTargetDesc = `🧪 ポーション回収 (${nearestPotion.x}, ${nearestPotion.y}) dist:${pDist}`;
           if (curPos.x === nearestPotion.x && curPos.y === nearestPotion.y) {
             return { type: 'SPACE' };
           }
@@ -1102,6 +1426,7 @@ export class AutoPlayBot {
         for (const nearestStone of stoneCandidates) {
           const sDist = map.getTorusDistance(curPos, nearestStone).manhattan;
           if (sDist <= 15) {
+            this.currentTargetDesc = `💎 パワーストーン回収 (${nearestStone.x}, ${nearestStone.y}) dist:${sDist}`;
             if (curPos.x === nearestStone.x && curPos.y === nearestStone.y) {
               return { type: 'SPACE' };
             }
@@ -1123,7 +1448,9 @@ export class AutoPlayBot {
         });
         for (const nearestPotion of potionCandidates) {
           const pDist = map.getTorusDistance(curPos, nearestPotion).manhattan;
-          if (strDone || pDist <= 15) {
+          const maxDist = player.magic <= 1 ? 35 : (strDone || pDist <= 15 ? 18 : 0);
+          if (pDist <= maxDist) {
+            this.currentTargetDesc = `🧪 ポーション回収 (${nearestPotion.x}, ${nearestPotion.y}) dist:${pDist}`;
             if (curPos.x === nearestPotion.x && curPos.y === nearestPotion.y) {
               return { type: 'SPACE' };
             }
@@ -1137,13 +1464,46 @@ export class AutoPlayBot {
         this.clearItemLock();
       }
 
-      if (player.strength < 350000) {
+      // 手ぶら時の近傍コイン回収 (MP枯渇時はPOTION/KEYを優先。MP>=1または最序盤EXP<2000かつ周囲安全時のみ)
+      const isSafeFromEnemies = !enemies.some(
+        e => e.isAlive && !e.isPermanentlyFrozen && map.getTorusDistance(curPos, e.pos).chebyshev <= 3
+      );
+      const shouldPickCoin = !isClassic
+        ? (isSafeFromEnemies && (player.magic >= 1 || player.experience < 2000) && (player.experience < 12000 || player.hp < player.maxHp * 0.5))
+        : (player.hp < player.maxHp * 0.8 && isSafeFromEnemies);
+      if (shouldPickCoin) {
+        const coinCandidates = this.botNav.findNearestItemCandidates(curPos, 'COIN', map, enemies, player, 5, {
+          lockedItemPos: this.lockedItemPos,
+          lockedItemType: this.lockedItemType,
+          hysteresisBonus: this.TARGET_HYSTERESIS_BONUS,
+        });
+        const maxCoinDist = !isClassic ? (player.experience < 2000 ? 6 : 3) : 3;
+        for (const nearestCoin of coinCandidates) {
+          const cDist = map.getTorusDistance(curPos, nearestCoin).manhattan;
+          if (cDist <= maxCoinDist) {
+            this.currentTargetDesc = `🪙 コイン回収 (${nearestCoin.x}, ${nearestCoin.y}) dist:${cDist}`;
+            if (curPos.x === nearestCoin.x && curPos.y === nearestCoin.y) {
+              return { type: 'SPACE' };
+            }
+            const dir = this.botNav.findPath(curPos, nearestCoin, map, player, enemies, player.canDiagonal, dragon);
+            if (dir) {
+              this.setLockedItem(nearestCoin, 'COIN');
+              return this.handleMoveOrBreak(dir, player, map);
+            }
+          }
+        }
+        this.clearItemLock();
+      }
+
+      if (player.strength < targetStr) {
         const keyCandidates = this.botNav.findNearestItemCandidates(curPos, 'KEY', map, enemies, player, 5, {
           lockedItemPos: this.lockedItemPos,
           lockedItemType: this.lockedItemType,
           hysteresisBonus: this.TARGET_HYSTERESIS_BONUS,
         });
         for (const nearestKey of keyCandidates) {
+          const kDist = map.getTorusDistance(curPos, nearestKey).manhattan;
+          this.currentTargetDesc = `🗝️ 鍵回収 (${nearestKey.x}, ${nearestKey.y}) dist:${kDist}`;
           if (curPos.x === nearestKey.x && curPos.y === nearestKey.y) {
             return { type: 'SPACE' };
           }
@@ -1157,6 +1517,7 @@ export class AutoPlayBot {
       }
     }
 
+    this.currentTargetDesc = '🧭 安全徘徊探索中';
     return this.botNav.wanderSafe(player, map, enemies, dragon, this.turnsInPhase);
   }
 
@@ -1165,6 +1526,7 @@ export class AutoPlayBot {
   }
 
   private actRelocateHome(player: Player, map: WorldMap, dragon: Dragon, enemies: EnemyInstance[]): BotAction {
+    this.currentTargetDesc = '🏠 前線基地移転戦術実行中';
     return this.homeRelocationTactics.actRelocateHome(player, map, dragon, enemies, {
       tuning: this.tuning,
       setPhase: (p) => this.setPhase(p),
@@ -1174,14 +1536,57 @@ export class AutoPlayBot {
   }
 
   private actDragonSlay(player: Player, map: WorldMap, dragon: Dragon, enemies: EnemyInstance[]): BotAction {
+    this.currentTargetDesc = '🐉 ドラゴン要塞進軍・首各個撃破';
     const livingHeads = dragon.heads.filter(h => h.isAlive);
     if (livingHeads.length === 0) {
       return { type: 'WAIT' };
     }
 
     const curPos = player.pos;
+    const isLastHead = livingHeads.length === 1;
 
-    // 1. 首の斜め隣接マスにいる場合、首攻撃が何よりも最優先！！
+    // 0. 首討伐後の世界変化（怒り・上位敵湧き・全魔法封印）を見据えた安全制御
+    // HPは70%未満かつ5万未満の場合に回復へ（HP5万以上あれば上位敵の一撃にも耐えられる）
+    const isDamaged = player.hp < player.maxHp * 0.7 && player.hp < 50000;
+    const isMpLow = player.magic < (isLastHead ? 2 : 1);
+    const adjacentEnemies = this.botNav.getAdjacentEnemies(curPos, enemies, map);
+    const hasDangerousAdjacent = adjacentEnemies.some(({ enemy }) => {
+      const threat = ThreatEvaluator.evaluateThreat(player, enemy);
+      return threat === 'LETHAL' || threat === 'DANGER' || enemy.atk > player.experience;
+    });
+
+    // HP低下時は安全に我が家（前線基地）へ帰還して全回復
+    if (isDamaged) {
+      this.currentTargetDesc = '🏠 決戦中HP回復のため我が家へ帰還';
+      const dirToHome = this.botNav.findPath(curPos, map.realHomePos, map, player, enemies, player.canDiagonal, dragon);
+      if (dirToHome) return this.handleMoveOrBreak(dirToHome, player, map);
+    }
+
+    // MP枯渇時は近傍POTION補給を優先
+    if (isMpLow && player.holdItem === 'NONE') {
+      const potionPos = this.botNav.findNearestItem(curPos, 'POTION', map, enemies, player);
+      if (potionPos) {
+        const pDist = map.getTorusDistance(curPos, potionPos).manhattan;
+        if (pDist <= 20) {
+          this.currentTargetDesc = `🧪 決戦中MP補給へ移動 (${potionPos.x}, ${potionPos.y}) dist:${pDist}`;
+          if (curPos.x === potionPos.x && curPos.y === potionPos.y) {
+            return { type: 'SPACE' };
+          }
+          const dir = this.botNav.findPath(curPos, potionPos, map, player, enemies, player.canDiagonal, dragon);
+          if (dir) return this.handleMoveOrBreak(dir, player, map);
+        }
+      }
+    }
+
+    // 最後の首で隣接に危険な敵がいる場合、FREEZE等で無力化してから首を攻撃
+    if (isLastHead && hasDangerousAdjacent && player.magic > 0 && !player.hasDeath) {
+      if (MagicSystem.canCast(player, 'FREEZE').allowed) {
+        this.currentTargetDesc = '❄️ 最終首撃破前の隣接危険敵FREEZE無力化';
+        return { type: 'MAGIC', magic: 'FREEZE' };
+      }
+    }
+
+    // 1. 首の斜め隣接マスにいる場合、首攻撃を実行（※上記安全チェック通過後）
     for (const head of livingHeads) {
       const delta = this.botNav.getTorusDelta(curPos, head.pos, map.width, map.height);
       if (Math.abs(delta.dx) === 1 && Math.abs(delta.dy) === 1) {
@@ -1198,7 +1603,7 @@ export class AutoPlayBot {
       const potionPos = this.botNav.findNearestItem(curPos, 'POTION', map, enemies, player);
       if (potionPos) {
         const pDist = map.getTorusDistance(curPos, potionPos).manhattan;
-        if (pDist <= 15) {
+        if (pDist <= 20) {
           if (curPos.x === potionPos.x && curPos.y === potionPos.y) {
             return { type: 'SPACE' };
           }
@@ -1257,6 +1662,7 @@ export class AutoPlayBot {
     dragon: Dragon,
     _ghosts?: Ghost[]
   ): BotAction {
+    this.currentTargetDesc = player.holdItem === 'CROWN' ? `👑 王冠運搬中 -> HOME(${map.realHomePos.x}, ${map.realHomePos.y})` : '👑 床の王冠回収へ移動';
     const curPos = player.pos;
 
     // 0. 手持ちに王冠以外の不要な道具（RING, KEY, CROSS等）があれば即座に手放して手ぶらになる
@@ -1469,6 +1875,9 @@ export class AutoPlayBot {
   public isTargetUnreachable(pos: Position): boolean {
     return this.botNav.isTargetUnreachable(pos);
   }
+  public getUnreachableCount(): number {
+    return this.botNav.getUnreachableCount();
+  }
   public markTargetUnreachable(pos: Position, turns?: number): void {
     this.botNav.markTargetUnreachable(pos, turns);
   }
@@ -1582,6 +1991,38 @@ export class AutoPlayBot {
 
   public getTargetOpenGraves(map: WorldMap, enemies: EnemyInstance[], policy?: GraveSealPolicy): { grave: Position; openSpots: Position[] }[] {
     return this.graveSealTactics.getTargetOpenGraves(map, enemies, policy, this.tuning, this.mapAssessment);
+  }
+
+  public formatActionDesc(action: BotAction): string {
+    switch (action.type) {
+      case 'MOVE':
+        return `MOVE ${action.dir}`;
+      case 'SPACE':
+        return 'SPACE';
+      case 'MAGIC':
+        return `MAGIC ${action.magic}`;
+      case 'WAIT':
+        return 'WAIT';
+      default:
+        return 'UNKNOWN';
+    }
+  }
+
+  public getTelemetryStatus(player: Player, _map?: WorldMap, turn?: number): string {
+    const hold = player.holdItem === 'NONE' ? '手ぶら' : player.holdItem;
+
+    let oscInfo = '';
+    if (this.forceWanderTurns > 0) {
+      oscInfo = ` | ⚠️ 脱出徘徊中(${this.forceWanderTurns}T)`;
+    } else if (this.botNav.oscillationCount > 0 || this.pingPongCount > 0) {
+      oscInfo = ` | 🔄 往復兆候(Osc:${this.botNav.oscillationCount}, PP:${this.pingPongCount})`;
+    }
+
+    const unreachCount = this.botNav.getUnreachableCount ? this.botNav.getUnreachableCount() : 0;
+    const blacklistInfo = unreachCount > 0 ? ` [除外:${unreachCount}]` : '';
+    const turnPrefix = turn !== undefined ? `T:${turn} | ` : '';
+
+    return `${turnPrefix}${this.currentPhase} | 🎯 ${this.currentTargetDesc}${blacklistInfo} | 🤖 ${this.lastDecidedActionDesc} | [${hold}]${oscInfo}`;
   }
 
   public getTutorialMessage(): string {

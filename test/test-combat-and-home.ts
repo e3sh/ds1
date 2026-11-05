@@ -117,20 +117,50 @@ console.log('Testing 2: HOME return events & full healing...');
   const playerReturn = new Player({ x: 2, y: 2, hp: 300, experience: 20000 });
   playerReturn.magic = 5;
   playerReturn.gold = 7;
+  playerReturn.holdItem = 'POWER_STONE';
+  playerReturn.strength = 10;
   MovementSystem.lastHomeEvent = null;
 
-  const castRes = MagicSystem.cast(playerReturn, 'RETURN', map);
+  const classicSystemInfo = {
+    totalTurns: 10,
+    paletteMode: 'NORMAL' as const,
+    selectedMagicIndex: 0,
+    showMiniMap: false,
+    spawnTurnCounter: 0,
+    tuningParams: {
+      progressionConfig: {
+        ruleMode: 'CLASSIC' as const,
+        powerStoneGrowthRate: 0,
+        powerStoneFlatBonus: 2500,
+      },
+    } as any,
+  };
+
+  const castRes = MagicSystem.cast(playerReturn, 'RETURN', map, [], [], undefined, classicSystemInfo);
   assert.strictEqual(castRes.success, true, 'RETURN魔法が成功すること');
   assert.strictEqual(playerReturn.pos.x, 10, '我が家のX座標へ帰還したこと');
   assert.strictEqual(playerReturn.pos.y, 10, '我が家のY座標へ帰還したこと');
   assert.notStrictEqual(MovementSystem.lastHomeEvent, null, 'RETURN魔法でも lastHomeEvent が記録されること');
   assert.strictEqual(MovementSystem.lastHomeEvent?.goldConverted, 7, 'コイン7枚換算が記録されること');
+  assert.strictEqual(MovementSystem.lastHomeEvent?.powerStoneConverted, true, '石奉納が記録されること');
+  assert.strictEqual(MovementSystem.lastHomeEvent?.strGained, 2500, 'クラシック時はRETURN経由でも+2500固定加算されること');
+  assert.strictEqual(playerReturn.strength, 2510, 'プレイヤーSTRが2510になること');
 
   // 2-4. PSGAudio.playHomeHeal() のヘッドレス安全呼び出し
   const audio = PSGAudio.getInstance();
   assert.doesNotThrow(() => {
     audio.playHomeHeal();
   }, 'playHomeHeal should execute safely in headless environment');
+
+  // 2-5. 指数モードでのコイン換算 (EXP加算 & 割合HPオーバーヒール)
+  const expPlayer = new Player({ x: 9, y: 10, hp: 500, experience: 2000 });
+  expPlayer.gold = 3;
+  const expResult = expPlayer.healAtHome({ expCurveMode: 'DAMPED_POWER' });
+  assert.strictEqual(expResult.goldConverted, 3, '所持コイン3枚が換算されること');
+  assert.strictEqual(expResult.goldExpGained, 1020, '指数モードで非戦闘EXPが1020加算されること');
+  assert.strictEqual(expPlayer.experience, 3020, 'プレイヤーEXPが3020になること');
+  assert.strictEqual(expResult.goldBonusHp, 753, '割合HPオーバーヒールが753であること');
+  assert.strictEqual(expResult.newHp, 3773, '新HPが3773になること');
 
   console.log('✓ 2. HOME return events & full healing tests passed.');
 }

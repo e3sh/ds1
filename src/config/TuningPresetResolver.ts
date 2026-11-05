@@ -19,6 +19,8 @@ export class TuningPresetResolver {
         evictDistantEnemyOnHomeSpawn: true,
       },
       progressionConfig: {
+        ruleMode: 'CLASSIC',
+        coinScalingMode: 'LINEAR',
         expCurveMode: 'CLASSIC_LINEAR',
         expDampingExponent: 0.75,
         expScaleFactor: 1.0,
@@ -38,6 +40,42 @@ export class TuningPresetResolver {
         graveCount: 20,
         ghostCount: 2,
         ghostMoveIntervalMs: 90,
+      },
+    };
+  }
+
+  /**
+   * 完全オリジナル仕様（加算成長・リニアコイン・加算スケール対応ボスDEF）のプリセットを返す
+   */
+  public static getAuthenticClassicPreset(): ResolvedDungeonTuningParams {
+    return {
+      spawnConfig: {
+        maxFieldEnemiesByPhase: [5, 7, 9, 11],
+        homeSpawnReserveByPhase: [0, 1, 2, 3],
+        evictDistantEnemyOnHomeSpawn: true,
+      },
+      progressionConfig: {
+        ruleMode: 'CLASSIC',
+        coinScalingMode: 'LINEAR',
+        expCurveMode: 'CLASSIC_LINEAR',
+        expDampingExponent: 0.75,
+        expScaleFactor: 1.0,
+        expPhaseCaps: [15000, 35000, 70000, 150000],
+        expDefenseMitigationRatio: 1.0,
+        powerStoneGrowthRate: 0,
+        powerStoneFlatBonus: 2500,
+        dragonDefRatio: 0.025,
+        enemyAtkRatio: 0.025,
+      },
+      resourceCapConfig: {
+        cross: { initial: 1, maxCap: 99 },
+        ring: { initial: 2, maxCap: 99 },
+        key: { initial: 2, maxCap: 99 },
+        sword: { initial: 1, maxCap: 99 },
+        chestCount: 100,
+        graveCount: 20,
+        ghostCount: 2,
+        ghostMoveIntervalMs: 100,
       },
     };
   }
@@ -193,6 +231,8 @@ export class TuningPresetResolver {
         evictDistantEnemyOnHomeSpawn: true,
       },
       progressionConfig: {
+        ruleMode: 'EXPONENTIAL',
+        coinScalingMode: 'EXPONENTIAL',
         expCurveMode,
         expDampingExponent: 0.75,
         expScaleFactor,
@@ -230,6 +270,8 @@ export class TuningPresetResolver {
         evictDistantEnemyOnHomeSpawn: base.spawnConfig.evictDistantEnemyOnHomeSpawn,
       },
       progressionConfig: {
+        ruleMode: base.progressionConfig.ruleMode ?? 'EXPONENTIAL',
+        coinScalingMode: base.progressionConfig.coinScalingMode ?? 'EXPONENTIAL',
         expCurveMode: base.progressionConfig.expCurveMode,
         expDampingExponent: base.progressionConfig.expDampingExponent,
         expScaleFactor: base.progressionConfig.expScaleFactor,
@@ -266,6 +308,30 @@ export class TuningPresetResolver {
       }
 
       if (overrides.progressionConfig) {
+        if (overrides.progressionConfig.ruleMode) {
+          resolved.progressionConfig.ruleMode = overrides.progressionConfig.ruleMode;
+          // CLASSIC ルール指定時の自動整合性調整
+          if (overrides.progressionConfig.ruleMode === 'CLASSIC') {
+            if (overrides.progressionConfig.coinScalingMode === undefined) {
+              resolved.progressionConfig.coinScalingMode = 'LINEAR';
+            }
+            if (overrides.progressionConfig.powerStoneGrowthRate === undefined) {
+              resolved.progressionConfig.powerStoneGrowthRate = 0;
+            }
+            if (overrides.progressionConfig.powerStoneFlatBonus === undefined) {
+              resolved.progressionConfig.powerStoneFlatBonus = 2500;
+            }
+            if (overrides.progressionConfig.dragonDefRatio === undefined) {
+              resolved.progressionConfig.dragonDefRatio = 0.025;
+            }
+            if (overrides.progressionConfig.enemyAtkRatio === undefined) {
+              resolved.progressionConfig.enemyAtkRatio = 0.025;
+            }
+          }
+        }
+        if (overrides.progressionConfig.coinScalingMode) {
+          resolved.progressionConfig.coinScalingMode = overrides.progressionConfig.coinScalingMode;
+        }
         if (overrides.progressionConfig.expCurveMode) {
           resolved.progressionConfig.expCurveMode = overrides.progressionConfig.expCurveMode;
         }

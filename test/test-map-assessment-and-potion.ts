@@ -91,6 +91,15 @@ console.log('Testing 2: CROWN_ESCAPE potion collection on low magic...');
     }
   }
 
+  // マップ上の残存アイテム(POTION, CROWN等)をクリアして意図したPOTIONへの誘導を確実に検証
+  for (let y = 0; y < map.height; y++) {
+    for (let x = 0; x < map.width; x++) {
+      if (map.getItem({ x, y }) !== 'NONE') {
+        map.setItem({ x, y }, 'NONE');
+      }
+    }
+  }
+
   map.setBaseTile({ x: 6, y: 5 }, 'EMPTY');
   map.setObject({ x: 6, y: 5 }, 'NONE');
   map.setItem({ x: 6, y: 5 }, 'NONE');
@@ -155,6 +164,70 @@ console.log('Testing 3: Grave seal phase transition and policy overrides...');
   assert.strictEqual(botNearHome.currentPhase, 'GRAVE_SEAL', 'Policy NEAR_HOME should enter GRAVE_SEAL');
 
   console.log('✓ 3. Grave seal phase transition & policy tuning verified.');
+}
+
+// 4. コイン回収および早期魔法解禁タクティクス検証
+console.log('Testing 4: Coin collection & non-combat early magic unlock...');
+{
+  const engine = new GameEngine({ headless: true });
+  engine.startGame();
+  const player = engine.getPlayer();
+  const map = engine.getMap();
+
+  player.hasSword = true;
+  player.strength = 1500;
+  player.experience = 1000;
+  player.gold = 0; // 手ぶら・所持金ゼロからスタート
+  player.magic = 5; // MPストック満杯にしてPOTION回収バイパス
+  player.hp = 1000;
+  player.maxHp = 1000;
+  player.holdItem = 'NONE';
+  player.pos = { x: 10, y: 10 };
+  engine.getEnemies().length = 0; // 敵をクリアして純粋なアイテムナビゲーションを検証
+
+  // 周囲のアイテムをクリアしてCOINだけを配置
+  for (let dy = -3; dy <= 3; dy++) {
+    for (let dx = -3; dx <= 3; dx++) {
+      const p = { x: 10 + dx, y: 10 + dy };
+      map.setItem(p, 'NONE');
+      map.setObject(p, 'NONE');
+      map.setBaseTile(p, 'EMPTY');
+    }
+  }
+
+  // マップ上の残存アイテム(COIN, POWER_STONE等)をクリアしてCOINへの誘導を確実に検証
+  for (let y = 0; y < map.height; y++) {
+    for (let x = 0; x < map.width; x++) {
+      if (map.getItem({ x, y }) !== 'NONE') {
+        map.setItem({ x, y }, 'NONE');
+      }
+    }
+  }
+
+  // 1マス隣にCOINを配置
+  map.setItem({ x: 11, y: 10 }, 'COIN');
+
+  const bot = new AutoPlayBot();
+  const action1 = bot.decideAction(engine);
+  if (action1.type === 'MAGIC') {
+    console.error('DEBUG: action1 was MAGIC:', action1, 'player:', { hp: player.hp, maxHp: player.maxHp, exp: player.experience, magic: player.magic, pos: player.pos });
+  }
+  assert.strictEqual(action1.type, 'MOVE', 'Should move towards nearby COIN');
+  if (action1.type === 'MOVE') {
+    assert.strictEqual(action1.dir, 'RIGHT', 'Should move RIGHT towards COIN');
+  }
+
+  // コインのマスに乗った状態で判定
+  player.pos = { x: 11, y: 10 };
+  const actionPickup = bot.decideAction(engine);
+  assert.strictEqual(actionPickup.type, 'SPACE', 'Should pick up COIN on current tile');
+
+  // コイン取得実行
+  engine.executeTurn(null);
+  assert.strictEqual(player.gold, 1, 'Player should have 1 coin');
+  assert.strictEqual(player.holdItem, 'NONE', 'Player should remain hands-free after picking up COIN');
+
+  console.log('✓ 4. Coin collection & non-combat early magic unlock verified.');
 }
 
 console.log('--- ✓ All Map Assessment & Potion Tactics Tests PASSED! ---');

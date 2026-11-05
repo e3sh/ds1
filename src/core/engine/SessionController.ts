@@ -1,4 +1,4 @@
-import { DeathInfo, Position } from '../../models/Types.js';
+import { DeathInfo, Position, DungeonTuningParams } from '../../models/Types.js';
 import { Player } from '../../models/Player.js';
 import { WorldMap } from '../../models/WorldMap.js';
 import { EnemyInstance } from '../../models/Enemy.js';
@@ -75,15 +75,16 @@ export class SessionController {
     }
     this.engine.setProceduralMode(false);
     this.engine.setProceduralOptions({ topology: 'CLASSIC_FIXED' });
-    this.engine.setActiveTuningParams(TuningPresetResolver.getClassicDefault());
+    const classicTuning = TuningPresetResolver.getClassicDefault();
+    this.engine.setActiveTuningParams(classicTuning);
     this.engine.setTotalTurns(0);
     SpawnSystem.reset();
 
     const player = this.engine.getPlayer();
     if (player) {
-      player.reset({ x: 8, y: 8, hp: 1000, experience: 1000 });
+      player.reset({ x: 8, y: 8, hp: 1000, experience: 1000, progressionConfig: classicTuning.progressionConfig });
     } else {
-      this.engine.setPlayer(new Player({ x: 8, y: 8, hp: 1000, experience: 1000 }));
+      this.engine.setPlayer(new Player({ x: 8, y: 8, hp: 1000, experience: 1000, progressionConfig: classicTuning.progressionConfig }));
     }
 
     this.engine.setMap(new WorldMap(64, 64));
@@ -121,11 +122,18 @@ export class SessionController {
     }
 
     this.engine.setProceduralMode(true);
+    const effectiveOverrides: DungeonTuningParams = {
+      ...options?.tuningParams,
+      progressionConfig: {
+        ...options?.tuningParams?.progressionConfig,
+        ...(options?.ruleMode ? { ruleMode: options.ruleMode } : {}),
+      },
+    };
     const resolvedParams = TuningPresetResolver.resolve(
       options?.topology,
       options?.difficulty,
       options?.pacing,
-      options?.tuningParams,
+      effectiveOverrides,
       options?.archetype
     );
     this.engine.setActiveTuningParams(resolvedParams);
@@ -151,11 +159,12 @@ export class SessionController {
       x: map.homePos.x + 1,
       y: map.homePos.y + 1,
     };
+    const activeProgConfig = this.engine.getActiveTuningParams().progressionConfig;
     const player = this.engine.getPlayer();
     if (player) {
-      player.reset({ x: playerStartPos.x, y: playerStartPos.y, hp: 1000, experience: 1000 });
+      player.reset({ x: playerStartPos.x, y: playerStartPos.y, hp: 1000, experience: 1000, progressionConfig: activeProgConfig });
     } else {
-      this.engine.setPlayer(new Player({ x: playerStartPos.x, y: playerStartPos.y, hp: 1000, experience: 1000 }));
+      this.engine.setPlayer(new Player({ x: playerStartPos.x, y: playerStartPos.y, hp: 1000, experience: 1000, progressionConfig: activeProgConfig }));
     }
 
     this.engine.setEnemies([]);
@@ -280,11 +289,12 @@ export class SessionController {
       x: map.homePos.x + 1,
       y: map.homePos.y + 1,
     };
+    const activeProgConfig = this.engine.getActiveTuningParams().progressionConfig;
     const player = this.engine.getPlayer();
     if (player) {
-      player.reset({ x: playerStartPos.x, y: playerStartPos.y, hp: 1000, experience: 1000 });
+      player.reset({ x: playerStartPos.x, y: playerStartPos.y, hp: 1000, experience: 1000, progressionConfig: activeProgConfig });
     } else {
-      this.engine.setPlayer(new Player({ x: playerStartPos.x, y: playerStartPos.y, hp: 1000, experience: 1000 }));
+      this.engine.setPlayer(new Player({ x: playerStartPos.x, y: playerStartPos.y, hp: 1000, experience: 1000, progressionConfig: activeProgConfig }));
     }
     this.engine.setEnemies([]);
     this.engine.setGhosts([]);
@@ -404,7 +414,9 @@ export class SessionController {
       this.engine.setShowMiniMap(data.system.showMiniMap ?? false);
       this.engine.setProceduralMode(data.system.isProceduralMode ?? false);
       this.engine.setProceduralOptions(data.system.proceduralOptions);
-      this.engine.setActiveTuningParams(data.system.tuningParams ?? TuningPresetResolver.getClassicDefault());
+      const activeTuning = data.system.tuningParams ?? TuningPresetResolver.getClassicDefault();
+      this.engine.setActiveTuningParams(activeTuning);
+      this.engine.getPlayer().activeProgressionConfig = activeTuning.progressionConfig;
       SpawnSystem.setTurnCounter(data.system.spawnTurnCounter ?? 0);
       SpawnSystem.totalKills = data.player.totalKills ?? 0;
 

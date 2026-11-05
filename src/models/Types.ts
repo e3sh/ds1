@@ -167,6 +167,9 @@ export type DungeonTopology =
 
 export type ExpCurveMode = 'CLASSIC_LINEAR' | 'DAMPED_POWER' | 'PHASE_CAPPED';
 
+export type RuleMode = 'CLASSIC' | 'EXPONENTIAL';
+export type CoinScalingMode = 'LINEAR' | 'EXPONENTIAL';
+
 export interface ItemCapRule {
   initial: number;
   maxCap: number;
@@ -182,6 +185,8 @@ export interface DungeonTuningParams {
 
   // 2. 成長・戦闘カーブ制御 (課題2対策)
   progressionConfig?: {
+    ruleMode?: RuleMode;                // ルールモード: CLASSIC (完全オリジナル加算) vs EXPONENTIAL (現行指数インフレ)
+    coinScalingMode?: CoinScalingMode;  // コイン効果モード: LINEAR (HP+10) vs EXPONENTIAL (EXP加算&割合HP)
     expCurveMode?: ExpCurveMode;
     expDampingExponent?: number;        // DAMPED_POWER時の指数 (例: 0.75)
     expScaleFactor?: number;            // DAMPED_POWER / 全体EXP獲得倍率補正 (デフォルト: 1.0)

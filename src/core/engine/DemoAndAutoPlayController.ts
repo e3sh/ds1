@@ -344,11 +344,12 @@ export class DemoAndAutoPlayController {
     this.demoBot.step(this.engine);
 
     // チュートリアルTips & 検証ステータス字幕更新
-    const tip = this.demoBot.getTutorialMessage();
     if (this.isAutoPlayVerify) {
-      const phase = this.demoBot.currentPhase;
-      domUI?.setDemoMessage(`【自走検証】Turn: ${this.demoTurns} | HP: ${player.hp} | Phase: ${phase} - ${tip}`);
+      const map = this.engine.getMap ? this.engine.getMap() : (this.engine as any).getWorldMap();
+      const statusText = this.demoBot.getTelemetryStatus(player, map, this.demoTurns);
+      domUI?.setDemoMessage(statusText);
     } else {
+      const tip = this.demoBot.getTutorialMessage();
       domUI?.setDemoMessage(tip);
     }
   }

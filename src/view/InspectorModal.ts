@@ -428,14 +428,19 @@ export class InspectorModal {
   }
 
   // --- タブ 3: 成長カーブ & 戦闘グラフ ---
-  private renderChartsTab(_d: InspectorData): string {
+  private renderChartsTab(d: InspectorData): string {
+    const isClassic = d.tuningParams.progressionConfig.ruleMode === 'CLASSIC' || d.tuningParams.progressionConfig.powerStoneGrowthRate === 0;
+    const stoneDesc = isClassic
+      ? '約160個の奉納でドラゴン首 (DEF 400,000) を突破（初代固定+2,500加算成長）'
+      : '約14〜16個の奉納でドラゴン首 (DEF 400,000) を突破（指数複利成長）';
+
     return `
       <div class="inspector-charts-layout">
         <!-- グラフ 1: パワーストーン奉納 STR成長曲線 -->
         <div class="chart-container-box">
           <div class="chart-header">
             <span class="chart-title">💎 パワーストーン奉納個数 vs プレイヤーSTR成長曲線</span>
-            <span class="chart-desc">約14〜16個の奉納でドラゴン首 (DEF 400,000) を突破</span>
+            <span class="chart-desc">${stoneDesc}</span>
           </div>
           <canvas id="chart-powerstone-str" width="560" height="190" class="inspector-chart"></canvas>
         </div>
@@ -480,8 +485,11 @@ export class InspectorModal {
     const plotW = w - padL - padR;
     const plotH = h - padT - padB;
 
+    const isClassic = tp.progressionConfig.ruleMode === 'CLASSIC' || tp.progressionConfig.powerStoneGrowthRate === 0;
     const maxStone = 20;
-    const maxStr = 500000;
+    const xStep = 2;
+    const maxStr = isClassic ? 25000 : 500000;
+    const yStep = isClassic ? 5000 : 100000;
 
     // グリッド線とY軸ラベル
     ctx.strokeStyle = '#21262d';
@@ -489,18 +497,18 @@ export class InspectorModal {
     ctx.font = '10px monospace';
     ctx.textAlign = 'right';
 
-    for (let s = 100000; s <= maxStr; s += 100000) {
+    for (let s = yStep; s <= maxStr; s += yStep) {
       const y = padT + plotH - (s / maxStr) * plotH;
       ctx.beginPath();
       ctx.moveTo(padL, y);
       ctx.lineTo(padL + plotW, y);
       ctx.stroke();
-      ctx.fillText(`${s / 1000}k`, padL - 8, y + 3);
+      ctx.fillText(isClassic ? `${s}` : `${s / 1000}k`, padL - 8, y + 3);
     }
 
     // X軸ラベル
     ctx.textAlign = 'center';
-    for (let n = 0; n <= maxStone; n += 2) {
+    for (let n = 0; n <= maxStone; n += xStep) {
       const x = padL + (n / maxStone) * plotW;
       ctx.beginPath();
       ctx.moveTo(x, padT);
@@ -534,16 +542,12 @@ export class InspectorModal {
     ctx.restore();
 
     // プレイヤーSTR成長曲線シミュレーション
-    // 0個: 10, 1個: +1000, 2個目以降: floor(STR * growthRate) + flatBonus
+    // Player.calculatePowerStoneGain と完全同期 (CLASSIC時は+2500固定加算、EXPONENTIAL時は複利成長)
     const strValues: number[] = [10];
     let currentStr = 10;
     for (let i = 1; i <= maxStone; i++) {
-      if (i === 1) {
-        currentStr += 1000;
-      } else {
-        const gain = Math.floor(currentStr * tp.progressionConfig.powerStoneGrowthRate) + tp.progressionConfig.powerStoneFlatBonus;
-        currentStr = Math.min(655350, currentStr + gain);
-      }
+      const gain = Player.calculatePowerStoneGain(currentStr, tp.progressionConfig);
+      currentStr = Math.min(Player.MAX_STR, currentStr + gain);
       strValues.push(currentStr);
     }
 
@@ -561,7 +565,8 @@ export class InspectorModal {
 
     // ポイントドット
     ctx.fillStyle = '#58a6ff';
-    for (let i = 0; i <= maxStone; i++) {
+    const dotStep = isClassic ? 2 : 1;
+    for (let i = 0; i <= maxStone; i += dotStep) {
       const x = padL + (i / maxStone) * plotW;
       const y = padT + plotH - (strValues[i] / maxStr) * plotH;
       ctx.beginPath();

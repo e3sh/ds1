@@ -53,16 +53,16 @@ export class Dragon {
     };
 
     // 3つの首 (標準パラメータ)
-    // LEFT: HP 650,000 / ATK 600,000 / DEF 300,000 * ratio
-    // CENTER: HP 650,000 / ATK 500,000 / DEF 400,000 * ratio
-    // RIGHT: HP 650,000 / ATK 500,000 / DEF 380,000 * ratio
+    // LEFT: HP 650,000 / ATK 600,000 / DEF 300,000 (* dragonDefRatio)
+    // CENTER: HP 650,000 / ATK 500,000 / DEF 400,000 (* dragonDefRatio)
+    // RIGHT: HP 650,000 / ATK 500,000 / DEF 380,000 (* dragonDefRatio)
     this.heads = [
       {
         type: 'LEFT_HEAD',
         pos: { x: centerPos.x - 1, y: centerPos.y },
-        hp: 650000,
-        maxHp: 650000,
-        atk: 600000,
+        hp: Math.floor(650000 * dragonDefRatio),
+        maxHp: Math.floor(650000 * dragonDefRatio),
+        atk: Math.floor(600000 * dragonDefRatio),
         def: Math.floor(300000 * dragonDefRatio),
         isAlive: true,
         facingDir: 'LEFT',
@@ -70,9 +70,9 @@ export class Dragon {
       {
         type: 'CENTER_HEAD',
         pos: { x: centerPos.x, y: centerPos.y - 1 },
-        hp: 650000,
-        maxHp: 650000,
-        atk: 500000,
+        hp: Math.floor(650000 * dragonDefRatio),
+        maxHp: Math.floor(650000 * dragonDefRatio),
+        atk: Math.floor(500000 * dragonDefRatio),
         def: Math.floor(400000 * dragonDefRatio),
         isAlive: true,
         facingDir: 'UP',
@@ -80,9 +80,9 @@ export class Dragon {
       {
         type: 'RIGHT_HEAD',
         pos: { x: centerPos.x + 1, y: centerPos.y },
-        hp: 650000,
-        maxHp: 650000,
-        atk: 500000,
+        hp: Math.floor(650000 * dragonDefRatio),
+        maxHp: Math.floor(650000 * dragonDefRatio),
+        atk: Math.floor(500000 * dragonDefRatio),
         def: Math.floor(380000 * dragonDefRatio),
         isAlive: true,
         facingDir: 'RIGHT',
