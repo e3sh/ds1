@@ -314,14 +314,27 @@ export class MapProfiler {
     const startKey = `${home.x},${home.y}`;
     distMap.set(startKey, 0);
 
+    // 探索キュー（降順で保持し、pop() で最小コストをO(1)で取得）
     const queue: { pos: Position; cost: number }[] = [{ pos: home, cost: 0 }];
+    const insertDescending = (item: { pos: Position; cost: number }) => {
+      let low = 0;
+      let high = queue.length;
+      while (low < high) {
+        const mid = (low + high) >> 1;
+        if (queue[mid].cost > item.cost) {
+          low = mid + 1;
+        } else {
+          high = mid;
+        }
+      }
+      queue.splice(low, 0, item);
+    };
 
     let minSwordCost = 999;
 
     while (queue.length > 0) {
-      // 最小コストのノードを取り出し
-      queue.sort((a, b) => a.cost - b.cost);
-      const current = queue.shift()!;
+      // 最小コストのノードを取り出し (O(1))
+      const current = queue.pop()!;
       const currKey = `${current.pos.x},${current.pos.y}`;
 
       if (current.cost > (distMap.get(currKey) ?? Infinity)) continue;
@@ -357,7 +370,7 @@ export class MapProfiler {
         const prevCost = distMap.get(nextKey) ?? Infinity;
         if (newCost < prevCost) {
           distMap.set(nextKey, newCost);
-          queue.push({ pos: nextPos, cost: newCost });
+          insertDescending({ pos: nextPos, cost: newCost });
         }
       }
     }
@@ -481,19 +494,10 @@ export class MapProfiler {
    * トポロジーの事後推定
    */
   public static estimateTopology(
-    map: WorldMap,
+    _map: WorldMap,
     metrics: GeometricMetrics,
     placedBlocks?: PlacedThemeBlock[]
   ): DungeonTopology {
-    // 0. tacticalMetadataのスタイルを反映
-    const lairStyle = map.tacticalMetadata?.dragonLairStyle;
-    if (lairStyle === 'MAZE_LAIR' && metrics.mazeIndex >= 0.50) {
-      return metrics.roomCount <= 3 ? 'SPIRAL_LABYRINTH' : 'NARROW_MAZE';
-    }
-    if (lairStyle === 'GRAND_TREASURE_HALL' && metrics.opennessScore >= 0.12) {
-      return 'FORTRESS_ARENA';
-    }
-
     // 1. 配置ブロック情報がある場合はそのカテゴリ傾向を参照
     if (placedBlocks && placedBlocks.length > 0) {
       let mazeBlockCount = 0;
@@ -510,45 +514,50 @@ export class MapProfiler {
         if (id.includes('pillar') || id.includes('grid')) pillarBlockCount++;
       }
 
-      if (arenaBlockCount >= 2 || (arenaBlockCount >= 1 && metrics.opennessScore >= 0.15)) {
+      if (arenaBlockCount >= 3) {
         return 'FORTRESS_ARENA';
       }
-      if (mazeBlockCount >= 3 || metrics.mazeIndex >= 0.55) {
+      if (mazeBlockCount >= 3) {
         return 'NARROW_MAZE';
       }
-      if (pillarBlockCount >= 2) {
+      if (pillarBlockCount >= 3) {
         return 'PILLAR_GRID';
       }
     }
 
-    // 2. 幾何学的メトリクスからの推定
-    // (a) 螺旋迷宮: 迷路度が高く、部屋数が極めて少ない
-    if (metrics.mazeIndex >= 0.55 && metrics.roomCount <= 3) {
-      return 'SPIRAL_LABYRINTH';
-    }
-
-    // (b) 細道迷路: 迷路度が高く開放度が低い
-    if (metrics.mazeIndex >= 0.48 && metrics.opennessScore <= 0.10) {
-      return 'NARROW_MAZE';
-    }
-
-    // (c) 要塞アリーナ: 開放度が高く、ドラゴン要塞へのアクセスが良好
-    if (metrics.opennessScore >= 0.15 && metrics.lairAccessibility.score >= 0.40) {
-      return 'FORTRESS_ARENA';
-    }
-
-    // (d) セクター分断型: 4セクター境界のチョークポイントが明確で部屋数も多い
-    if (metrics.sectorPartitionScore >= 0.45 && metrics.roomCount >= 4) {
+    // 2. 幾何学的メトリクスからの総合推定
+    // (a) セクター分断型: 4象限間のボトルネック分断度が高く、部屋数も多い
+    if (metrics.sectorPartitionScore >= 0.35 && metrics.roomCount >= 4) {
       return 'MULTI_SECTOR';
     }
 
-    // (e) 柱グリッド: 迷路度・開放度が中間
-    if (metrics.mazeIndex >= 0.35 && metrics.mazeIndex < 0.48 && metrics.opennessScore >= 0.08) {
+    // (b) 螺旋迷宮: 迷路度が高く、部屋数が極めて少ない
+    if (metrics.mazeIndex >= 0.22 && metrics.roomCount <= 3) {
+      return 'SPIRAL_LABYRINTH';
+    }
+
+    // (c) 細道迷路: 迷路度が高い
+    if (metrics.mazeIndex >= 0.21) {
+      return 'NARROW_MAZE';
+    }
+
+    // (d) 要塞アリーナ: 開放度が高く要塞アクセスが良好
+    if (metrics.opennessScore >= 0.20 && metrics.lairAccessibility.score >= 0.40) {
+      return 'FORTRESS_ARENA';
+    }
+
+    // (e) 標準小部屋: 開放度が高く部屋数が明確
+    if (metrics.opennessScore >= 0.38) {
+      return 'STANDARD_ROOMS';
+    }
+
+    // (f) 柱グリッド: 迷路度・開放度が中間的
+    if (metrics.mazeIndex <= 0.19 && metrics.opennessScore >= 0.28) {
       return 'PILLAR_GRID';
     }
 
-    // (f) デフォルト: 標準小部屋
-    return 'STANDARD_ROOMS';
+    // (g) デフォルト: 要塞アリーナまたは標準小部屋
+    return metrics.lairAccessibility.score >= 0.60 ? 'FORTRESS_ARENA' : 'STANDARD_ROOMS';
   }
 
   /**
@@ -625,37 +634,54 @@ export class MapProfiler {
     // 1. 基本チャレンジ指数の算出 (1 〜 100)
     let score = 50;
 
-    // 剣までの距離 (+10 〜 +30)
-    if (metrics.swordWalkDistance > 50) {
+    // 剣までの距離 (-12 〜 +20)
+    if (metrics.swordWalkDistance >= 26) {
       score += 20;
       tags.push('DISTANT_SWORD');
-    } else if (metrics.swordWalkDistance <= 15) {
-      score -= 15;
+    } else if (metrics.swordWalkDistance >= 18) {
+      score += 10;
+    } else if (metrics.swordWalkDistance <= 12) {
+      score -= 12;
       tags.push('EARLY_SWORD');
     }
 
-    // 我が家周辺の墓数 (+5 〜 +20)
-    if (metrics.nearHomeGraves >= 4) {
-      score += 15;
+    // 我が家周辺の墓数 (-8 〜 +16)
+    if (metrics.nearHomeGraves >= 3) {
+      score += 16;
       tags.push('DANGEROUS_HOME');
-    } else if (metrics.nearHomeGraves <= 1) {
-      score -= 10;
+    } else if (metrics.nearHomeGraves === 2) {
+      score += 6;
+    } else if (metrics.nearHomeGraves <= 0) {
+      score -= 8;
       tags.push('PEACEFUL_HOME');
     }
 
-    // 迷路度 (+10 〜 -10)
-    if (metrics.mazeIndex >= 0.55) {
-      score += 10;
+    // 迷路度 (-6 〜 +12)
+    if (metrics.mazeIndex >= 0.17) {
+      score += 12;
       tags.push('LABYRINTH');
-    } else if (metrics.opennessScore >= 0.40) {
-      score -= 10;
+    } else if (metrics.mazeIndex <= 0.12) {
+      score -= 6;
+    }
+
+    // 開放度 (-8)
+    if (metrics.opennessScore >= 0.14) {
+      score -= 8;
       tags.push('OPEN_ARENA');
     }
 
-    // ドラゴン要塞アクセス度
-    if (metrics.lairAccessibility.score <= 0.3) {
-      score += 15;
+    // セクター分断度 (+10)
+    if (metrics.sectorPartitionScore >= 0.33) {
+      score += 10;
+      tags.push('DIVIDED_SECTOR');
+    }
+
+    // ドラゴン要塞アクセス度 (-8 〜 +12)
+    if (metrics.lairAccessibility.score <= 0.35) {
+      score += 12;
       tags.push('FORTIFIED_LAIR');
+    } else if (metrics.lairAccessibility.score >= 0.60) {
+      score -= 8;
     }
 
     // 2. ボット実測結果との統合
@@ -697,13 +723,13 @@ export class MapProfiler {
       }
     } else {
       // ボット実測なし時の静的推定
-      if (score <= 35) {
+      if (score <= 38) {
         estimatedDifficulty = 'EASY';
         estimatedPacing = 'BLITZ';
-      } else if (score <= 65) {
+      } else if (score <= 64) {
         estimatedDifficulty = 'NORMAL';
         estimatedPacing = 'STANDARD';
-      } else if (score <= 85) {
+      } else if (score <= 80) {
         estimatedDifficulty = 'HARD';
         estimatedPacing = 'STANDARD';
       } else {

@@ -519,19 +519,31 @@ export class HierarchicalThemeBlockGenerator {
       placeItemAtDistance('KEY', 1, 4);
     } else if (difficulty === 'HARD') {
       placeItemAtDistance('RING', 8, 16);
-      placeItemAtDistance('KEY', 15, 24);
+      placeItemAtDistance('KEY', 15, 26);
       if (pacing === 'BLITZ') {
-        placeItemAtDistance('SWORD', 20, 22);
+        placeItemAtDistance('SWORD', 20, 24);
       } else if (pacing === 'MARATHON') {
-        placeItemAtDistance('SWORD', 25, 32);
+        placeItemAtDistance('SWORD', 26, 36);
       } else {
-        placeItemAtDistance('SWORD', 20, 30);
+        placeItemAtDistance('SWORD', 22, 34);
       }
     } else {
       // NORMAL またはデフォルト
       placeItemAtDistance('RING', 1, 3);
       placeItemAtDistance('KEY', 6, 14);
-      placeItemAtDistance('SWORD', 10, 20);
+
+      // シードによる自然な分散揺らぎ (NORMALでも時々チャレンジシードやイージーシードが出現)
+      const roll = rng.nextInt(0, 99);
+      if (roll < 15) {
+        // チャレンジシード (遠方の剣)
+        placeItemAtDistance('SWORD', 22, 32);
+      } else if (roll < 30) {
+        // イージー寄り (近めの剣)
+        placeItemAtDistance('SWORD', 6, 12);
+      } else {
+        // 標準
+        placeItemAtDistance('SWORD', 10, 20);
+      }
     }
 
     // アーキタイプ固有の追加配置
