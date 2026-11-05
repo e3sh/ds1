@@ -35,5 +35,10 @@ import './test-autoplay-home-relocation.js';
 import './test-autoplay-combat-control.js';
 import './test-autoplay-pingpong-telemetry.js';
 import './test-autoplay-threat-and-potion.js';
+import './test-theme-block-allocator.js';
+import './test-theme-block-catalog.js';
+import './test-hierarchical-generator.js';
+import './test-autoplay-tactical-metadata.js';
+import './systems/MapProfiler.test.js';
 
 

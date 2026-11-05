@@ -41,6 +41,18 @@ export class HomeRelocationTactics {
     player: Player,
     tuning?: Required<BotStrategyTuning>
   ): Position | null {
+    // 1. tacticalMetadata の recommendedRelocateAnchors を最優先チェック
+    if (map.tacticalMetadata?.recommendedRelocateAnchors && map.tacticalMetadata.recommendedRelocateAnchors.length > 0) {
+      for (const anchor of map.tacticalMetadata.recommendedRelocateAnchors) {
+        const pos = map.wrapPosition(anchor);
+        const base = map.getBaseTile(pos);
+        if (base === 'WALL_STATIC' || base === 'GRAVE' || base === 'WARP') continue;
+        if (map.getObject(pos) === 'CHEST') continue;
+        if (this.botNav.isDragonFireLine(pos, dragon, map)) continue;
+        return pos;
+      }
+    }
+
     const center = map.dragonCenter;
     const minDist = tuning?.homeRelocateTargetDistMin ?? 5;
     const maxDist = tuning?.homeRelocateTargetDistMax ?? 8;

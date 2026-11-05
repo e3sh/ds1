@@ -13,6 +13,7 @@ import { WorldMap } from '../models/WorldMap.js';
 import { Player } from '../models/Player.js';
 import { TuningPresetResolver } from '../config/TuningPresetResolver.js';
 import { SeedRandom } from '../core/SeedRandom.js';
+import { HierarchicalThemeBlockGenerator } from './generator/HierarchicalThemeBlockGenerator.js';
 
 export const SeededRandom = SeedRandom;
 export type SeededRandom = SeedRandom;
@@ -225,8 +226,19 @@ export class ProceduralMapGenerator {
 
   /**
    * トポロジー・難易度・プレイ時間パラメータ連動のプロシージャル64x64ダンジョンを生成する
+   * (Phase 14: マルチスケール・テーマブロック階層合成エンジンを採用)
    */
   public static generateDungeon(
+    map: WorldMap,
+    options?: ProceduralMapOptions
+  ): MapSolvabilityReport {
+    return HierarchicalThemeBlockGenerator.generate(map, options);
+  }
+
+  /**
+   * 旧来のセクター分割＆ランダム散布方式によるダンジョン生成（後方互換・回帰テスト用）
+   */
+  public static generateLegacyDungeon(
     map: WorldMap,
     options?: ProceduralMapOptions
   ): MapSolvabilityReport {

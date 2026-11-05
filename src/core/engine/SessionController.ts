@@ -10,6 +10,7 @@ import { ProceduralMapGenerator, ProceduralMapOptions } from '../../systems/Proc
 import { TuningPresetResolver } from '../../config/TuningPresetResolver.js';
 import { CURRENT_SAVE_VERSION, FullSaveData, SaveManager } from '../../services/SaveManager.js';
 import { MapPresetData, MapPresetManager } from '../../services/MapPresetManager.js';
+import { MapProfiler } from '../../systems/generator/MapProfiler.js';
 import type { GameEngine } from '../GameEngine.js';
 
 export class SessionController {
@@ -224,6 +225,22 @@ export class SessionController {
       `ダンジョン (Seed: ${proceduralOptions.seed})`;
 
     const map = this.engine.getMap();
+    const isCleared = this.engine.getState() === 'STAGECLEAR';
+    const totalTurns = this.engine.getTotalTurns();
+
+    // MapProfilerで幾何メトリクス・推定トポロジー・難易度を取得
+    let profileReport;
+    if (map) {
+      try {
+        profileReport = MapProfiler.profile(map, {
+          seed: proceduralOptions.seed,
+          topology: proceduralOptions.topology,
+        });
+      } catch (e) {
+        console.warn('[SessionController] Failed to profile map on save:', e);
+      }
+    }
+
     const saved = MapPresetManager.savePreset({
       name: presetName,
       seed: proceduralOptions.seed,
@@ -238,14 +255,31 @@ export class SessionController {
       metrics: {
         dragonPos: map?.dragonCenter ? { ...map.dragonCenter } : undefined,
         homePos: map?.homePos ? { ...map.homePos } : undefined,
-        cleared: this.engine.getState() === 'STAGECLEAR',
-        clearTurns: this.engine.getTotalTurns(),
+        cleared: isCleared,
+        clearTurns: totalTurns,
         highScore: this.engine.getPlayer()?.gold,
+        estimatedTopology: profileReport?.estimatedTopology,
+        estimatedDifficulty: profileReport?.estimatedDifficulty,
+        estimatedPacing: profileReport?.estimatedPacing,
+        challengeRating: profileReport?.challengeRating,
+        tags: profileReport?.tags,
+        playerCleared: isCleared,
+        playerClearTurns: isCleared ? totalTurns : undefined,
       },
     });
 
+    if (isCleared) {
+      MapPresetManager.recordPlayerClear(proceduralOptions.seed, totalTurns);
+    }
+
     const shareCode = MapPresetManager.exportShareCode(saved);
     domUI?.addLog(`★ マッププリセット「${saved.name}」を保存しました！`, 'success');
+    if (profileReport) {
+      domUI?.addLog(
+        `📊 観測プロファイル: [${profileReport.estimatedDifficulty}] ${profileReport.estimatedTopology} (難易度: ${profileReport.challengeRating}/100)`,
+        'info'
+      );
+    }
     domUI?.addLog(`📋 共有コード: ${shareCode}`, 'info');
 
     return saved;

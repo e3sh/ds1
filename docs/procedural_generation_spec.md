@@ -1,8 +1,14 @@
 # 『DS1ish』プロシージャルダンジョン生成・攻略バランス設計仕様書
 
-- **文書バージョン**: 1.2.0 (Phase 9〜12 完了時点)
+- **文書バージョン**: 1.4.0 (Phase 15 完了時点: Seed Observatory & Challenge Catalog)
 - **対象リポジトリ**: `github.com/e3sh/ds1`
 - **主要参照実装**:
+  - `src/systems/generator/MapProfiler.ts`
+  - `scripts/harvest-seeds.ts`
+  - `src/systems/generator/HierarchicalThemeBlockGenerator.ts`
+  - `src/systems/generator/ThemeBlockAllocator.ts`
+  - `src/systems/generator/ThemeBlockTransformer.ts`
+  - `src/systems/generator/blocks/index.ts`
   - `src/systems/ProceduralMapGenerator.ts`
   - `src/config/TuningPresetResolver.ts`
   - `src/services/MapPresetManager.ts`
@@ -49,24 +55,21 @@
 
 ## 2. ダンジョン生成パイプライン・アルゴリズム仕様
 
-### 2.1 パイプライン全体フロー (`ProceduralMapGenerator.generateDungeon`)
+### 2.1 パイプライン全体フロー (`HierarchicalThemeBlockGenerator.generate`)
 
 ```mermaid
 flowchart TD
-    Start(["開始: generateDungeon"]) --> Step1["1. 全レイヤー初期化 (clearAndBuildOuterBorder)"]
-    Step1 --> Step2["2. 我が家 (7, 7) の予約・設置"]
-    Step2 --> Step3["3. 中央ドラゴン要塞構築 (アンチ・ブロックバリア配置)"]
-    Step3 --> Step4["4. 不規則セクター分割 (generateDynamicSectors: 7領域)"]
-    Step4 --> Step5["5. スタートセクター構築 & 難易度別アイテム距離スケーリング"]
-    Step5 --> Step6["6. 周辺可変セクターのタイポロジー別構造生成"]
-    Step6 --> Step7["7. 密閉宝物庫 & パンドラの墓場 ギミック配置"]
-    Step7 --> Step8["8. 有機的コリドー掘削 (carveDynamicCorridors)"]
-    Step8 --> Step9["9. 墓 (GRAVE) と封鎖パズル岩の分散配置"]
-    Step9 --> Step10["10. 宝物地帯 (Treasure Zones) クラスター & 宝箱補充配置"]
-    Step10 --> Step11["11. スカスカ空間検知と密度調整 (densifyOpenAreas)"]
-    Step11 --> Step12["12. 床置きアイテム & ワープゾーンネットワーク配置"]
-    Step12 --> Step13["13. 最終セーフティクリーンアップ (enforceCriticalClearance)"]
-    Step13 --> SolvCheck{"14. 解法性診断 (validateSolvability)"}
+    Start(["開始: generateDungeon"]) --> Step1["1. 全レイヤー初期化 (clearMap)"]
+    Step1 --> Step2["2. トポロジー別テーマブロック選定 (selectTemplatesForConfiguration)"]
+    Step2 --> Step3["3. 16×16階層アロケーション (ThemeBlockAllocator.allocate)"]
+    Step3 --> Step4["4. WorldMapへのスタンプ展開 & MapTacticalMetadata集計"]
+    Step4 --> Step5["5. ドラゴン中心座標・我が家座標の同期 (syncDragonAndHomePositions)"]
+    Step5 --> Step6["6. エッジポート接続 通路開通 (connectEdgePorts)"]
+    Step6 --> Step7["7. スロット予算アクティベーション (activateBudgets: 目標宝箱/墓数)"]
+    Step7 --> Step8["8. 難易度別ブートストラップ導線保証 & BFS到達性 (ensureBootstrapRequirements)"]
+    Step8 --> Step9["9. ワープゾーンネットワーク配置 (setupWarpNetwork)"]
+    Step9 --> Step10["10. 最終セーフティクリーンアップ (enforceCriticalClearance)"]
+    Step10 --> SolvCheck{"11. 解法性診断 (validateSolvability)"}
     SolvCheck --> End(["完了: レポート返却 (MapSolvabilityReport)"])
 ```
 
@@ -395,7 +398,70 @@ export interface MapSolvabilityReport {
 
 ---
 
-## 6. 今後のバランス調整・拡張に向けた課題と指針
+## 6. Phase 15: Seed Observatory & Challenge Catalog（シード観測器＆挑戦カタログ）
+
+### 6.1 概要と基本理念
+事前の重み付けや人為的パラメータでマップ生成を無理に歪めるのではなく、**「シードから決定論的に生成されたマップの状態を観測・プロファイリングすることで、そのシードのマップタイプ（トポロジー）・難易度・プレイスタイルを事後推定し、観測結果をカタログとして保存・再利用する仕組み（Seed Observatory & Challenge Catalog）」** です。
+
+- **AutoPlayBot 戦術ロジックの不変性**:
+  ボットの戦術ロジック（EXP備蓄目標、敵追跡、決戦移行条件など）は変更せず、客観的ベンチマーク計測器として活用します。
+- **物理的解法性の尊重と高難度シードの格付け**:
+  `validateSolvability` の `isSolvable: true` を満たしている限り、ボットが1600ターン以内にクリアできなかったシードも破綻として切り捨てず、「長時間耐久型（`MARATHON`）」や「ボット未踏破の高難度チャレンジ（`NIGHTMARE` / `UNBEATEN_BY_BOT`）」としてカタログに記録・格付けし、プレイヤーが挑戦してクリア報告できるようにします。
+
+### 6.2 観測器アーキテクチャ (`MapProfiler.ts`)
+
+```mermaid
+flowchart TD
+    Seed["決定論的マップシード"] --> Gen["HierarchicalThemeBlockGenerator"]
+    Gen --> Map["WorldMap (64×64)"]
+    Map --> Profiler["MapProfiler.profile"]
+    Profiler --> Geo["幾何学的メトリクス計測<br>・opennessScore (開放度)<br>・mazeIndex (迷路度)<br>・roomCount (独立部屋数)<br>・swordWalkDistance (剣到達コスト)<br>・nearHomeGraves (我が家近接墓数)<br>・lairAccessibility (要塞アクセス度)<br>・sectorPartitionScore (分断度)"]
+    Geo --> TopoEst["トポロジー事後推定<br>(STANDARD_ROOMS / PILLAR_GRID / NARROW_MAZE /<br>SPIRAL_LABYRINTH / FORTRESS_ARENA / MULTI_SECTOR)"]
+    Profiler --> BotBench{"ボット実測オプション<br>(runBotBenchmark)"}
+    BotBench -- 1600T完走クリア --> DiffClear["EASY / NORMAL / HARD"]
+    BotBench -- 1600Tタイムアウト --> DiffUnbeaten["NIGHTMARE<br>(UNBEATEN_BY_BOT / MARATHON)"]
+    TopoEst & DiffClear & DiffUnbeaten --> Report["MapProfileReport<br>(難易度指数 1〜100, タグ群, サマリー)"]
+    Report --> Catalog["SeedCatalogData & MapPresetManager"]
+```
+
+### 6.3 幾何学的メトリクス仕様
+1. **`opennessScore` (0.0〜1.0)**:
+   歩行可能マス全体に対する 3×3 広間コアマスの比率。
+2. **`mazeIndex` (0.0〜1.0)**:
+   歩行可能マスのうち、4近傍の歩行可能マス数が 1（袋小路）または 2（屈折・一本道通路）であるタイルの割合。
+3. **`roomCount`**:
+   フラッドフィル走査によって検出された独立した広間・閉鎖区画の数。
+4. **`swordWalkDistance`**:
+   我が家（`map.homePos`）から剣（`SWORD`）までのBFS最短経路コスト。途中の岩（`BLOCK`）破壊・押しを想定したペナルティ（+30/個）を含む。
+5. **`nearHomeGraves`**:
+   我が家からトーラス・マンハッタン距離 12 以内にある未封鎖（`BLOCK` が載っていない）墓の数。
+6. **`lairAccessibility`**:
+   ドラゴン要塞外周（半径4リング）の開口部数（`entranceCount`）および 3 首周囲の退避・安全スペース数（`safeSpacesCount`）。
+
+### 6.4 カタログ生成とプリセット連携 (`harvest-seeds.ts`, `MapPresetManager.ts`)
+- **バッチ収穫スクリプト (`scripts/harvest-seeds.ts`)**:
+  `npm run harvest-seeds --count=30` で複数シードをプロファイリングし、良質シードとボット未踏破チャレンジシードを自動分類して `src/services/SeedCatalogData.json` に出力。
+- **公式プリセット (`CURATED_PRESETS`) への未踏破チャレンジ追加**:
+  - `curated_unbeaten_nightmare`（Seed: 833139、奈落の深層要塞、`UNBEATEN_BY_BOT` / `NIGHTMARE` / `MARATHON`）
+- **クリア報告と共有コード**:
+  - プレイヤーが高難度シードやボット未踏破シードをクリアした際、ステージクリア画面に「🏆 難関シード踏破達成！」の特別バッジと所要ターン数が表示される。
+  - 共有コード（`DS1MAP:...`）およびローカル保存プリセットに `playerCleared` / `playerClearTurns` / `botStatus` がシリアライズされ、仲間同士でクリアタイムを競い合える。
+
+### 6.5 UI/UX & インスペクタ統合仕様（Phase 15 拡張）
+- **タイトル画面 & ステージ選択メニュー (`DOMUIManager.ts`)**:
+  - メインタイトル画面の導線ボタンを「🗺️ CHALLENGE CATALOG & SEED OBSERVATORY」に刷新。
+  - クイック設定パネル（`#dom-panel-quick`）の最上部にシード値直接入力欄（`#dom-proc-seed`）と🎲乱数ボタンを追加。
+  - 挑戦状カタログ（`#dom-panel-preset`）でプリセット選択時、直下に「選択中シードのプロファイル詳細カード（`#dom-preset-detail-card`）」を動的描画（トポロジー、難易度バッジ、チャレンジ指数バー、ボット観測ステータス、プレイヤー踏破記録、特徴タグ）。
+  - 詳細設定パネル（`#dom-panel-debug`）で「🎲 乱数」または「🔍 観測プロファイル実行」を押下した際、`MapProfiler.profile` によるリアルタイム幾何メトリクス（開放度・迷路度・剣歩数・家近接墓数・要塞アクセス度・セクター分断度）をカード形式でプレビュー表示（シードガチャ体験）。キーボード手入力時も即座に自動プレビュー更新。
+- **ゲーム中INSPECT画面 (`InspectorModal.ts`)**:
+  - タブ1「🗺️ マップ俯瞰 & 密度統計」に、`MapProfiler` のリアルタイム幾何構造プロファイルおよび Phase 14 戦術メタデータ（`WorldMap.tacticalMetadata`：要塞スタイル、8歩宝物庫数、墓封鎖パズル数、我が家移転アンカー数）を統合表示。
+  - タブ2「⚙️ ゲームチューニング定数 (Active Tuning)」に名称をリファインし、現在ワールドに適用されている物理パラメータ（スポーン上限、家湧き枠、パワーストーン複利成長率、ゴースト速度など）の実効値を完全開示。
+- **キーボード入力ガード (`InputManager.ts`)**:
+  - `input` や `textarea` 入力中はゲームショートカットやスクロール抑止（`preventDefault`）をバイパスし、テキストボックスや数値入力欄で直接タイピング・編集できるように保護。
+
+---
+
+## 7. 今後のバランス調整・拡張に向けた課題と指針
 
 Phase 10〜11 の完了により、プロシージャルダンジョン生成と古典的攻略戦術の融合は強固な基盤を確立しました。今後の開発・アップデートに向けた拡張ポイントと留意点は以下の通りです：
 

@@ -13,7 +13,7 @@ console.log('--- AutoPlayBot Home Relocation Tactics & Tactical Fortress Base Ve
 console.log('Testing 1: Transition to RELOCATE_HOME and safe fortress anchor selection...');
 {
   const engine = new GameEngine({ seed: 12345 });
-  engine.startGame();
+  engine.startGame({ dragonPrefab: 'FORTRESS_7x7' });
   const player = engine.getPlayer();
   const map = engine.getMap();
   const dragon = engine.getDragon();

@@ -4,6 +4,8 @@ import { Player } from '../src/models/Player.js';
 import { WorldMap } from '../src/models/WorldMap.js';
 import { MovementSystem } from '../src/systems/MovementSystem.js';
 import { ProceduralMapGenerator, SeededRandom } from '../src/systems/ProceduralMapGenerator.js';
+import { GameEngine } from '../src/core/GameEngine.js';
+import { TuningPresetResolver } from '../src/config/TuningPresetResolver.js';
 
 console.log('--- Dynamic Sector, Item Scaling & Anti-Block Fortress Verification ---');
 
@@ -258,9 +260,6 @@ console.log('Testing 3: Dragon Fortress anti-block barrier & fireball penetratio
 // ============================================================================
 console.log('Testing 4: Debug Mode & CLASSIC_FIXED mode verification...');
 {
-  const { GameEngine } = await import('../src/core/GameEngine.js');
-  const { TuningPresetResolver } = await import('../src/config/TuningPresetResolver.js');
-
   const engine = new GameEngine();
 
   // 4-A. デフォルトの startGame() がプロシージャルモードで開始されること
@@ -310,4 +309,4 @@ function getShortestManhattanToItem(map: WorldMap, itemType: string, fromPos: { 
   return minDist;
 }
 
-console.log('--- ✓ All Phase 10 Tests Passed Successfully! ---');
+console.log('--- ✓ All Dynamic Sector Tests Passed Successfully! ---');

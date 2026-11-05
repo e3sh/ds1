@@ -1,5 +1,6 @@
 import { WORLD_MAP_WIDTH, WORLD_MAP_HEIGHT } from '../config/Constants.js';
 import { Position, TileType } from './Types.js';
+import type { MapTacticalMetadata } from '../systems/generator/ThemeBlockTypes.js';
 
 export interface WorldMapSaveData {
   width: number;
@@ -28,6 +29,7 @@ export class WorldMap {
   public initialHomePos: Position;
   public spawnHomePos: Position;
   public dragonCenter: Position;
+  public tacticalMetadata?: MapTacticalMetadata;
   private underHomeBaseTile: TileType = 'EMPTY';
   private warpPairs: Map<string, Position> = new Map();
 

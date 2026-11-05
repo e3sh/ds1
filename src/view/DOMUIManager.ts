@@ -19,6 +19,7 @@ import { TileGraphics } from './TileGraphics.js';
 import { ProceduralMapGenerator, ProceduralMapOptions } from '../systems/ProceduralMapGenerator.js';
 import { InspectorModal, InspectorData } from './InspectorModal.js';
 import { MapPresetData, MapPresetManager } from '../services/MapPresetManager.js';
+import { MapProfiler } from '../systems/generator/MapProfiler.js';
 
 export interface LogEntry {
   id: string;
@@ -92,6 +93,8 @@ export class DOMUIManager {
   private gameoverCauseMsgEl: HTMLElement | null = null;
   private gameoverAvatarCanvasEl: HTMLCanvasElement | null = null;
   private clearModalEl: HTMLElement | null = null;
+  private clearChallengeBadgeEl: HTMLElement | null = null;
+  private clearStatsEl: HTMLElement | null = null;
   private startBtnEl: HTMLButtonElement | null = null;
   private proceduralBtnEl: HTMLButtonElement | null = null;
   private continueBtnEl: HTMLButtonElement | null = null;
@@ -336,7 +339,7 @@ export class DOMUIManager {
             </button>
             <button class="action-btn-large" id="dom-demo-btn" style="background: linear-gradient(180deg, #1565c0 0%, #0d47a1 100%); border-color: #42a5f5; color: #fff; margin-top: 6px;">🎬 DEMO / チュートリアル [D]</button>
             <button class="action-btn-large" id="dom-open-custom-btn" style="background: linear-gradient(180deg, #4527a0 0%, #311b92 100%); border-color: #9575cd; color: #ede7f6; margin-top: 6px;">
-              ⚙️ STAGE SELECT & CUSTOM (面の調整・プリセット・自走検証)
+              🗺️ CHALLENGE CATALOG & SEED OBSERVATORY (ステージ選択・挑戦状カタログ・シード観測)
             </button>
           </div>
         </div>
@@ -347,8 +350,8 @@ export class DOMUIManager {
         <div class="modal-content-box custom-modal-box" style="max-width: 680px; width: 92%; max-height: 90vh; overflow-y: auto; border: 2px solid #7e57c2; box-shadow: 0 0 40px rgba(126, 87, 194, 0.4);">
           <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #5e35b1; padding-bottom: 10px; margin-bottom: 14px;">
             <div>
-              <h2 style="margin: 0; font-size: 18px; color: #d1c4e9; display: flex; align-items: center; gap: 8px;">⚙️ STAGE SELECT & CUSTOM TUNING</h2>
-              <div style="font-size: 11px; color: #9fa8da; margin-top: 2px;">タイプを選んで画面下の代表ボタンから開始（手動プレイ or 自動自走検証）</div>
+              <h2 style="margin: 0; font-size: 18px; color: #d1c4e9; display: flex; align-items: center; gap: 8px;">🗺️ CHALLENGE CATALOG & SEED OBSERVATORY</h2>
+              <div style="font-size: 11px; color: #9fa8da; margin-top: 2px;">厳選カタログ挑戦・シード観測プロファイル・自走検証（手動プレイ or 自動自走検証）</div>
             </div>
             <button class="action-btn-secondary" id="dom-custom-back-btn" style="background: #281a4b; color: #d1c4e9; border: 1px solid #7e57c2; padding: 6px 14px; font-size: 12px; border-radius: 4px; cursor: pointer; font-weight: bold;">← タイトルへ戻る</button>
           </div>
@@ -362,7 +365,7 @@ export class DOMUIManager {
               </label>
               <label class="custom-tab-item" id="dom-tab-preset">
                 <input type="radio" name="custom-mode-type" value="PRESET" id="dom-type-radio-preset" style="display: none;" />
-                <span>🗺️ プリセット</span>
+                <span>🗺️ 挑戦状カタログ</span>
               </label>
               <label class="custom-tab-item" id="dom-tab-share">
                 <input type="radio" name="custom-mode-type" value="SHARE_CODE" id="dom-type-radio-share" style="display: none;" />
@@ -370,7 +373,7 @@ export class DOMUIManager {
               </label>
               <label class="custom-tab-item" id="dom-tab-debug">
                 <input type="radio" name="custom-mode-type" value="DEBUG" id="dom-type-radio-debug" style="display: none;" />
-                <span>🛠️ 詳細設定</span>
+                <span>🔬 シード観測・詳細</span>
               </label>
             </div>
           </div>
@@ -378,6 +381,16 @@ export class DOMUIManager {
           <!-- ① クイックダンジョン設定パネル -->
           <div id="dom-panel-quick" class="custom-type-panel" style="background: rgba(0, 20, 40, 0.7); border: 1px solid #1a5b8e; border-radius: 4px; padding: 12px; margin-bottom: 12px; text-align: left;">
             <div style="font-weight: bold; color: #4dd0e1; margin-bottom: 8px; font-size: 13px;">🎲 QUICK DUNGEON PRESET (クイックダンジョン設定)</div>
+            
+            <!-- クイックSeed設定 -->
+            <div style="margin-bottom: 10px;">
+              <label for="dom-proc-seed" style="font-size: 11px; color: #aaa; display: block; margin-bottom: 2px;">シード値 (Seed):</label>
+              <div style="display: flex; gap: 4px;">
+                <input type="number" id="dom-proc-seed" placeholder="空欄で完全ランダム生成（指定のシード番号を直接入力可能）" style="flex: 1; background: #0a1826; color: #fff; border: 1px solid #336699; padding: 5px; font-size: 12px; border-radius: 3px;" />
+                <button id="dom-proc-rand-seed-btn" type="button" style="background: #1a4b6e; color: #eee; border: 1px solid #4dd0e1; font-size: 11px; padding: 2px 12px; cursor: pointer; border-radius: 3px;">🎲 乱数</button>
+              </div>
+            </div>
+
             <div style="display: flex; gap: 8px; flex-wrap: wrap;">
               <div style="flex: 1; min-width: 140px;">
                 <label for="dom-proc-topology" style="font-size: 11px; color: #aaa; display: block; margin-bottom: 2px;">地形 (Topology):</label>
@@ -425,14 +438,16 @@ export class DOMUIManager {
             </div>
           </div>
 
-          <!-- ② マッププリセットパネル -->
+          <!-- ② 挑戦状カタログ（プリセット）パネル -->
           <div id="dom-panel-preset" class="custom-type-panel hidden" style="background: rgba(20, 10, 40, 0.75); border: 1px solid #7e57c2; border-radius: 4px; padding: 12px; margin-bottom: 12px; text-align: left;">
-            <div style="font-weight: bold; color: #b39ddb; margin-bottom: 8px; font-size: 13px;">🗺️ MAP PRESETS (保存済み＆公式プリセット)</div>
+            <div style="font-weight: bold; color: #b39ddb; margin-bottom: 8px; font-size: 13px;">🗺️ CHALLENGE CATALOG (挑戦状カタログ＆保存シード)</div>
             <div style="display: flex; gap: 6px; align-items: center;">
               <select id="dom-preset-select" style="flex: 1; background: #120a26; color: #eee; border: 1px solid #5e35b1; padding: 6px; border-radius: 3px; font-size: 12px;"></select>
               <button id="dom-preset-share-btn" style="background: #281a4b; color: #b39ddb; border: 1px solid #7e57c2; padding: 6px 12px; font-size: 11px; border-radius: 3px; cursor: pointer;" title="クリップボードへ共有コードをコピー">📋 共有</button>
               <button id="dom-preset-delete-btn" style="background: #3e1b24; color: #ef9a9a; border: 1px solid #c62828; padding: 6px 10px; font-size: 11px; border-radius: 3px; cursor: pointer;" title="選択したユーザープリセットを削除">🗑️</button>
             </div>
+            <!-- 選択中シードのプロファイル詳細カード -->
+            <div id="dom-preset-detail-card" class="preset-detail-card"></div>
           </div>
 
           <!-- ③ 共有コードパネル -->
@@ -443,12 +458,12 @@ export class DOMUIManager {
             </div>
           </div>
 
-          <!-- ④ マニュアル・詳細パラメータパネル -->
+          <!-- ④ マニュアル・詳細パラメータパネル（シード観測所） -->
           <div id="dom-panel-debug" class="custom-type-panel hidden" style="background: rgba(5, 15, 30, 0.95); border: 1px solid #3b7ca8; border-radius: 4px; padding: 12px; margin-bottom: 12px; text-align: left;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-              <div style="font-weight: bold; color: #ffb74d; font-size: 13px;">⚙️ MANUAL & DEBUG GENERATOR (詳細パラメータ設定)</div>
+              <div style="font-weight: bold; color: #ffb74d; font-size: 13px;">🔬 SEED OBSERVATORY (シード観測・詳細設定)</div>
               <button id="dom-debug-preview-btn" style="background: #263238; color: #80cbc4; border: 1px solid #009688; padding: 4px 10px; font-size: 11px; border-radius: 3px; cursor: pointer;">
-                🔍 診断プレビュー
+                🔍 観測プロファイル実行
               </button>
             </div>
             
@@ -533,8 +548,8 @@ export class DOMUIManager {
               </div>
             </div>
 
-            <!-- 診断レポートプレビュー表示枠 -->
-            <div id="dom-debug-report-box" class="hidden" style="background: rgba(0, 0, 0, 0.6); border: 1px solid #444; border-radius: 3px; padding: 6px; font-size: 10px; font-family: monospace; color: #a5d6a7; max-height: 120px; overflow-y: auto;"></div>
+            <!-- 診断レポートプレビュー表示枠（リアルタイム観測プロファイル） -->
+            <div id="dom-debug-report-box" class="hidden" style="background: rgba(0, 0, 0, 0.7); border: 1px solid #00897b; border-radius: 4px; padding: 8px; font-size: 11px; color: #e0f2f1; max-height: 320px; overflow-y: auto; margin-top: 8px;"></div>
           </div>
 
           <!-- テスト互換用エイリアス要素（既存テストのDOM存在確認用） -->
@@ -595,8 +610,10 @@ export class DOMUIManager {
           <h1 class="clear-title">★ STAGE CLEAR ★</h1>
           <p class="clear-subtitle">ドラゴンの4つの王冠をすべて我が家へ持ち帰りました！</p>
           <div class="clear-crowns-display">👑 👑 👑 👑</div>
+          <div id="dom-clear-challenge-badge" style="margin: 10px 0; font-size: 14px; font-weight: bold; color: #ffd54f;"></div>
+          <div id="dom-clear-stats" style="font-size: 13px; color: #b0bec5; margin-bottom: 12px;"></div>
           <p class="clear-message">Congratulation on defeating the 3-headed Dragon!</p>
-          <button class="action-btn-large" id="dom-replay-btn" style="margin-top: 24px;">👑 REPLAY STAGE</button>
+          <button class="action-btn-large" id="dom-replay-btn" style="margin-top: 16px;">👑 REPLAY STAGE</button>
           <button class="action-btn-secondary" id="dom-clear-save-preset-btn" style="margin-top: 8px; width: 100%; border: 1px solid #ffd54f; background: #3e2723; color: #ffe082; padding: 8px; font-size: 12px; cursor: pointer;">★ このマップ（シードと設定）をプリセット保存</button>
         </div>
       </div>
@@ -649,6 +666,8 @@ export class DOMUIManager {
     this.gameoverCauseMsgEl = this.container.querySelector('#dom-gameover-cause-msg');
     this.gameoverAvatarCanvasEl = this.container.querySelector('#dom-gameover-avatar-canvas');
     this.clearModalEl = this.container.querySelector('#dom-clear-modal');
+    this.clearChallengeBadgeEl = this.container.querySelector('#dom-clear-challenge-badge');
+    this.clearStatsEl = this.container.querySelector('#dom-clear-stats');
     this.startBtnEl = this.container.querySelector('#dom-start-btn');
     this.proceduralBtnEl = this.container.querySelector('#dom-procedural-btn');
     this.continueBtnEl = this.container.querySelector('#dom-continue-btn');
@@ -820,78 +839,176 @@ export class DOMUIManager {
     // ランダムシード生成ボタン
     const randSeedBtn = this.container?.querySelector('#dom-debug-rand-seed-btn') as HTMLElement | null;
     const seedInput = this.container?.querySelector('#dom-debug-seed') as HTMLInputElement | null;
+    const previewBtn = this.container?.querySelector('#dom-debug-preview-btn') as HTMLElement | null;
+    const reportBox = this.container?.querySelector('#dom-debug-report-box') as HTMLElement | null;
+
+    const executeObservatoryPreview = () => {
+      if (!reportBox) return;
+      const topoSelect = this.container?.querySelector('#dom-debug-topology') as HTMLSelectElement | null;
+      const diffSelect = this.container?.querySelector('#dom-debug-diff') as HTMLSelectElement | null;
+      const paceSelect = this.container?.querySelector('#dom-debug-pacing') as HTMLSelectElement | null;
+      const archSelect = this.container?.querySelector('#dom-debug-archetype') as HTMLSelectElement | null;
+      const ruleSelect = this.container?.querySelector('#dom-debug-rule-mode') as HTMLSelectElement | null;
+      const chestsInput = this.container?.querySelector('#dom-debug-chests') as HTMLInputElement | null;
+      const gravesInput = this.container?.querySelector('#dom-debug-graves') as HTMLInputElement | null;
+      const enemyAtkInput = this.container?.querySelector('#dom-debug-enemy-atk') as HTMLInputElement | null;
+      const dragonDefInput = this.container?.querySelector('#dom-debug-dragon-def') as HTMLInputElement | null;
+
+      const topo = (topoSelect?.value as DungeonTopology) ?? 'MULTI_SECTOR';
+      const diff = (diffSelect?.value as MapDifficulty) ?? 'NORMAL';
+      const pace = (paceSelect?.value as PlayPacingMode) ?? 'STANDARD';
+      const arch = (archSelect?.value as DungeonArchetype) ?? 'BALANCED';
+      const rule = (ruleSelect?.value as RuleMode) ?? 'EXPONENTIAL';
+      const seedVal = seedInput?.value ? parseInt(seedInput.value, 10) : 123456;
+      const chestsVal = chestsInput?.value ? parseInt(chestsInput.value, 10) : 100;
+      const gravesVal = gravesInput?.value ? parseInt(gravesInput.value, 10) : 20;
+      const enemyAtk = enemyAtkInput?.value ? parseFloat(enemyAtkInput.value) : 1.0;
+      const dragonDef = dragonDefInput?.value ? parseFloat(dragonDefInput.value) : 1.0;
+
+      reportBox.classList.remove('hidden');
+
+      if (topo === 'CLASSIC_FIXED') {
+        const map = new WorldMap(64, 64);
+        const report = ProceduralMapGenerator.validateSolvability(map);
+        const profile = MapProfiler.profile(map, { seed: 0, topology: 'CLASSIC_FIXED' });
+        const diffClass = `diff-badge diff-badge-${profile.estimatedDifficulty.toLowerCase()}`;
+        const tagBadges = profile.tags.map(t => `<span class="preset-tag-chip">${t}</span>`).join(' ');
+
+        reportBox.innerHTML = `
+          <div class="observatory-report-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span style="color: #64b5f6; font-weight: bold; font-size: 12px;">🔧 [CLASSIC FIXED TESTBED]</span>
+              <span class="${diffClass}">${profile.estimatedDifficulty}</span>
+            </div>
+            <div style="margin-bottom: 6px;">物理解法性: <strong style="color: ${report.isSolvable ? '#81c784' : '#e57373'}">${report.isSolvable ? 'PASS (100%保証)' : 'FAIL'}</strong> | 難易度指数: <strong style="color: #ffb74d;">${profile.challengeRating}/100</strong></div>
+            <div class="observatory-metrics-grid">
+              <div class="observatory-metric-box"><div class="observatory-metric-label">開放度 (Openness)</div><div class="observatory-metric-val">${(profile.metrics.opennessScore * 100).toFixed(1)}%</div></div>
+              <div class="observatory-metric-box"><div class="observatory-metric-label">迷路度 (Maze)</div><div class="observatory-metric-val">${(profile.metrics.mazeIndex * 100).toFixed(1)}%</div></div>
+              <div class="observatory-metric-box"><div class="observatory-metric-label">独立部屋数</div><div class="observatory-metric-val">${profile.metrics.roomCount}室</div></div>
+              <div class="observatory-metric-box"><div class="observatory-metric-label">初期剣コスト</div><div class="observatory-metric-val">${profile.metrics.swordWalkDistance}歩</div></div>
+              <div class="observatory-metric-box"><div class="observatory-metric-label">家周囲未封鎖墓</div><div class="observatory-metric-val">${profile.metrics.nearHomeGraves}基</div></div>
+              <div class="observatory-metric-box"><div class="observatory-metric-label">竜要塞侵入路</div><div class="observatory-metric-val">${profile.metrics.lairAccessibility.entranceCount}箇所</div></div>
+            </div>
+            <div style="font-size: 10px; color: #b0bec5; margin-top: 4px;">宝箱: ${report.counts.chests}個 | 墓: ${report.counts.graves}基 (開口: ${report.counts.openGraves}) | 想定到達STR: ${report.estimatedMaxStr.toLocaleString()}</div>
+            <div class="preset-tag-list" style="margin-top: 6px;">${tagBadges}</div>
+          </div>
+        `;
+      } else {
+        const map = new WorldMap(64, 64);
+        const options: ProceduralMapOptions = {
+          seed: seedVal,
+          topology: topo,
+          difficulty: diff,
+          pacing: pace,
+          archetype: arch,
+          ruleMode: rule,
+          chestCount: chestsVal,
+          graveCount: gravesVal,
+          tuningParams: {
+            progressionConfig: {
+              enemyAtkRatio: enemyAtk,
+              dragonDefRatio: dragonDef,
+            },
+          },
+        };
+        const report = ProceduralMapGenerator.generateDungeon(map, options);
+        const profile = MapProfiler.profile(map, { seed: report.seed, topology: topo });
+        const diffClass = `diff-badge diff-badge-${profile.estimatedDifficulty.toLowerCase()}`;
+        const tagBadges = profile.tags.map(t => `<span class="preset-tag-chip ${t === 'UNBEATEN_BY_BOT' ? 'unbeaten' : ''}">${t}</span>`).join(' ');
+
+        reportBox.innerHTML = `
+          <div class="observatory-report-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; border-bottom: 1px solid rgba(0, 150, 136, 0.4); padding-bottom: 4px;">
+              <span style="color: #4db6ac; font-weight: bold; font-size: 12px;">🔬 観測プロファイル (Seed: ${report.seed})</span>
+              <div style="display: flex; gap: 4px; align-items: center;">
+                <span class="${diffClass}">${profile.estimatedDifficulty}</span>
+                <span style="font-size: 11px; font-weight: bold; color: #ffb74d;">★ ${profile.challengeRating}/100</span>
+              </div>
+            </div>
+            <div style="margin-bottom: 6px; font-size: 11px;">
+              解法性: <strong style="color: ${report.isSolvable ? '#81c784' : '#e57373'}">${report.isSolvable ? 'PASS (100%保証)' : 'FAIL'}</strong> |
+              トポロジー推定: <strong style="color: #80d8ff;">${profile.estimatedTopology}</strong> |
+              ペーシング: <strong style="color: #ce93d8;">${profile.estimatedPacing}</strong>
+            </div>
+
+            <!-- 幾何メトリクスグリッド -->
+            <div class="observatory-metrics-grid">
+              <div class="observatory-metric-box">
+                <div class="observatory-metric-label">開放度 (Openness)</div>
+                <div class="observatory-metric-val">${(profile.metrics.opennessScore * 100).toFixed(1)}%</div>
+              </div>
+              <div class="observatory-metric-box">
+                <div class="observatory-metric-label">迷路度 (Maze)</div>
+                <div class="observatory-metric-val">${(profile.metrics.mazeIndex * 100).toFixed(1)}%</div>
+              </div>
+              <div class="observatory-metric-box">
+                <div class="observatory-metric-label">独立部屋数</div>
+                <div class="observatory-metric-val">${profile.metrics.roomCount}室</div>
+              </div>
+              <div class="observatory-metric-box">
+                <div class="observatory-metric-label">初期剣コスト</div>
+                <div class="observatory-metric-val">${profile.metrics.swordWalkDistance}歩</div>
+              </div>
+              <div class="observatory-metric-box">
+                <div class="observatory-metric-label">家周辺12マス墓</div>
+                <div class="observatory-metric-val">${profile.metrics.nearHomeGraves}基</div>
+              </div>
+              <div class="observatory-metric-box">
+                <div class="observatory-metric-label">要塞アクセス</div>
+                <div class="observatory-metric-val">開口${profile.metrics.lairAccessibility.entranceCount} / 安${profile.metrics.lairAccessibility.safeSpacesCount}</div>
+              </div>
+              <div class="observatory-metric-box">
+                <div class="observatory-metric-label">セクター分断度</div>
+                <div class="observatory-metric-val">${(profile.metrics.sectorPartitionScore * 100).toFixed(1)}%</div>
+              </div>
+              <div class="observatory-metric-box">
+                <div class="observatory-metric-label">宝箱 / 墓数</div>
+                <div class="observatory-metric-val">${report.counts.chests}個 / ${report.counts.graves}基</div>
+              </div>
+            </div>
+
+            <div style="font-size: 10px; color: #80cbc4; margin: 4px 0;">
+              想定到達STR: ${report.estimatedMaxStr.toLocaleString()} (中首撃破基準) | 重複ゼロ: ${report.hasZeroOverlaps ? 'OK' : 'FAIL'} | 内部壁BLOCK化: ${report.internalWallsAreBlocks ? 'OK' : 'FAIL'}
+            </div>
+            ${report.issues.length > 0 ? `<div style="color: #ef5350; font-size: 10px;">Issues: ${report.issues.join(', ')}</div>` : ''}
+
+            <!-- 特徴タグ一覧 -->
+            <div class="preset-tag-list" style="margin-top: 6px;">
+              ${tagBadges}
+            </div>
+          </div>
+        `;
+      }
+    };
+
     if (randSeedBtn && seedInput) {
       randSeedBtn.addEventListener('click', () => {
         seedInput.value = String(Math.floor(Math.random() * 900000) + 100000);
+        executeObservatoryPreview();
+      });
+
+      // シード値の直接入力時にもリアルタイムでプレビュー更新
+      let seedInputDebounceTimer: any = null;
+      seedInput.addEventListener('input', () => {
+        if (seedInputDebounceTimer) clearTimeout(seedInputDebounceTimer);
+        seedInputDebounceTimer = setTimeout(() => {
+          executeObservatoryPreview();
+        }, 300);
+      });
+    }
+
+    // クイック設定の乱数シードボタン
+    const procRandSeedBtn = this.container?.querySelector('#dom-proc-rand-seed-btn') as HTMLElement | null;
+    const procSeedInput = this.container?.querySelector('#dom-proc-seed') as HTMLInputElement | null;
+    if (procRandSeedBtn && procSeedInput) {
+      procRandSeedBtn.addEventListener('click', () => {
+        procSeedInput.value = String(Math.floor(Math.random() * 900000) + 100000);
       });
     }
 
     // 診断プレビューボタン
-    const previewBtn = this.container?.querySelector('#dom-debug-preview-btn') as HTMLElement | null;
-    const reportBox = this.container?.querySelector('#dom-debug-report-box') as HTMLElement | null;
-    if (previewBtn && reportBox) {
-      previewBtn.addEventListener('click', () => {
-        const topoSelect = this.container?.querySelector('#dom-debug-topology') as HTMLSelectElement | null;
-        const diffSelect = this.container?.querySelector('#dom-debug-diff') as HTMLSelectElement | null;
-        const paceSelect = this.container?.querySelector('#dom-debug-pacing') as HTMLSelectElement | null;
-        const archSelect = this.container?.querySelector('#dom-debug-archetype') as HTMLSelectElement | null;
-        const ruleSelect = this.container?.querySelector('#dom-debug-rule-mode') as HTMLSelectElement | null;
-        const chestsInput = this.container?.querySelector('#dom-debug-chests') as HTMLInputElement | null;
-        const gravesInput = this.container?.querySelector('#dom-debug-graves') as HTMLInputElement | null;
-        const enemyAtkInput = this.container?.querySelector('#dom-debug-enemy-atk') as HTMLInputElement | null;
-        const dragonDefInput = this.container?.querySelector('#dom-debug-dragon-def') as HTMLInputElement | null;
-
-        const topo = (topoSelect?.value as DungeonTopology) ?? 'MULTI_SECTOR';
-        const diff = (diffSelect?.value as MapDifficulty) ?? 'NORMAL';
-        const pace = (paceSelect?.value as PlayPacingMode) ?? 'STANDARD';
-        const arch = (archSelect?.value as DungeonArchetype) ?? 'BALANCED';
-        const rule = (ruleSelect?.value as RuleMode) ?? 'EXPONENTIAL';
-        const seedVal = seedInput?.value ? parseInt(seedInput.value, 10) : 123456;
-        const chestsVal = chestsInput?.value ? parseInt(chestsInput.value, 10) : 100;
-        const gravesVal = gravesInput?.value ? parseInt(gravesInput.value, 10) : 20;
-        const enemyAtk = enemyAtkInput?.value ? parseFloat(enemyAtkInput.value) : 1.0;
-        const dragonDef = dragonDefInput?.value ? parseFloat(dragonDefInput.value) : 1.0;
-
-        reportBox.classList.remove('hidden');
-        if (topo === 'CLASSIC_FIXED') {
-          const map = new WorldMap(64, 64);
-          const report = ProceduralMapGenerator.validateSolvability(map);
-          reportBox.innerHTML = `
-            <div style="color: #64b5f6; font-weight: bold;">[TESTBED MAP REPORT]</div>
-            <div>Solvable: <strong style="color: ${report.isSolvable ? '#81c784' : '#e57373'}">${report.isSolvable ? 'PASS (クリア可能)' : 'FAIL'}</strong></div>
-            <div>宝箱: ${report.counts.chests}個 | 墓: ${report.counts.graves}基 (開口: ${report.counts.openGraves})</div>
-            <div>想定到達STR: ${report.estimatedMaxStr.toLocaleString()}</div>
-          `;
-        } else {
-          const map = new WorldMap(64, 64);
-          const options: ProceduralMapOptions = {
-            seed: seedVal,
-            topology: topo,
-            difficulty: diff,
-            pacing: pace,
-            archetype: arch,
-            ruleMode: rule,
-            chestCount: chestsVal,
-            graveCount: gravesVal,
-            tuningParams: {
-              progressionConfig: {
-                enemyAtkRatio: enemyAtk,
-                dragonDefRatio: dragonDef,
-              },
-            },
-          };
-          const report = ProceduralMapGenerator.generateDungeon(map, options);
-          reportBox.innerHTML = `
-            <div style="color: #ffd54f; font-weight: bold;">[PROCEDURAL SOLVABILITY REPORT]</div>
-            <div>Seed: ${report.seed} | Topo: ${topo} | Diff: ${diff} | Arch: ${arch} | Rule: ${rule}</div>
-            <div>Solvable: <strong style="color: ${report.isSolvable ? '#81c784' : '#e57373'}">${report.isSolvable ? 'PASS (クリア可能)' : 'FAIL'}</strong></div>
-            <div>宝箱: ${report.counts.chests}個 | 墓: ${report.counts.graves}基 (開口: ${report.counts.openGraves})</div>
-            <div>重複ゼロ: ${report.hasZeroOverlaps ? 'OK' : 'FAIL'} | 内部壁BLOCK化: ${report.internalWallsAreBlocks ? 'OK' : 'FAIL'}</div>
-            <div>想定到達STR: ${report.estimatedMaxStr.toLocaleString()} (中首突破基準)</div>
-            ${report.issues.length > 0 ? `<div style="color: #e57373;">Issue: ${report.issues.join('<br>')}</div>` : ''}
-          `;
-        }
-      });
+    if (previewBtn) {
+      previewBtn.addEventListener('click', executeObservatoryPreview);
     }
 
     // 設定タイプ切り替え（セグメントタブUI連動）
@@ -981,7 +1098,9 @@ export class DOMUIManager {
           const paceSelect = this.container?.querySelector('#dom-proc-pacing') as HTMLSelectElement | null;
           const archSelect = this.container?.querySelector('#dom-proc-archetype') as HTMLSelectElement | null;
           const ruleSelect = this.container?.querySelector('#dom-proc-rule-mode') as HTMLSelectElement | null;
+          const procSeedInput = this.container?.querySelector('#dom-proc-seed') as HTMLInputElement | null;
           const options: ProceduralMapOptions = {
+            seed: procSeedInput?.value ? parseInt(procSeedInput.value, 10) : undefined,
             topology: (topoSelect?.value as DungeonTopology) ?? 'MULTI_SECTOR',
             difficulty: (diffSelect?.value as MapDifficulty) ?? 'NORMAL',
             pacing: (paceSelect?.value as PlayPacingMode) ?? 'STANDARD',
@@ -1059,7 +1178,9 @@ export class DOMUIManager {
           const paceSelect = this.container?.querySelector('#dom-proc-pacing') as HTMLSelectElement | null;
           const archSelect = this.container?.querySelector('#dom-proc-archetype') as HTMLSelectElement | null;
           const ruleSelect = this.container?.querySelector('#dom-proc-rule-mode') as HTMLSelectElement | null;
+          const procSeedInput = this.container?.querySelector('#dom-proc-seed') as HTMLInputElement | null;
           const options: ProceduralMapOptions = {
+            seed: procSeedInput?.value ? parseInt(procSeedInput.value, 10) : undefined,
             topology: (topoSelect?.value as DungeonTopology) ?? 'MULTI_SECTOR',
             difficulty: (diffSelect?.value as MapDifficulty) ?? 'NORMAL',
             pacing: (paceSelect?.value as PlayPacingMode) ?? 'STANDARD',
@@ -1197,6 +1318,13 @@ export class DOMUIManager {
     // プリセット一覧の描画
     this.refreshPresetList();
 
+    // プリセット選択変更時にプロファイル詳細カードを更新
+    if (presetSelect) {
+      presetSelect.addEventListener('change', () => {
+        this.updatePresetDetailCardFromSelected();
+      });
+    }
+
     const presetAutoplayBtn = this.container?.querySelector('#dom-preset-autoplay-btn') as HTMLElement | null;
     const shareCodeAutoplayBtn = this.container?.querySelector('#dom-share-code-autoplay-btn') as HTMLElement | null;
 
@@ -1324,9 +1452,138 @@ export class DOMUIManager {
 
     const presets = MapPresetManager.getAllPresets();
     presetSelect.innerHTML = presets.map(p => {
-      const tag = p.isCurated ? '★ [公式]' : '💾 [保存]';
-      return `<option value="${p.id}">${tag} ${p.name} (Seed: ${p.seed})</option>`;
+      let tag = p.isCurated ? '★ [公式]' : '💾 [保存]';
+      if (p.metrics?.playerCleared) {
+        tag = '🏆 [踏破済]';
+      } else if (p.metrics?.isUnbeatenChallenge || p.metrics?.botStatus === 'UNBEATEN_BY_BOT') {
+        tag = '🤖 [未踏破]';
+      }
+      const diffTag = p.metrics?.estimatedDifficulty ? ` [${p.metrics.estimatedDifficulty}]` : '';
+      return `<option value="${p.id}">${tag}${diffTag} ${p.name} (Seed: ${p.seed})</option>`;
     }).join('');
+
+    this.updatePresetDetailCardFromSelected();
+  }
+
+  /**
+   * 現在プルダウンで選択されているプリセットの詳細カードを更新
+   */
+  public updatePresetDetailCardFromSelected(): void {
+    const presetSelect = this.container?.querySelector('#dom-preset-select') as HTMLSelectElement | null;
+    if (!presetSelect) return;
+    const presets = MapPresetManager.getAllPresets();
+    const selected = presets.find(p => p.id === presetSelect.value) ?? presets[0];
+    if (selected) {
+      this.updatePresetDetailCard(selected);
+    }
+  }
+
+  /**
+   * プリセット詳細カード（#dom-preset-detail-card）を動的描画
+   */
+  public updatePresetDetailCard(preset: MapPresetData): void {
+    const cardEl = this.container?.querySelector('#dom-preset-detail-card') as HTMLElement | null;
+    if (!cardEl) return;
+
+    const m = preset.metrics;
+    const difficulty = m?.estimatedDifficulty ?? preset.options.difficulty ?? 'NORMAL';
+    const topology = m?.estimatedTopology ?? preset.options.topology ?? 'MULTI_SECTOR';
+    const pacing = m?.estimatedPacing ?? preset.options.pacing ?? 'STANDARD';
+
+    // チャレンジ指数の算出（未設定時は難易度からフォールバック算出）
+    const challengeRating = m?.challengeRating ?? (
+      difficulty === 'NIGHTMARE' ? 92 :
+      difficulty === 'HARD' ? 68 :
+      difficulty === 'NORMAL' ? 42 : 22
+    );
+
+    // ゲージ色
+    const ratingColor = challengeRating >= 80 ? '#f44336' : challengeRating >= 50 ? '#ff9800' : '#4caf50';
+
+    // ボット観測ステータス
+    let botStatusHtml = '';
+    if (m?.isUnbeatenChallenge || m?.botStatus === 'UNBEATEN_BY_BOT') {
+      botStatusHtml = '<span style="color: #ff5252; font-weight: bold;">🤖 ボット1600T未踏破チャレンジ！</span>';
+    } else if (m?.botStatus === 'CLEARED' && m.botTurns) {
+      botStatusHtml = `<span style="color: #69f0ae;">🤖 ボット基準クリア: <strong>${m.botTurns}</strong> ターン</span>`;
+    } else if (preset.isCurated) {
+      botStatusHtml = '<span style="color: #80d8ff;">🤖 ボット基準クリア検証済</span>';
+    } else {
+      botStatusHtml = '<span style="color: #b0bec5;">🤖 ボット観測: 未測定</span>';
+    }
+
+    // プレイヤー自身の踏破記録
+    let playerClearHtml = '';
+    if (m?.playerCleared) {
+      const turns = m.playerClearTurns ?? m.clearTurns ?? '---';
+      playerClearHtml = `<span style="color: #ffd700; font-weight: bold;">🏆 踏破済: 最速 ${turns} ターン</span>`;
+    } else {
+      playerClearHtml = '<span style="color: #9e9e9e;">⚪ 未踏破（挑戦求む！）</span>';
+    }
+
+    // 特徴タグリスト
+    const tags = m?.tags && m.tags.length > 0
+      ? m.tags
+      : [topology, difficulty, pacing];
+
+    const tagBadgesHtml = tags.map(t => {
+      const isUnbeaten = t === 'UNBEATEN_BY_BOT';
+      return `<span class="preset-tag-chip ${isUnbeaten ? 'unbeaten' : ''}">${t}</span>`;
+    }).join(' ');
+
+    const diffBadgeClass = `diff-badge diff-badge-${difficulty.toLowerCase()}`;
+
+    cardEl.innerHTML = `
+      <div class="preset-card-header">
+        <div>
+          <div class="preset-card-title">${preset.name}</div>
+          <div style="font-size: 10px; color: #7986cb; font-family: monospace;">Seed: ${preset.seed} | ID: ${preset.id}</div>
+        </div>
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <span class="${diffBadgeClass}">${difficulty}</span>
+          <span style="font-size: 11px; font-weight: bold; color: ${ratingColor};">★ ${challengeRating}/100</span>
+        </div>
+      </div>
+
+      <div class="preset-card-desc">
+        ${preset.description ?? 'カスタムダンジョンシード。事後観測による地形プロファイルが適用されています。'}
+      </div>
+
+      <div class="preset-metrics-grid">
+        <div class="preset-metric-item">
+          <div class="preset-metric-label">推定トポロジー</div>
+          <div class="preset-metric-val" style="color: #80d8ff;">${topology}</div>
+        </div>
+        <div class="preset-metric-item">
+          <div class="preset-metric-label">ペース配分</div>
+          <div class="preset-metric-val" style="color: #ce93d8;">${pacing}</div>
+        </div>
+        <div class="preset-metric-item">
+          <div class="preset-metric-label">チャレンジ指数</div>
+          <div class="preset-metric-val">
+            <div class="challenge-rating-container">
+              <div class="challenge-rating-track">
+                <div class="challenge-rating-fill" style="width: ${challengeRating}%; background: ${ratingColor};"></div>
+              </div>
+              <span style="font-size: 10px; color: ${ratingColor};">${challengeRating}</span>
+            </div>
+          </div>
+        </div>
+        <div class="preset-metric-item">
+          <div class="preset-metric-label">ボット観測ステータス</div>
+          <div class="preset-metric-val" style="font-size: 11px;">${botStatusHtml}</div>
+        </div>
+        <div class="preset-metric-item">
+          <div class="preset-metric-label">プレイヤー踏破記録</div>
+          <div class="preset-metric-val" style="font-size: 11px;">${playerClearHtml}</div>
+        </div>
+      </div>
+
+      <div style="margin-top: 6px;">
+        <div style="font-size: 10px; color: #9fa8da; margin-bottom: 3px;">特徴タグ (Tags):</div>
+        <div class="preset-tag-list">${tagBadgesHtml}</div>
+      </div>
+    `;
   }
 
   /**
@@ -1448,8 +1705,51 @@ export class DOMUIManager {
     if (this.clearModalEl) {
       if (state === 'STAGECLEAR') {
         this.clearModalEl.classList.remove('hidden');
+        if (player) {
+          this.renderClearDetails(player, totalKills, totalTurns);
+        }
       } else {
         this.clearModalEl.classList.add('hidden');
+      }
+    }
+  }
+
+  /**
+   * ステージクリアモーダルの詳細情報（クリアターン数、難関シード踏破バッジ等）を描画
+   */
+  private renderClearDetails(player: Player, totalKills: number, totalTurns: number): void {
+    if (this.clearStatsEl) {
+      this.clearStatsEl.innerHTML = `
+        <div>所要ターン数: <strong style="color: #81c784;">${totalTurns} ターン</strong> | 討伐数: <strong>${totalKills} 体</strong></div>
+        <div style="margin-top: 4px;">最終STR: <strong>${player.strength.toLocaleString()}</strong> | 獲得ゴールド: <strong>${player.gold} G</strong></div>
+      `;
+    }
+
+    if (this.clearChallengeBadgeEl) {
+      // プリセット情報を照会
+      const presets = MapPresetManager.getAllPresets();
+      const matched = presets.find(p => p.metrics?.playerCleared || p.metrics?.clearTurns === totalTurns);
+
+      if (matched?.metrics?.isUnbeatenChallenge || matched?.metrics?.botStatus === 'UNBEATEN_BY_BOT') {
+        this.clearChallengeBadgeEl.innerHTML = `
+          <div style="background: rgba(255, 215, 0, 0.15); border: 1px solid #ffd54f; border-radius: 4px; padding: 6px 10px;">
+            🏆 【難関シード踏破達成！】<br>
+            <span style="font-size: 12px; color: #fff9c4;">標準AutoPlayBot未踏破マップを完全攻略しました！</span>
+          </div>
+        `;
+      } else if (
+        matched?.options.difficulty === 'HARD' ||
+        matched?.metrics?.estimatedDifficulty === 'HARD' ||
+        matched?.metrics?.estimatedDifficulty === 'NIGHTMARE'
+      ) {
+        this.clearChallengeBadgeEl.innerHTML = `
+          <div style="background: rgba(255, 171, 0, 0.15); border: 1px solid #ffb74d; border-radius: 4px; padding: 6px 10px;">
+            🎖️ 【高難度チャレンジ制覇！】<br>
+            <span style="font-size: 12px; color: #ffe0b2;">歯ごたえある難関ダンジョンを見事に踏破しました！</span>
+          </div>
+        `;
+      } else {
+        this.clearChallengeBadgeEl.innerHTML = '';
       }
     }
   }

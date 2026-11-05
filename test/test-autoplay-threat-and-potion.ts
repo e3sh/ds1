@@ -45,10 +45,21 @@ console.log('--- AutoPlayBot Threat Evaluation & POTION Stock Priority Verificat
 {
   console.log('Testing 2: KEY holder prioritizes POTION over COIN and restricts COIN pickup...');
   const bot = new AutoPlayBot({ profile: 'STANDARD' });
-  const engine = new GameEngine({ headless: true });
+  const engine = new GameEngine(null, { seed: 12345 });
   engine.startGame();
   const player = engine.getPlayer();
   const map = engine.getMap();
+
+  // 敵・アイテムをクリアして純粋なアイテム優先度を検証
+  engine.getEnemies().length = 0;
+  for (let dy = -2; dy <= 7; dy++) {
+    for (let dx = -2; dx <= 2; dx++) {
+      const p = { x: 20 + dx, y: 20 + dy };
+      map.setItem(p, 'NONE');
+      map.setObject(p, 'NONE');
+      map.setBaseTile(p, 'EMPTY');
+    }
+  }
 
   player.pos = { x: 20, y: 20 };
   player.hasSword = true;

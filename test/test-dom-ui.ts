@@ -2,6 +2,11 @@ import assert from 'node:assert';
 import { DOMUIManager } from '../src/view/DOMUIManager.js';
 import { Player } from '../src/models/Player.js';
 import { MAGIC_TABLE } from '../src/config/MagicTable.js';
+import { InspectorModal } from '../src/view/InspectorModal.js';
+import { WorldMap } from '../src/models/WorldMap.js';
+import { Dragon } from '../src/models/Dragon.js';
+import { TuningPresetResolver } from '../src/config/TuningPresetResolver.js';
+import { CURATED_PRESETS } from '../src/services/MapPresetManager.js';
 
 console.log('--- DOM UI Layer Verification ---');
 
@@ -304,6 +309,238 @@ console.log('--- DOM UI Layer Verification ---');
 
   delete (globalThis as any).document;
   console.log('✓ 2. DOMUIManager Dirty check, DOM element reference persistence, and Inspector integration verified.');
+}
+
+// Test 3: Phase 15 Seed Observatory & Challenge Catalog UI Verification
+{
+  console.log('Testing 3: Seed Observatory & Challenge Catalog UI integration...');
+
+  // DOMモック環境の構築
+  class MockElement {
+    public tagName: string;
+    public id: string = '';
+    public className: string = '';
+    public textContent: string = '';
+    public value: string = '';
+    public style: Record<string, string> = {};
+    public children: MockElement[] = [];
+    public attributes: Record<string, string> = {};
+    public listeners: Record<string, Function[]> = {};
+    public disabled: boolean = false;
+    private _innerHTML: string = '';
+
+    constructor(tagName: string) {
+      this.tagName = tagName.toUpperCase();
+    }
+
+    get classList() {
+      return {
+        add: (...cls: string[]) => {
+          const set = new Set(this.className.split(/\s+/).filter(Boolean));
+          cls.forEach((c) => set.add(c));
+          this.className = Array.from(set).join(' ');
+        },
+        remove: (...cls: string[]) => {
+          const set = new Set(this.className.split(/\s+/).filter(Boolean));
+          cls.forEach((c) => set.delete(c));
+          this.className = Array.from(set).join(' ');
+        },
+        contains: (c: string) => this.className.split(/\s+/).includes(c),
+      };
+    }
+
+    get innerHTML(): string {
+      return this._innerHTML;
+    }
+
+    set innerHTML(html: string) {
+      this._innerHTML = html;
+      this.children = [];
+      const tagRegex = /<([a-zA-Z0-9]+)([^>]*)>(.*?)<\/\1>|<([a-zA-Z0-9]+)([^>]*)\/?>/gs;
+      let match;
+      while ((match = tagRegex.exec(html)) !== null) {
+        const tagName = match[1] || match[4];
+        const attrStr = match[2] || match[5] || '';
+        const inner = match[3] || '';
+        const child = new MockElement(tagName);
+        const idMatch = attrStr.match(/id=["']([^"']+)["']/);
+        if (idMatch) child.id = idMatch[1];
+        const classMatch = attrStr.match(/class=["']([^"']+)["']/);
+        if (classMatch) child.className = classMatch[1];
+        if (inner) child.innerHTML = inner;
+        this.children.push(child);
+      }
+    }
+
+    appendChild(child: MockElement): MockElement {
+      this.children.push(child);
+      return child;
+    }
+
+    getAttribute(attr: string): string | null {
+      return this.attributes[attr] ?? null;
+    }
+
+    setAttribute(attr: string, val: string): void {
+      this.attributes[attr] = val;
+    }
+
+    addEventListener(event: string, fn: Function): void {
+      if (!this.listeners[event]) this.listeners[event] = [];
+      this.listeners[event].push(fn);
+    }
+
+    querySelector<T = MockElement>(sel: string): T | null {
+      const all = this.querySelectorAll(sel);
+      return (all[0] as unknown as T) ?? null;
+    }
+
+    querySelectorAll(sel: string): MockElement[] {
+      const results: MockElement[] = [];
+      const check = (el: MockElement) => {
+        let matched = false;
+        if (sel.startsWith('#') && el.id === sel.slice(1)) matched = true;
+        else if (sel.startsWith('.') && el.classList.contains(sel.slice(1))) matched = true;
+        else if (sel.toUpperCase() === el.tagName) matched = true;
+        if (matched) results.push(el);
+        for (const c of el.children) check(c);
+      };
+      for (const c of this.children) check(c);
+      return results;
+    }
+
+    getContext() {
+      return {
+        imageSmoothingEnabled: false,
+        clearRect: () => {},
+        fillRect: () => {},
+        strokeRect: () => {},
+        beginPath: () => {},
+        stroke: () => {},
+        moveTo: () => {},
+        lineTo: () => {},
+        arc: () => {},
+        fill: () => {},
+        scale: () => {},
+        save: () => {},
+        restore: () => {},
+        fillText: () => {},
+        drawImage: () => {},
+      };
+    }
+  }
+
+  const elementsById: Record<string, MockElement> = {};
+  const mockBody = new MockElement('BODY');
+
+  const mockDoc = {
+    body: mockBody,
+    createElement: (tag: string) => new MockElement(tag),
+    getElementById: (id: string) => elementsById[id] ?? mockBody.querySelector('#' + id) ?? null,
+  };
+
+  (globalThis as any).document = mockDoc;
+
+  const container = new MockElement('DIV');
+  container.id = 'dom-ui-layer-phase15';
+  elementsById['dom-ui-layer-phase15'] = container;
+  mockBody.children.push(container);
+
+  const domUI = new DOMUIManager('dom-ui-layer-phase15');
+
+  // 1. プリセット詳細カードの存在確認
+  const presetDetailCard = container.querySelector('#dom-preset-detail-card');
+  assert.ok(presetDetailCard, '#dom-preset-detail-card must exist in custom modal');
+
+  // 2. 公式プリセット一覧およびカード描画
+  domUI.openCustomModal();
+  const presetSelect = container.querySelector('#dom-preset-select') as any;
+  assert.ok(presetSelect, '#dom-preset-select must exist');
+  assert.ok(presetDetailCard.innerHTML.length > 0, 'Preset detail card should be populated with HTML');
+
+  // 3. ボット未踏破チャレンジプリセットの詳細カード描画検証
+  const nightmarePreset = CURATED_PRESETS.find(p => p.id === 'curated_unbeaten_nightmare');
+  assert.ok(nightmarePreset, 'Nightmare unbeaten curated preset must exist');
+
+  domUI.updatePresetDetailCard(nightmarePreset);
+  assert.ok(presetDetailCard.innerHTML.includes('ボット1600T未踏破チャレンジ'), 'Card should show unbeaten bot challenge status');
+  assert.ok(presetDetailCard.innerHTML.includes('UNBEATEN_BY_BOT'), 'Card should show UNBEATEN_BY_BOT tag');
+  assert.ok(presetDetailCard.innerHTML.includes('NIGHTMARE'), 'Card should display NIGHTMARE difficulty badge');
+
+  // 4. 診断プレビューボタン (#dom-debug-preview-btn) のリアルタイム観測プロファイル実行検証
+  const previewBtn = container.querySelector('#dom-debug-preview-btn') as any;
+  const reportBox = container.querySelector('#dom-debug-report-box') as any;
+  const randSeedBtn = container.querySelector('#dom-debug-rand-seed-btn') as any;
+  const seedInput = container.querySelector('#dom-debug-seed') as any;
+  assert.ok(previewBtn, '#dom-debug-preview-btn must exist');
+  assert.ok(reportBox, '#dom-debug-report-box must exist');
+
+  // プレビュー実行
+  if (previewBtn.listeners['click'] && previewBtn.listeners['click'][0]) {
+    previewBtn.listeners['click'][0]();
+    assert.ok(reportBox.innerHTML.includes('観測プロファイル'), 'Report box should contain observation profile');
+    assert.ok(reportBox.innerHTML.includes('開放度'), 'Report box should contain openness metric');
+    assert.ok(reportBox.innerHTML.includes('迷路度'), 'Report box should contain maze metric');
+    assert.ok(reportBox.innerHTML.includes('初期剣コスト'), 'Report box should contain sword walk distance');
+  }
+
+  // 乱数シードボタン押下による連動プレビュー実行
+  if (randSeedBtn.listeners['click'] && randSeedBtn.listeners['click'][0]) {
+    randSeedBtn.listeners['click'][0]();
+    assert.ok(seedInput.value.length > 0, 'Seed input should receive random seed');
+    assert.ok(reportBox.innerHTML.includes('Seed:'), 'Report box should update with new seed profile');
+  }
+
+  // 5. InspectorModal の Phase 15 プロファイル & Phase 14 戦術メタデータ描画検証
+  const inspector = new InspectorModal();
+  const testMap = new WorldMap(64, 64);
+  testMap.tacticalMetadata = {
+    dragonLairStyle: 'OPEN_FORTRESS',
+    recommendedBotTuning: {},
+    recommendedRelocateAnchors: [{ x: 10, y: 10 }, { x: 20, y: 20 }],
+    gravePuzzleHints: [{ position: { x: 5, y: 5 }, solveDirection: 'DOWN' }],
+    treasureZoneHints: [{ anchor: { x: 15, y: 15 }, center: { x: 15, y: 15 }, score: 10, isEightStepOptimal: true }],
+    breachShortcutPositions: [{ x: 30, y: 30 }],
+  };
+
+  const testPlayer = new Player({ hp: 1000 });
+  const testDragon = new Dragon({ x: 32, y: 32 });
+
+  inspector.open({
+    map: testMap,
+    player: testPlayer,
+    dragon: testDragon,
+    ghosts: [],
+    enemies: [],
+    tuningParams: TuningPresetResolver.getClassicDefault(),
+    isProceduralMode: true,
+    proceduralOptions: {
+      seed: 833139,
+      topology: 'FORTRESS_ARENA',
+      difficulty: 'HARD',
+      pacing: 'MARATHON',
+    },
+    totalTurns: 100,
+  });
+
+  const inspectorOverlay = mockBody.querySelector('#dom-inspector-modal');
+  assert.ok(inspectorOverlay, 'Inspector modal overlay must exist in DOM');
+  const inspectorContent = inspectorOverlay.innerHTML;
+
+  // MapProfiler 観測プロファイルの項目が含まれていること
+  assert.ok(inspectorContent.includes('GEOMETRIC METRICS'), 'Inspector must render Geometric Metrics section');
+  assert.ok(inspectorContent.includes('開放度'), 'Inspector must render Openness score');
+  assert.ok(inspectorContent.includes('迷路度'), 'Inspector must render Maze Index');
+  assert.ok(inspectorContent.includes('初期剣到達歩数'), 'Inspector must render swordWalkDistance');
+
+  // Phase 14 戦術メタデータが含まれていること
+  assert.ok(inspectorContent.includes('PHASE 14 TACTICAL INTELLIGENCE'), 'Inspector must render Tactical Intelligence section');
+  assert.ok(inspectorContent.includes('OPEN_FORTRESS'), 'Inspector must render dragonLairStyle');
+  assert.ok(inspectorContent.includes('8歩周期宝物庫エリア'), 'Inspector must render treasureZoneHints count');
+  assert.ok(inspectorContent.includes('我が家移転推奨アンカー'), 'Inspector must render recommendedRelocateAnchors count');
+
+  delete (globalThis as any).document;
+  console.log('✓ 3. Seed Observatory & Challenge Catalog UI integration verified successfully.');
 }
 
 console.log('--- ✓ All DOM UI Tests Passed Successfully! ---');

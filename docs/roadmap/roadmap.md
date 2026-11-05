@@ -32,6 +32,8 @@ flowchart TD
     P11["Phase 11: 4大戦術アーキタイプ & 古典ハイレベル戦術の統合<br/>(SANCTUARY十字架結界, 墓封鎖, ARMORY複数剣デポ, WARP_NEXUS)<br/>【✅ 完了】"]
     P12["Phase 12: 全域9セクター動的配置・コンパクトプレハブ & プリセット共有<br/>(家・竜の動的セクター配置, COMPACT_5x5/3x3, DS1MAP共有コード)<br/>【✅ 完了】"]
     P13["Phase 13: AI戦術高度化 & エンジンモジュール分割リファクタリング<br/>(拠点引越し戦術 HomeRelocation, 8歩チェーン, サブコントローラー化)<br/>【✅ 完了】"]
+    P14["Phase 14: マルチスケール・テーマブロック階層合成 & AI攻略方針連携<br/>(16×16グリッド・4×4基準の階層ブロック合成, MapTacticalMetadata)<br/>【✅ 完了】"]
+    P15["Phase 15: シード観測所 & 挑戦状カタログ & UI/UX刷新<br/>(事後観測プロファイル MapProfiler, 挑戦カタログ, Active Tuning)<br/>【✅ 完了】"]
     Future["将来構想: マルチフロア進行モード / 外部フロントエンド展開<br/>【📋 構想・検討中】"]
 
     P6 --> P9
@@ -40,12 +42,14 @@ flowchart TD
     P10 --> P11
     P11 --> P12
     P12 --> P13
-    P13 --> Future
+    P13 --> P14
+    P14 --> P15
+    P15 --> Future
 ```
 
 ---
 
-## 2. 達成済みフェーズの詳細記録 (Phase 9 〜 Phase 13)
+## 2. 達成済みフェーズの詳細記録 (Phase 9 〜 Phase 15)
 
 ### Phase 9: プロシージャル生成の多彩化 & トポロジー連動パラメータ基盤
 - **ステータス**: 【✅ 完了】
@@ -109,6 +113,45 @@ flowchart TD
 
 ---
 
+### Phase 14: マルチスケール・テーマブロック階層合成 & AI攻略方針メタデータ連携
+- **ステータス**: 【✅ 完了】
+- **詳細設計・実装ロードマップ**: [`docs/roadmap/proposals/hierarchical_theme_block_generation.md`](./proposals/hierarchical_theme_block_generation.md)
+- **主な実装内容**:
+  - **16×16グリッド（最小単位4×4）のマルチスケール・テーマブロック合成エンジン (`ThemeBlockAllocator`, `ThemeBlockTransformer`)**:
+    - `24×24`, `16×16`, `12×12`, `8×8`, `4×4` のブロック体系と90度単位の回転・反転、戦術ピン座標自動変換、ランドマーク離隔（マンハッタン距離>=20）パッキング、大ブロック内サブスロット（4x4/8x8）のインセット合成を実装。
+  - **テーマブロック・カタログ (`src/systems/generator/blocks/`)**:
+    - 数手封鎖パズル墓、L字4つ角4出口箱型墓、16x16ネクロポリス、8歩周期市松模様宝物庫、L字複合宝物庫、大宝物殿ドラゴン、迷路潜伏ドラゴン、我が家スタートブロックなど全21テンプレートを定義。
+  - **スロット予算アクティベーション & 100%解法性保証 (`HierarchicalThemeBlockGenerator`)**:
+    - 目標宝箱数（BLITZ=65 / STANDARD=100 / MARATHON=130）に応じた宝箱スロット動的アクティベーション、難易度別（EASY/NORMAL/HARD）ブートストラップ導線距離制御とBFS到達性保証、全6トポロジー・全ペーシングでのクリア可能性保証。
+  - **ボット攻略方針メタデータ (`MapTacticalMetadata`) と `AutoPlayBot` の戦術連携**:
+    - `BOX_EXITS` モードの箱型墓における4出口チョークポイント封鎖判定、`recommendedPushes` による最短手即時岩押し、`MAZE_LAIR` での我が家移転スキップ、`isEightStepOptimal: true` の密集部屋優先探索連携。
+  - **ヘッドレス・バッチシミュレーション評価**:
+    - `SimulationRunner` による各トポロジーでの定量検証、出入口開口・ブートストラップ到達性調整、公式おすすめプリセット `curated_hierarchical_citadel` の追加。全41テストスイート100%パス。
+
+---
+
+### Phase 15: シード観測所 & 挑戦状カタログ & UI/UX刷新
+- **ステータス**: 【✅ 完了】
+- **決定版仕様書**: [`docs/specs/seed_observatory_and_ui_spec.md`](../specs/seed_observatory_and_ui_spec.md), [`docs/procedural_generation_spec.md`](../procedural_generation_spec.md)
+- **主な実装内容**:
+  - **事後観測プロファイラー (`MapProfiler.ts`)**:
+    - 生成済みマップの幾何学的スキャン（開放度 `opennessScore`、迷路度 `mazeIndex`、部屋数 `roomCount`、初期剣到達歩数 `swordWalkDistance`、家近接未封鎖墓 `nearHomeGraves`、要塞侵入路/安全マス `lairAccessibility`、セクター分断度 `sectorPartitionScore`）を実装。
+    - 事前パラメータにとらわれず、幾何実態からトポロジー・難易度・ペーシング・チャレンジ指数（1〜100）を事後判定し、客観的プロファイルレポート（`MapProfileReport`）を生成。
+  - **シード収穫・分類バッチ (`scripts/harvest-seeds.ts`)**:
+    - ヘッドレスボット検証と組み合わせ、1600ターン未踏破の難関シードを自動検出・格付けし、公式挑戦状プリセット（`curated_unbeaten_nightmare` Seed: 833139）を収録。
+  - **ステージ選択 & シード観測UI刷新 (`DOMUIManager.ts`)**:
+    - 「CHALLENGE CATALOG & SEED OBSERVATORY」への導線刷新。
+    - クイック設定でのシード値直接入力と🎲乱数ボタンの追加。
+    - プリセット選択時の「プロファイル詳細カード（`#dom-preset-detail-card`）」動的描画（難易度バッジ、チャレンジ指数バー、ボット観測ステータス、踏破記録、特徴タグ）。
+    - リアルタイム観測プレビュー（シードガチャ体験）とキー入力連動（手入力時の自動プレビュー更新）。
+  - **ゲーム中INSPECT画面の機能拡充 (`InspectorModal.ts`)**:
+    - マップ俯瞰タブでの幾何構造プロファイルおよび Phase 14 戦術メタデータ（要塞スタイル、8歩宝物庫、墓封鎖パズル、我が家移転アンカー）の可視化。
+    - タブ2「⚙️ ゲームチューニング定数 (Active Tuning)」に名称をリファインし、現在セッションの物理パラメータ（スポーン上限、家湧き枠、パワーストーン複利成長率、ゴースト速度など）の実効値を完全開示。
+  - **キーボード入力ガード (`InputManager.ts`)**:
+    - テキストボックス入力中にゲーム側ショートカットやスクロール抑止（`preventDefault`）が横取りされる不具合を修正し、安定した直接入力を実現。全42テストスイート100%パス。
+
+---
+
 ## 3. 今後の発展構想 (Future Directions)
 
 単一64×64マップのプロシージャル生成・バランス調整・AI自律攻略基盤が完成したことを受け、今後の拡張テーマとして以下を構想している：
@@ -124,6 +167,8 @@ flowchart TD
 
 ## 4. 関連コンセプト・提案書一覧 (Feature Proposals)
 
+- **マルチスケール・テーマブロック階層合成 & AI攻略方針連携 設計書 (Phase 14)**:
+  [`docs/roadmap/proposals/hierarchical_theme_block_generation.md`](./proposals/hierarchical_theme_block_generation.md)
 - **プロシージャル多彩化・チューニング基盤・プリセット共有構想**:
   [`docs/roadmap/proposals/procedural_variety_and_sandbox.md`](./proposals/procedural_variety_and_sandbox.md)
 - **ヘッドレス評価シミュレータ & マルチフロントエンド構想**:

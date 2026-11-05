@@ -8,12 +8,14 @@ import { ThreatEvaluator } from '../systems/ThreatEvaluator.js';
 import { MagicSystem } from '../systems/MagicSystem.js';
 import { MovementSystem } from '../systems/MovementSystem.js';
 import { BotAction, BotPhase } from './BotTypes.js';
+import { MapTacticalMetadata } from '../systems/generator/ThemeBlockTypes.js';
 
 export interface NavigatorItemLockInfo {
   lockedChestPos?: Position | null;
   lockedItemPos?: Position | null;
   lockedItemType?: TileType;
   hysteresisBonus?: number;
+  tacticalMetadata?: MapTacticalMetadata;
 }
 
 export class BotNavigator {
@@ -839,7 +841,18 @@ export class BotNavigator {
             lockInfo.lockedChestPos.y === y
           ) {
             effectiveDist = Math.max(0, dist - (lockInfo.hysteresisBonus ?? 3));
+          } else if (!lockInfo?.lockedChestPos && lockInfo?.tacticalMetadata?.treasureZoneHints) {
+            // 未ロック時: 8歩周期最適ゾーン（isEightStepOptimal）内の宝箱を優先選定
+            const isInOptimalZone = lockInfo.tacticalMetadata.treasureZoneHints.some(
+              zone => zone.isEightStepOptimal &&
+                      p.x >= zone.bounds.x1 && p.x <= zone.bounds.x2 &&
+                      p.y >= zone.bounds.y1 && p.y <= zone.bounds.y2
+            );
+            if (isInOptimalZone) {
+              effectiveDist = Math.max(0, effectiveDist - 6);
+            }
           }
+
           candidates.push({ pos: p, effectiveDist });
         }
       }

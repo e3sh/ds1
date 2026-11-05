@@ -7,6 +7,17 @@ import { ProceduralMapGenerator, SeededRandom } from '../src/systems/ProceduralM
 import { MapPresetManager, CURATED_PRESETS } from '../src/services/MapPresetManager.js';
 import { GameEngine } from '../src/core/GameEngine.js';
 
+// Node.js 環境での LocalStorage モック
+if (typeof localStorage === 'undefined') {
+  const store = new Map<string, string>();
+  (globalThis as any).localStorage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, val: string) => store.set(key, String(val)),
+    removeItem: (key: string) => store.delete(key),
+    clear: () => store.clear(),
+  };
+}
+
 console.log('--- Phase 12: Compact Prefabs, 9-Sector Layout & Map Presets Verification ---');
 
 // ============================================================================

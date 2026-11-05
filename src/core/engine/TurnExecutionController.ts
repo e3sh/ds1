@@ -6,6 +6,7 @@ import { EnemyAISystem } from '../../systems/EnemyAISystem.js';
 import { SpawnSystem } from '../../systems/SpawnSystem.js';
 import { ChestSystem } from '../../systems/ChestSystem.js';
 import { SystemSaveData } from '../../services/SaveManager.js';
+import { MapPresetManager } from '../../services/MapPresetManager.js';
 import type { GameEngine } from '../GameEngine.js';
 
 export class TurnExecutionController {
@@ -565,7 +566,24 @@ export class TurnExecutionController {
 
     const player = this.engine.getPlayer();
     const domUI = this.engine.getDomUI();
-    domUI?.setGameState('STAGECLEAR', player, player.totalKills);
-    domUI?.addLog('★ STAGE CLEAR! 4つの王冠をすべて家に持ち帰った！ ★', 'success');
+    const totalTurns = this.engine.getTotalTurns();
+
+    // プロシージャルシードのクリア記録
+    const proceduralOptions = this.engine.getProceduralOptions();
+    if (proceduralOptions?.seed) {
+      MapPresetManager.recordPlayerClear(proceduralOptions.seed, totalTurns);
+
+      // 公式プリセットに登録されているシードかどうか判定
+      const curated = MapPresetManager.getAllPresets().find(p => p.seed === proceduralOptions.seed);
+      if (curated?.metrics?.isUnbeatenChallenge || curated?.metrics?.botStatus === 'UNBEATEN_BY_BOT') {
+        domUI?.addLog(
+          `🏆 【難関シード踏破達成！】ボット未踏破チャレンジマップを完全攻略！ (クリアターン: ${totalTurns}T)`,
+          'success'
+        );
+      }
+    }
+
+    domUI?.setGameState('STAGECLEAR', player, player.totalKills, totalTurns);
+    domUI?.addLog(`★ STAGE CLEAR! 4つの王冠をすべて家に持ち帰った！（所要ターン: ${totalTurns}T） ★`, 'success');
   }
 }

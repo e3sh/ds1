@@ -16,7 +16,8 @@
     "preview": "vite preview",
     "test": "tsx test/run-all.ts",
     "simulate": "tsx scripts/simulate.ts",
-    "evaluate": "tsx scripts/evaluate-params.ts"
+    "evaluate": "tsx scripts/evaluate-params.ts",
+    "harvest-seeds": "tsx scripts/harvest-seeds.ts"
   },
   "devDependencies": {
     "tsx": "^4.23.15",

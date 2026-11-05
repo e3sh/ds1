@@ -4,6 +4,29 @@ import { DragonPrefabType, HomePrefabType } from '../systems/ProceduralMapGenera
 export const MAP_PRESETS_STORAGE_KEY = 'DS1_MAP_PRESETS';
 export const SHARE_CODE_PREFIX = 'DS1MAP:';
 
+export type PresetBotStatus = 'CLEARED' | 'UNBEATEN_BY_BOT' | 'FAILED';
+
+export interface MapPresetMetrics {
+  dragonSectorName?: string;
+  dragonPos?: { x: number; y: number };
+  homePos?: { x: number; y: number };
+  cleared?: boolean;
+  clearTurns?: number;
+  highScore?: number;
+
+  // Phase 14 / Seed Observatory 拡張フィールド
+  estimatedTopology?: DungeonTopology;
+  estimatedDifficulty?: 'EASY' | 'NORMAL' | 'HARD' | 'NIGHTMARE';
+  estimatedPacing?: PlayPacingMode;
+  botStatus?: PresetBotStatus;
+  botTurns?: number;
+  challengeRating?: number;
+  tags?: string[];
+  playerCleared?: boolean;
+  playerClearTurns?: number;
+  isUnbeatenChallenge?: boolean;
+}
+
 export interface MapPresetData {
   id: string;
   name: string;
@@ -19,14 +42,7 @@ export interface MapPresetData {
     dragonPrefab?: DragonPrefabType;
     homePrefab?: HomePrefabType;
   };
-  metrics?: {
-    dragonSectorName?: string;
-    dragonPos?: { x: number; y: number };
-    homePos?: { x: number; y: number };
-    cleared?: boolean;
-    clearTurns?: number;
-    highScore?: number;
-  };
+  metrics?: MapPresetMetrics;
 }
 
 /**
@@ -112,6 +128,46 @@ export const CURATED_PRESETS: MapPresetData[] = [
       topology: 'SPIRAL_LABYRINTH',
       archetype: 'BALANCED',
       dragonPrefab: 'COMPACT_5x5',
+    },
+  },
+  {
+    id: 'curated_hierarchical_citadel',
+    name: '🏰 宝物殿城塞の巨龍 (Citadel of the Grand Vault)',
+    description: '16×16大宝物殿と城塞ドラゴン、8歩周期宝物庫が連結したPhase 14階層テーマブロック合成の決定版マップ。',
+    createdAt: 1730000005000,
+    isCurated: true,
+    seed: 123456,
+    options: {
+      difficulty: 'NORMAL',
+      pacing: 'BLITZ',
+      topology: 'FORTRESS_ARENA',
+      archetype: 'BALANCED',
+      dragonPrefab: 'FORTRESS_7x7',
+    },
+  },
+  {
+    id: 'curated_unbeaten_nightmare',
+    name: '🤖 ボット未踏破：奈落の深層要塞 (Nightmare Deep Fortress)',
+    description: '物理的解法性は100%保証されつつも、標準AutoPlayBotが1600ターンで解ききれなかった難攻不落マップ。プレイヤーの挑戦を求む！',
+    createdAt: 1730000006000,
+    isCurated: true,
+    seed: 833139,
+    options: {
+      difficulty: 'HARD',
+      pacing: 'MARATHON',
+      topology: 'FORTRESS_ARENA',
+      archetype: 'BALANCED',
+      dragonPrefab: 'FORTRESS_7x7',
+    },
+    metrics: {
+      estimatedTopology: 'FORTRESS_ARENA',
+      estimatedDifficulty: 'NIGHTMARE',
+      estimatedPacing: 'MARATHON',
+      botStatus: 'UNBEATEN_BY_BOT',
+      botTurns: 1600,
+      challengeRating: 92,
+      tags: ['UNBEATEN_BY_BOT', 'NIGHTMARE', 'MARATHON', 'FORTIFIED_LAIR'],
+      isUnbeatenChallenge: true,
     },
   },
 ];
@@ -205,7 +261,7 @@ export class MapPresetManager {
    * プリセットを1行の共有コード文字列にエクスポート
    */
   public static exportShareCode(preset: MapPresetData): string {
-    const payload = {
+    const payload: any = {
       n: preset.name,
       s: preset.seed,
       o: {
@@ -217,6 +273,19 @@ export class MapPresetManager {
         hp: preset.options.homePrefab,
       },
     };
+    if (preset.metrics) {
+      payload.m = {
+        et: preset.metrics.estimatedTopology,
+        ed: preset.metrics.estimatedDifficulty,
+        ep: preset.metrics.estimatedPacing,
+        bs: preset.metrics.botStatus,
+        bt: preset.metrics.botTurns,
+        cr: preset.metrics.challengeRating,
+        pc: preset.metrics.playerCleared,
+        pct: preset.metrics.playerClearTurns,
+        uc: preset.metrics.isUnbeatenChallenge,
+      };
+    }
     const jsonStr = JSON.stringify(payload);
     let encoded: string;
     const globalObj = globalThis as { Buffer?: { from: (s: string, enc?: string) => { toString: (e: string) => string } } };
@@ -255,6 +324,20 @@ export class MapPresetManager {
         return null;
       }
 
+      const metrics: MapPresetMetrics | undefined = parsed.m
+        ? {
+            estimatedTopology: parsed.m.et,
+            estimatedDifficulty: parsed.m.ed,
+            estimatedPacing: parsed.m.ep,
+            botStatus: parsed.m.bs,
+            botTurns: parsed.m.bt,
+            challengeRating: parsed.m.cr,
+            playerCleared: parsed.m.pc,
+            playerClearTurns: parsed.m.pct,
+            isUnbeatenChallenge: parsed.m.uc,
+          }
+        : undefined;
+
       return {
         id: `shared_${Date.now()}`,
         name: parsed.n || `共有マップ (Seed: ${parsed.s})`,
@@ -269,10 +352,45 @@ export class MapPresetManager {
           dragonPrefab: parsed.o.dp,
           homePrefab: parsed.o.hp,
         },
+        metrics,
       };
     } catch (e) {
       console.error('[MapPresetManager] Failed to import share code:', e);
       return null;
+    }
+  }
+
+  /**
+   * プレイヤーがシードをクリアした際のレコード更新
+   */
+  public static recordPlayerClear(seed: number, clearTurns: number): void {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      const userPresets = this.getUserPresets();
+      let updated = false;
+      for (const p of userPresets) {
+        if (p.seed === seed) {
+          p.metrics = {
+            ...p.metrics,
+            playerCleared: true,
+            playerClearTurns:
+              p.metrics?.playerClearTurns !== undefined
+                ? Math.min(p.metrics.playerClearTurns, clearTurns)
+                : clearTurns,
+            cleared: true,
+            clearTurns:
+              p.metrics?.clearTurns !== undefined
+                ? Math.min(p.metrics.clearTurns, clearTurns)
+                : clearTurns,
+          };
+          updated = true;
+        }
+      }
+      if (updated) {
+        localStorage.setItem(MAP_PRESETS_STORAGE_KEY, JSON.stringify(userPresets));
+      }
+    } catch (e) {
+      console.error('[MapPresetManager] Failed to record player clear:', e);
     }
   }
 }

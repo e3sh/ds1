@@ -18,7 +18,7 @@ import {
   BotAction,
   AutoPlayBotOptions,
 } from './BotTypes.js';
-import { BotNavigator } from './BotNavigator.js';
+import { BotNavigator, NavigatorItemLockInfo } from './BotNavigator.js';
 import { EightStepController } from './EightStepController.js';
 import { GraveSealTactics } from './tactics/GraveSealTactics.js';
 import { HomeRelocationTactics } from './tactics/HomeRelocationTactics.js';
@@ -32,7 +32,8 @@ export * from './BotTypes.js';
  */
 export class AutoPlayBot {
   public readonly profile: BotSkillProfile;
-  public readonly tuning: Required<BotStrategyTuning>;
+  public tuning: Required<BotStrategyTuning>;
+  private userTuning?: Partial<BotStrategyTuning>;
   public currentPhase: BotPhase = 'BOOTSTRAP';
   public turnsInPhase: number = 0;
 
@@ -84,6 +85,7 @@ export class AutoPlayBot {
 
   constructor(opts: AutoPlayBotOptions = {}) {
     this.profile = opts.profile ?? 'STANDARD';
+    this.userTuning = opts.strategyTuning;
     this.tuning = {
       graveSealPolicy: opts.strategyTuning?.graveSealPolicy ?? 'AUTO',
       graveSealTiming: opts.strategyTuning?.graveSealTiming ?? 'EARLY',
@@ -347,6 +349,20 @@ export class AutoPlayBot {
   public assessMap(map: WorldMap, _player?: Player): MapAssessment {
     if (this.mapAssessment && this.lastAssessedMapRef === map) {
       return this.mapAssessment;
+    }
+
+    // tacticalMetadata による戦術チューニングの適用
+    if (map.tacticalMetadata) {
+      if (this.userTuning?.enableHomeRelocation === undefined && map.tacticalMetadata.dragonLairStyle === 'MAZE_LAIR') {
+        this.tuning.enableHomeRelocation = false;
+      }
+      if (map.tacticalMetadata.recommendedBotTuning) {
+        for (const [key, value] of Object.entries(map.tacticalMetadata.recommendedBotTuning)) {
+          if (this.userTuning?.[key as keyof BotStrategyTuning] === undefined && value !== undefined) {
+            (this.tuning as any)[key] = value;
+          }
+        }
+      }
     }
 
     let totalGraves = 0;
@@ -1342,6 +1358,7 @@ export class AutoPlayBot {
         const chestCandidates = this.botNav.findNearestChestCandidates(curPos, map, enemies, player, 5, {
           lockedChestPos: this.lockedChestPos,
           hysteresisBonus: this.TARGET_HYSTERESIS_BONUS,
+          tacticalMetadata: map.tacticalMetadata,
         });
         for (const chestPos of chestCandidates) {
           const cDist = map.getTorusDistance(curPos, chestPos).manhattan;
@@ -1931,10 +1948,18 @@ export class AutoPlayBot {
     return this.eightStepController.findDiagonalChestForEightStepCycle(curPos, map, enemies, dragon, player);
   }
 
-  public findNearestChestCandidates(from: Position, map: WorldMap, enemies?: EnemyInstance[], player?: Player, limit: number = 5): Position[] {
-    return this.botNav.findNearestChestCandidates(from, map, enemies, player, limit, {
+  public findNearestChestCandidates(
+    from: Position,
+    map: WorldMap,
+    enemies?: EnemyInstance[],
+    player?: Player,
+    limit: number = 5,
+    lockInfo?: NavigatorItemLockInfo
+  ): Position[] {
+    return this.botNav.findNearestChestCandidates(from, map, enemies, player, limit, lockInfo ?? {
       lockedChestPos: this.lockedChestPos,
       hysteresisBonus: this.TARGET_HYSTERESIS_BONUS,
+      tacticalMetadata: map.tacticalMetadata,
     });
   }
 
@@ -1987,6 +2012,16 @@ export class AutoPlayBot {
 
   public getAllOpenGraves(map: WorldMap, enemies: EnemyInstance[]): { grave: Position; openSpots: Position[] }[] {
     return this.graveSealTactics.getAllOpenGraves(map, enemies);
+  }
+
+  public findBlockPushForGraves(
+    player: Player,
+    map: WorldMap,
+    enemies: EnemyInstance[],
+    dragon: Dragon,
+    openGraves: { grave: Position; openSpots: Position[] }[]
+  ): BotAction | null {
+    return this.graveSealTactics.findBlockPushForGraves(player, map, enemies, dragon, openGraves);
   }
 
   public getTargetOpenGraves(map: WorldMap, enemies: EnemyInstance[], policy?: GraveSealPolicy): { grave: Position; openSpots: Position[] }[] {

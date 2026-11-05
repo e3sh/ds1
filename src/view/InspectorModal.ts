@@ -5,6 +5,7 @@ import { Ghost } from '../models/Ghost.js';
 import { EnemyInstance } from '../models/Enemy.js';
 import { ResolvedDungeonTuningParams } from '../models/Types.js';
 import { ProceduralMapOptions } from '../systems/ProceduralMapGenerator.js';
+import { MapProfiler } from '../systems/generator/MapProfiler.js';
 
 export interface InspectorData {
   map: WorldMap;
@@ -84,7 +85,7 @@ export class InspectorModal {
             🗺️ マップ俯瞰 & 密度統計
           </button>
           <button class="inspector-tab-btn ${this.currentTab === 'params' ? 'active' : ''}" data-tab="params">
-            ⚙️ トポロジー連動パラメータ
+            ⚙️ ゲームチューニング定数 (Active Tuning)
           </button>
           <button class="inspector-tab-btn ${this.currentTab === 'charts' ? 'active' : ''}" data-tab="charts">
             📈 成長カーブ & 戦闘グラフ
@@ -152,7 +153,7 @@ export class InspectorModal {
     }
   }
 
-  // --- タブ 1: マップ俯瞰 & 密度メトリクス ---
+  // --- タブ 1: マップ俯瞰 & 密度メトリクス & シード観測プロファイル ---
   private renderMapTab(d: InspectorData): string {
     // マップ密度統計の集計
     let emptyFloorCount = 0;
@@ -179,10 +180,67 @@ export class InspectorModal {
     const obstacleDensity = ((blockCount / totalTiles) * 100).toFixed(1);
     const floorDensity = ((emptyFloorCount / totalTiles) * 100).toFixed(1);
 
-    const topology = d.proceduralOptions?.topology ?? (d.isProceduralMode ? 'MULTI_SECTOR' : 'CLASSIC_FIXED');
-    const difficulty = d.proceduralOptions?.difficulty ?? 'NORMAL';
-    const pacing = d.proceduralOptions?.pacing ?? 'STANDARD';
-    const seed = d.proceduralOptions?.seed ?? 'CLASSIC';
+    const seedNum = typeof d.proceduralOptions?.seed === 'number' ? d.proceduralOptions.seed : undefined;
+    const seed = seedNum !== undefined ? seedNum : (d.isProceduralMode ? 'RANDOM' : 'CLASSIC');
+
+    // Phase 15: MapProfiler によるリアルタイム観測プロファイル
+    const profile = MapProfiler.profile(d.map, {
+      seed: seedNum,
+      topology: d.proceduralOptions?.topology,
+    });
+
+    const diffBadgeClass = `diff-badge diff-badge-${profile.estimatedDifficulty.toLowerCase()}`;
+    const ratingColor = profile.challengeRating >= 80 ? '#f44336' : profile.challengeRating >= 50 ? '#ff9800' : '#4caf50';
+
+    const tagsHtml = profile.tags.map(t => {
+      const isUnbeaten = t === 'UNBEATEN_BY_BOT';
+      return `<span class="preset-tag-chip ${isUnbeaten ? 'unbeaten' : ''}">${t}</span>`;
+    }).join(' ');
+
+    // Phase 14: 戦術メタデータ (tacticalMetadata)
+    const tm = d.map.tacticalMetadata;
+    let tacticalHtml = '';
+    if (tm) {
+      tacticalHtml = `
+        <div class="tactical-intel-section">
+          <div class="tactical-intel-title">
+            <span>🎯</span>
+            <span>PHASE 14 TACTICAL INTELLIGENCE (戦術攻略インテリジェンス)</span>
+          </div>
+          <div class="tactical-intel-grid">
+            <div class="tactical-intel-card">
+              <div class="tactical-intel-label">ドラゴン要塞スタイル</div>
+              <div class="tactical-intel-val" style="color: #f59e0b;">${tm.dragonLairStyle}</div>
+            </div>
+            <div class="tactical-intel-card">
+              <div class="tactical-intel-label">8歩周期宝物庫エリア</div>
+              <div class="tactical-intel-val" style="color: #eab308;">${tm.treasureZoneHints.length} 箇所</div>
+            </div>
+            <div class="tactical-intel-card">
+              <div class="tactical-intel-label">墓封鎖パズル配置</div>
+              <div class="tactical-intel-val" style="color: #a855f7;">${tm.gravePuzzleHints.length} 箇所</div>
+            </div>
+            <div class="tactical-intel-card">
+              <div class="tactical-intel-label">我が家移転推奨アンカー</div>
+              <div class="tactical-intel-val" style="color: #38bdf8;">${tm.recommendedRelocateAnchors.length} 箇所</div>
+            </div>
+            <div class="tactical-intel-card">
+              <div class="tactical-intel-label">突入ショートカット</div>
+              <div class="tactical-intel-val" style="color: #4ade80;">${tm.breachShortcutPositions.length} 箇所</div>
+            </div>
+          </div>
+        </div>
+      `;
+    } else {
+      tacticalHtml = `
+        <div class="tactical-intel-section" style="background: rgba(15, 23, 42, 0.5); border-color: #334155;">
+          <div class="tactical-intel-title" style="color: #94a3b8;">
+            <span>🎯</span>
+            <span>PHASE 14 TACTICAL INTELLIGENCE: クラシック固定マップ（戦術メタデータなし）</span>
+          </div>
+        </div>
+      `;
+    }
 
     return `
       <div class="inspector-map-layout">
@@ -203,20 +261,33 @@ export class InspectorModal {
         <!-- 右: 密度・構造メトリクス表 -->
         <div class="inspector-stats-grid">
           <div class="metric-card">
-            <div class="metric-title">ダンジョン地形 (Topology)</div>
-            <div class="metric-value highlight">${topology}</div>
+            <div class="metric-title">推定トポロジー (Topology)</div>
+            <div class="metric-value highlight">${profile.estimatedTopology}</div>
           </div>
           <div class="metric-card">
             <div class="metric-title">難易度 (Difficulty)</div>
-            <div class="metric-value">${difficulty}</div>
+            <div class="metric-value">
+              <span class="${diffBadgeClass}">${profile.estimatedDifficulty}</span>
+            </div>
           </div>
           <div class="metric-card">
-            <div class="metric-title">プレイ時間 (Pacing)</div>
-            <div class="metric-value">${pacing}</div>
+            <div class="metric-title">推定ペース (Pacing)</div>
+            <div class="metric-value">${profile.estimatedPacing}</div>
           </div>
+          <div class="metric-card">
+            <div class="metric-title">チャレンジ指数 (Rating)</div>
+            <div class="metric-value" style="color: ${ratingColor}; font-weight: bold;">★ ${profile.challengeRating}/100</div>
+          </div>
+
           <div class="metric-card">
             <div class="metric-title">生成シード値 (Seed)</div>
             <div class="metric-value mono">${seed}</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-title">物理解法性 (Solvability)</div>
+            <div class="metric-value" style="color: ${profile.isSolvable ? '#4ade80' : '#ef4444'}; font-weight: bold;">
+              ${profile.isSolvable ? 'PASS (100%保証)' : 'FAIL'}
+            </div>
           </div>
 
           <div class="metric-card">
@@ -241,10 +312,55 @@ export class InspectorModal {
           </div>
           <div class="metric-card">
             <div class="metric-title">徘徊ゴースト (Ghosts)</div>
-            <div class="metric-value">${d.ghosts.length} <small>体 (${d.tuningParams.resourceCapConfig.ghostMoveIntervalMs}ms)</small></div>
+            <div class="metric-value">${d.ghosts.length} <small>体 (${d.tuningParams?.resourceCapConfig?.ghostMoveIntervalMs ?? 1000}ms)</small></div>
           </div>
         </div>
       </div>
+
+      <!-- 幾何メトリクス（幾何構造分析） -->
+      <div style="margin-top: 14px; background: rgba(10, 16, 26, 0.8); border: 1px solid #1e3a5f; border-radius: 6px; padding: 10px;">
+        <div style="font-size: 11px; font-weight: bold; color: #38bdf8; margin-bottom: 6px;">
+          🔬 GEOMETRIC METRICS (幾何構造プロファイル)
+        </div>
+        <div class="observatory-metrics-grid">
+          <div class="observatory-metric-box">
+            <div class="observatory-metric-label">開放度 (Openness)</div>
+            <div class="observatory-metric-val">${(profile.metrics.opennessScore * 100).toFixed(1)}%</div>
+          </div>
+          <div class="observatory-metric-box">
+            <div class="observatory-metric-label">迷路度 (Maze Index)</div>
+            <div class="observatory-metric-val">${(profile.metrics.mazeIndex * 100).toFixed(1)}%</div>
+          </div>
+          <div class="observatory-metric-box">
+            <div class="observatory-metric-label">独立部屋数 (Rooms)</div>
+            <div class="observatory-metric-val">${profile.metrics.roomCount} 室</div>
+          </div>
+          <div class="observatory-metric-box">
+            <div class="observatory-metric-label">初期剣到達歩数</div>
+            <div class="observatory-metric-val">${profile.metrics.swordWalkDistance} 歩</div>
+          </div>
+          <div class="observatory-metric-box">
+            <div class="observatory-metric-label">我が家近接12マス墓</div>
+            <div class="observatory-metric-val">${profile.metrics.nearHomeGraves} 基</div>
+          </div>
+          <div class="observatory-metric-box">
+            <div class="observatory-metric-label">竜要塞侵入路 / 安全</div>
+            <div class="observatory-metric-val">開口${profile.metrics.lairAccessibility.entranceCount} / 安${profile.metrics.lairAccessibility.safeSpacesCount}</div>
+          </div>
+          <div class="observatory-metric-box">
+            <div class="observatory-metric-label">セクター分断度</div>
+            <div class="observatory-metric-val">${(profile.metrics.sectorPartitionScore * 100).toFixed(1)}%</div>
+          </div>
+        </div>
+
+        <div style="margin-top: 6px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px;">
+          <div class="preset-tag-list" style="margin: 0;">${tagsHtml}</div>
+          <div style="font-size: 10px; color: #94a3b8; font-style: italic;">${profile.summary}</div>
+        </div>
+      </div>
+
+      <!-- Phase 14 戦術メタデータ -->
+      ${tacticalHtml}
     `;
   }
 
@@ -300,12 +416,16 @@ export class InspectorModal {
     ctx.strokeRect((d.player.pos.x - 1) * scale, (d.player.pos.y - 1) * scale, scale * 3, scale * 3);
   }
 
-  // --- タブ 2: トポロジー連動パラメータ一覧 ---
+  // --- タブ 2: ゲームチューニング定数 (Active Tuning Parameters) ---
   private renderParamsTab(d: InspectorData): string {
     const tp = d.tuningParams;
 
     return `
       <div class="inspector-params-layout">
+        <div style="font-size: 11px; color: #94a3b8; margin-bottom: 12px; padding: 6px 10px; background: rgba(15, 23, 42, 0.6); border-left: 3px solid #38bdf8; border-radius: 2px;">
+          💡 <strong>アクティブ・チューニング定数</strong>: 地形・難易度・ペース・ルールモード・カスタム倍率から動的に決定され、現在のワールドに適用されている物理パラメータです。
+        </div>
+
         <!-- スポーン制御 -->
         <div class="params-section">
           <div class="params-section-title">1. スポーン＆家湧き制御 (Spawn & Home Reserve)</div>

@@ -329,13 +329,12 @@ export class Dragon {
         { x: this.centerPos.x + 1, y: this.centerPos.y + 1 },
       ];
 
-      for (const pos of crownPositions) {
-        if (map.isInside(pos)) {
-          if (map.getObject(pos) === 'CHEST_DRAGON') {
-            map.setObject(pos, 'NONE');
-          }
-          map.setTile(pos, 'CROWN');
+      for (const rawPos of crownPositions) {
+        const pos = map.wrapPosition(rawPos);
+        if (map.getObject(pos) === 'CHEST_DRAGON') {
+          map.setObject(pos, 'NONE');
         }
+        map.setTile(pos, 'CROWN');
       }
 
       // ゴーストによる王冠四方散乱シークエンス
@@ -359,20 +358,19 @@ export class Dragon {
     ];
 
     for (const config of crownScatterConfigs) {
-      if (map.isInside(config.pos)) {
-        // 宝箱を開放し、床の王冠をゴーストが掴む
-        map.setObject(config.pos, 'NONE');
-        map.setItem(config.pos, 'NONE');
+      const pos = map.wrapPosition(config.pos);
+      // 宝箱を開放し、床の王冠をゴーストが掴む
+      map.setObject(pos, 'NONE');
+      map.setItem(pos, 'NONE');
 
-        const ghost = new Ghost({
-          pos: { ...config.pos },
-          vx: config.vx,
-          vy: config.vy,
-        });
-        ghost.carriedItem = 'CROWN';
-        GhostAISystem.resetCarryGoal(ghost);
-        ghosts.push(ghost);
-      }
+      const ghost = new Ghost({
+        pos: { ...pos },
+        vx: config.vx,
+        vy: config.vy,
+      });
+      ghost.carriedItem = 'CROWN';
+      GhostAISystem.resetCarryGoal(ghost);
+      ghosts.push(ghost);
     }
   }
 

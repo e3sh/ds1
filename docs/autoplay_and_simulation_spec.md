@@ -128,6 +128,23 @@ export interface MapAssessment {
 | `nearHomeRadius` | `number` | `12` | 我が家周辺とみなすマンハッタン距離。 |
 | `maxTargetMagic` | `number` | `5` | POTION回収目標MPストック数（最大5）。 |
 | `graveSealEarlyStr` | `number` | `30000` | `'EARLY'` 時に墓封鎖を開始する最小STR基準。 |
+| `enableHomeRelocation` | `boolean` | `true` | 我が家引越し戦術の有効フラグ（迷路ドラゴン生成時は自動的に `false`）。 |
+| `homeRelocateTargetDistMin` | `number` | `5` | ドラゴン中心に対する引越し先アンカーの最小距離。 |
+| `homeRelocateTargetDistMax` | `number` | `8` | ドラゴン中心に対する引越し先アンカーの最大距離。 |
+
+#### マップ生成メタデータ (`MapTacticalMetadata`) との戦術連携 (Phase 14)
+
+ダンジョン生成器（`HierarchicalThemeBlockGenerator`）が構築した `WorldMap.tacticalMetadata` をマップ評価時（`assessMap`）に読み取り、以下の方針を自動適用する：
+
+1. **`BOX_EXITS` モードの墓封鎖 (`GraveSealTactics`)**:
+   - 8×8箱型墓など外枠の4出口（チョークポイント）が定義されている場合、墓の直近8マスではなく出口座標をターゲットにし、全出口が塞がれた時点で完全封鎖と判定。
+2. **`recommendedPushes` による最短手パズル岩押し (`GraveSealTactics`)**:
+   - 生成時に計算されたブロック初期配置とプッシュ方向・目的地を参照し、総当たり探索を行わずに最短手で岩押し（または押し位置への移動）を実行。
+3. **`dragonLairStyle` に応じた拠点引越し制御 (`HomeRelocationTactics`)**:
+   - `'MAZE_LAIR'`（迷路潜伏ドラゴン）では `enableHomeRelocation: false` を適用し、無駄な迷路内プッシュをスキップして直接撃破に移行。
+   - `'GRAND_TREASURE_HALL'` では `recommendedRelocateAnchors` の安全アンカーを最優先でロック。
+4. **8歩周期最適ゾーン（`treasureZoneHints`）の優先探索 (`BotNavigator`)**:
+   - `isEightStepOptimal: true` のゾーン内宝箱に実効距離ボーナス（-6）を付与。ロック中の宝箱がある場合はヒステリシスを優先し、未ロック時に最適部屋を優先選定。
 
 ---
 

@@ -1,0 +1,162 @@
+{
+  "harvestedAt": "2026-11-05T07:47:51.347Z",
+  "totalSeeds": 6,
+  "clearedCount": 0,
+  "unbeatenCount": 5,
+  "insolvableCount": 0,
+  "unbeatenSeeds": [
+    {
+      "seed": 833139,
+      "topology": "FORTRESS_ARENA",
+      "rating": 88,
+      "turns": 1600,
+      "finalStr": 480536,
+      "tags": [
+        "PEACEFUL_HOME",
+        "OPEN_ARENA",
+        "UNBEATEN_BY_BOT",
+        "MARATHON"
+      ]
+    },
+    {
+      "seed": 480996,
+      "topology": "FORTRESS_ARENA",
+      "rating": 88,
+      "turns": 1600,
+      "finalStr": 462536,
+      "tags": [
+        "PEACEFUL_HOME",
+        "OPEN_ARENA",
+        "UNBEATEN_BY_BOT",
+        "MARATHON"
+      ]
+    },
+    {
+      "seed": 989830,
+      "topology": "FORTRESS_ARENA",
+      "rating": 88,
+      "turns": 1600,
+      "finalStr": 98923,
+      "tags": [
+        "PEACEFUL_HOME",
+        "OPEN_ARENA",
+        "UNBEATEN_BY_BOT",
+        "MARATHON"
+      ]
+    },
+    {
+      "seed": 628622,
+      "topology": "FORTRESS_ARENA",
+      "rating": 88,
+      "turns": 1600,
+      "finalStr": 10,
+      "tags": [
+        "OPEN_ARENA",
+        "UNBEATEN_BY_BOT",
+        "MARATHON"
+      ]
+    },
+    {
+      "seed": 501478,
+      "topology": "FORTRESS_ARENA",
+      "rating": 88,
+      "turns": 1600,
+      "finalStr": 480536,
+      "tags": [
+        "DISTANT_SWORD",
+        "OPEN_ARENA",
+        "UNBEATEN_BY_BOT",
+        "MARATHON"
+      ]
+    }
+  ],
+  "curatedPresets": [
+    {
+      "id": "curated_unbeaten_833139",
+      "name": "🤖 ボット未踏破: 超迷宮の試練 (Seed: 833139)",
+      "description": "解法性は100%保証されているが、標準AutoPlayBotが1600ターン以内に踏破できなかった超高難度・長時間耐久シード。勇者の手で完全攻略せよ！",
+      "createdAt": 1730000010000,
+      "isCurated": true,
+      "seed": 833139,
+      "options": {
+        "difficulty": "HARD",
+        "pacing": "MARATHON",
+        "topology": "FORTRESS_ARENA",
+        "archetype": "BALANCED"
+      },
+      "metrics": {
+        "estimatedTopology": "FORTRESS_ARENA",
+        "estimatedDifficulty": "NIGHTMARE",
+        "estimatedPacing": "MARATHON",
+        "botStatus": "UNBEATEN_BY_BOT",
+        "botTurns": 1600,
+        "challengeRating": 88,
+        "tags": [
+          "PEACEFUL_HOME",
+          "OPEN_ARENA",
+          "UNBEATEN_BY_BOT",
+          "MARATHON"
+        ],
+        "isUnbeatenChallenge": true
+      }
+    },
+    {
+      "id": "curated_unbeaten_480996",
+      "name": "🤖 ボット未踏破: 超迷宮の試練 (Seed: 480996)",
+      "description": "解法性は100%保証されているが、標準AutoPlayBotが1600ターン以内に踏破できなかった超高難度・長時間耐久シード。勇者の手で完全攻略せよ！",
+      "createdAt": 1730000011000,
+      "isCurated": true,
+      "seed": 480996,
+      "options": {
+        "difficulty": "HARD",
+        "pacing": "MARATHON",
+        "topology": "FORTRESS_ARENA",
+        "archetype": "BALANCED"
+      },
+      "metrics": {
+        "estimatedTopology": "FORTRESS_ARENA",
+        "estimatedDifficulty": "NIGHTMARE",
+        "estimatedPacing": "MARATHON",
+        "botStatus": "UNBEATEN_BY_BOT",
+        "botTurns": 1600,
+        "challengeRating": 88,
+        "tags": [
+          "PEACEFUL_HOME",
+          "OPEN_ARENA",
+          "UNBEATEN_BY_BOT",
+          "MARATHON"
+        ],
+        "isUnbeatenChallenge": true
+      }
+    },
+    {
+      "id": "curated_unbeaten_989830",
+      "name": "🤖 ボット未踏破: 超迷宮の試練 (Seed: 989830)",
+      "description": "解法性は100%保証されているが、標準AutoPlayBotが1600ターン以内に踏破できなかった超高難度・長時間耐久シード。勇者の手で完全攻略せよ！",
+      "createdAt": 1730000012000,
+      "isCurated": true,
+      "seed": 989830,
+      "options": {
+        "difficulty": "HARD",
+        "pacing": "MARATHON",
+        "topology": "FORTRESS_ARENA",
+        "archetype": "BALANCED"
+      },
+      "metrics": {
+        "estimatedTopology": "FORTRESS_ARENA",
+        "estimatedDifficulty": "NIGHTMARE",
+        "estimatedPacing": "MARATHON",
+        "botStatus": "UNBEATEN_BY_BOT",
+        "botTurns": 1600,
+        "challengeRating": 88,
+        "tags": [
+          "PEACEFUL_HOME",
+          "OPEN_ARENA",
+          "UNBEATEN_BY_BOT",
+          "MARATHON"
+        ],
+        "isUnbeatenChallenge": true
+      }
+    }
+  ]
+}

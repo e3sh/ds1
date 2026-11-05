@@ -19,6 +19,7 @@ docs/
 ├── roadmap/                          # 【ロードマップ・発展構想】開発マイルストーン・アーキテクチャ提案書
 │   ├── roadmap.md                    # 全体ロードマップ・進行フェーズ一覧 (Phase 6〜12完了 & 今後の発展構想)
 │   └── proposals/                    # 各機能の詳細提案・設計コンセプト資料
+│       ├── hierarchical_theme_block_generation.md # マルチスケール・テーマブロック階層合成＆AI攻略方針連携設計
 │       ├── procedural_variety_and_sandbox.md    # プロシージャル多彩化・チューニング基盤・プリセット共有設計
 │       ├── headless_and_multi_frontend.md       # ヘッドレス評価基盤＆シグナル駆動マルチフロントエンド構想
 │       ├── procedural_and_roguelike_concepts.md # プロシージャル生成原理＆マルチフロア発展構想

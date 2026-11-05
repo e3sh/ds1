@@ -143,6 +143,30 @@ export class GraveSealTactics {
   }
 
   public getOpenGraveSpots(grave: Position, map: WorldMap, enemies: EnemyInstance[]): Position[] {
+    const hint = map.tacticalMetadata?.gravePuzzleHints?.find(
+      h => h.gravePos.x === grave.x && h.gravePos.y === grave.y
+    );
+
+    if (hint) {
+      if (hint.sealMode === 'BOX_EXITS') {
+        const openExits: Position[] = [];
+        for (const target of hint.sealTargetPositions) {
+          if (!this.isTileSealingGrave(target, map, enemies)) {
+            openExits.push(map.wrapPosition(target));
+          }
+        }
+        return openExits;
+      } else if (hint.sealMode === 'DIRECT_8WAY' && hint.sealTargetPositions.length > 0) {
+        const openSpots: Position[] = [];
+        for (const target of hint.sealTargetPositions) {
+          if (!this.isTileSealingGrave(target, map, enemies)) {
+            openSpots.push(map.wrapPosition(target));
+          }
+        }
+        return openSpots;
+      }
+    }
+
     const openSpots: Position[] = [];
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
@@ -181,6 +205,46 @@ export class GraveSealTactics {
     handleMoveOrBreak?: (dir: Direction, player: Player, map: WorldMap) => BotAction
   ): BotAction | null {
     const curPos = player.pos;
+
+    // 1. tacticalMetadata の recommendedPushes を優先チェック
+    if (map.tacticalMetadata?.gravePuzzleHints) {
+      const openGraveSet = new Set(openGraves.map(g => `${g.grave.x},${g.grave.y}`));
+      for (const hint of map.tacticalMetadata.gravePuzzleHints) {
+        if (!openGraveSet.has(`${hint.gravePos.x},${hint.gravePos.y}`)) continue;
+        if (!hint.recommendedPushes || hint.recommendedPushes.length === 0) continue;
+
+        for (const push of hint.recommendedPushes) {
+          const blockPos = map.wrapPosition(push.blockPos);
+          const destPos = map.wrapPosition(push.destinationPos);
+
+          // ブロックがまだ blockPos にあるか？
+          if (map.getObject(blockPos) !== 'BLOCK') continue;
+          // 行き先がプッシュ先として有効か？
+          if (!map.isPushDestinationValid(destPos, enemies)) continue;
+
+          // pushFromPos の計算
+          const d = this.getDirectionOffset(push.dir);
+          const pushFromPos = map.wrapPosition({ x: blockPos.x - d.dx, y: blockPos.y - d.dy });
+
+          if (map.getBaseTile(pushFromPos) === 'WALL_STATIC') continue;
+          if (map.getBaseTile(pushFromPos) === 'GRAVE') continue;
+          if (map.getObject(pushFromPos) !== 'NONE') continue;
+
+          if (curPos.x === pushFromPos.x && curPos.y === pushFromPos.y) {
+            return { type: 'MOVE', dir: push.dir };
+          }
+
+          const dirToStand = this.botNav.findPath(curPos, pushFromPos, map, player, enemies, player.canDiagonal, dragon);
+          if (dirToStand) {
+            if (handleMoveOrBreak) {
+              return handleMoveOrBreak(dirToStand, player, map);
+            }
+            return { type: 'MOVE', dir: dirToStand };
+          }
+        }
+      }
+    }
+
     const cardDirs: { dir: Direction; dx: number; dy: number }[] = [
       { dir: 'UP', dx: 0, dy: -1 },
       { dir: 'DOWN', dx: 0, dy: 1 },
@@ -346,5 +410,15 @@ export class GraveSealTactics {
     }
 
     return context.actPowerRush(player, map, enemies, dragon);
+  }
+
+  private getDirectionOffset(dir: Direction): { dx: number; dy: number } {
+    switch (dir) {
+      case 'UP': return { dx: 0, dy: -1 };
+      case 'DOWN': return { dx: 0, dy: 1 };
+      case 'LEFT': return { dx: -1, dy: 0 };
+      case 'RIGHT': return { dx: 1, dy: 0 };
+      default: return { dx: 0, dy: 0 };
+    }
   }
 }

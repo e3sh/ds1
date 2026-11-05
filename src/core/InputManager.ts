@@ -96,6 +96,20 @@ export class InputManager {
   }
 
   private handleKeyDown(e: KeyboardEvent): void {
+    // input や textarea 入力中はゲームショートカットや preventDefault を行わない
+    const target = e.target as HTMLElement | null;
+    const isInputActive = target && (
+      target.tagName === 'INPUT' ||
+      target.tagName === 'TEXTAREA' ||
+      target.isContentEditable
+    );
+    if (isInputActive) {
+      if (e.code === 'Escape') {
+        (target as HTMLElement).blur();
+      }
+      return;
+    }
+
     // 矢印キーなどのデフォルトスクロールを防止
     if (
       [
