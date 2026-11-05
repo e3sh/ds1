@@ -19,6 +19,7 @@ export class InputManager {
   private onConfirmNo?: SimpleCallback;
   private onToggleMarker?: SimpleCallback;
   private onToggleInspect?: SimpleCallback;
+  private onToggleHelp?: SimpleCallback;
   private onToggleAutoPlay?: SimpleCallback;
   private onDemo?: SimpleCallback;
   private onAnyKey?: AnyKeyCallback;
@@ -74,6 +75,10 @@ export class InputManager {
 
   public setOnToggleInspect(cb: SimpleCallback): void {
     this.onToggleInspect = cb;
+  }
+
+  public setOnToggleHelp(cb: SimpleCallback): void {
+    this.onToggleHelp = cb;
   }
 
   public setOnToggleAutoPlay(cb: SimpleCallback): void {
@@ -186,6 +191,12 @@ export class InputManager {
     // インスペクタ表示切替 (I キー)
     if (e.code === 'KeyI' && this.onToggleInspect) {
       this.onToggleInspect();
+      return;
+    }
+
+    // アイテム＆ルールヘルプ表示切替 (H キー)
+    if (e.code === 'KeyH' && this.onToggleHelp) {
+      this.onToggleHelp();
       return;
     }
 

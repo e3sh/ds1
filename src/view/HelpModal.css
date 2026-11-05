@@ -1,0 +1,358 @@
+/* ==========================================================================
+   Help & Guide Modal Styles (アイテム＆ルールヘルプモーダル)
+   ========================================================================== */
+.help-modal-overlay {
+  z-index: 10000;
+  backdrop-filter: blur(4px);
+  background: rgba(4, 8, 16, 0.85);
+}
+
+.help-modal-box {
+  max-width: 740px;
+  width: 92%;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  border: 2px solid #38bdf8;
+  box-shadow: 0 0 40px rgba(56, 189, 248, 0.35);
+  background: linear-gradient(180deg, #0f172a 0%, #090e1a 100%);
+  padding: 20px 24px;
+  box-sizing: border-box;
+}
+
+.help-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #1e293b;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+}
+
+.help-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.help-icon {
+  font-size: 22px;
+}
+
+.help-title h2 {
+  margin: 0;
+  font-size: 18px;
+  color: #38bdf8;
+  letter-spacing: 1.5px;
+  font-family: inherit;
+}
+
+.help-badge {
+  font-size: 11px;
+  background: rgba(56, 189, 248, 0.15);
+  color: #7dd3fc;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid #0284c7;
+}
+
+.help-close-btn {
+  background: #1e293b;
+  border: 1px solid #475569;
+  color: #94a3b8;
+  border-radius: 4px;
+  font-size: 14px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.help-close-btn:hover {
+  background: #ef4444;
+  color: #fff;
+  border-color: #ef4444;
+}
+
+.help-tab-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid #334155;
+  padding-bottom: 6px;
+}
+
+.help-tab-btn {
+  background: #1e293b;
+  color: #94a3b8;
+  border: 1px solid #334155;
+  border-radius: 6px 6px 0 0;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.help-tab-btn:hover {
+  color: #e2e8f0;
+  background: #334155;
+}
+
+.help-tab-btn.active {
+  background: #0284c7;
+  color: #ffffff;
+  border-color: #38bdf8;
+  box-shadow: 0 -2px 10px rgba(56, 189, 248, 0.4);
+}
+
+.help-body {
+  overflow-y: auto;
+  flex: 1;
+  padding-right: 6px;
+  margin-bottom: 12px;
+  text-align: left;
+}
+
+.help-body::-webkit-scrollbar {
+  width: 6px;
+}
+.help-body::-webkit-scrollbar-track {
+  background: #0b1120;
+}
+.help-body::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+
+.help-section-intro {
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.6;
+  margin-bottom: 12px;
+  background: rgba(15, 23, 42, 0.6);
+  padding: 8px 12px;
+  border-left: 3px solid #38bdf8;
+  border-radius: 0 4px 4px 0;
+}
+
+.help-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.help-card {
+  display: flex;
+  gap: 12px;
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 10px 14px;
+  align-items: flex-start;
+  transition: background 0.15s;
+}
+
+.help-card:hover {
+  background: rgba(30, 41, 59, 0.85);
+}
+
+.help-card.highlight-card {
+  border-color: #eab308;
+  background: rgba(40, 35, 20, 0.6);
+  box-shadow: inset 0 0 10px rgba(234, 179, 8, 0.1);
+}
+
+.help-card.danger-card {
+  border-color: #ef4444;
+  background: rgba(45, 20, 25, 0.6);
+  box-shadow: inset 0 0 10px rgba(239, 68, 68, 0.1);
+}
+
+.help-header-tag {
+  font-family: monospace;
+  font-size: 13px;
+  font-weight: bold;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
+.card-icon {
+  min-width: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.help-tile-canvas {
+  width: 36px;
+  height: 36px;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  background: #000000;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+}
+
+.card-content {
+  flex: 1;
+}
+
+.card-title {
+  font-size: 13px;
+  font-weight: bold;
+  color: #f1f5f9;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.card-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: normal;
+}
+
+.badge-equip {
+  background: #eab308;
+  color: #000;
+  font-weight: bold;
+}
+
+.badge-hold {
+  background: #3b82f6;
+  color: #fff;
+}
+
+.badge-consume {
+  background: #10b981;
+  color: #fff;
+}
+
+.badge-curse {
+  background: #ef4444;
+  color: #fff;
+  font-weight: bold;
+}
+
+.badge-facility {
+  background: #8b5cf6;
+  color: #fff;
+}
+
+.badge-danger {
+  background: #f97316;
+  color: #fff;
+}
+
+.card-desc {
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: #cbd5e1;
+}
+
+.card-desc strong {
+  color: #38bdf8;
+}
+
+.help-card.highlight-card .card-desc strong {
+  color: #fde047;
+}
+
+.help-card.danger-card .card-desc strong {
+  color: #fca5a5;
+}
+
+/* 操作・基本ルール一覧テーブル */
+.help-controls-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ctrl-row {
+  display: flex;
+  background: rgba(30, 41, 59, 0.5);
+  border: 1px solid #334155;
+  border-radius: 4px;
+  padding: 8px 12px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.ctrl-key {
+  width: 170px;
+  min-width: 170px;
+  color: #fde047;
+  font-family: monospace;
+  font-weight: bold;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 3px 8px;
+  border-radius: 3px;
+  border: 1px solid #475569;
+}
+
+.ctrl-action {
+  flex: 1;
+  color: #cbd5e1;
+  line-height: 1.5;
+  padding-left: 12px;
+}
+
+.help-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid #1e293b;
+  padding-top: 12px;
+}
+
+.help-key-hint {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.help-ok-btn {
+  padding: 6px 20px;
+  font-size: 12px;
+  background: linear-gradient(180deg, #0284c7 0%, #0369a1 100%);
+  border-color: #38bdf8;
+  color: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+/* 幅広レイアウト: 折り返し削減 */
+.help-modal-box {
+  max-width: 1100px;
+  width: 95%;
+  max-height: 92vh;
+}
+
+.help-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 800px) {
+  .help-grid { grid-template-columns: 1fr; }
+}
+
+/* style.css の .modal-content-box (max-width:520px) に負けないよう詳細度を上げる */
+.modal-content-box.help-modal-box {
+  max-width: 1100px;
+  width: 95%;
+  max-height: 92vh;
+}

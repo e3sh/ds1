@@ -95,6 +95,13 @@ export class EngineUIAndInputBinder {
         }
         this.toggleInspector();
       },
+      onToggleHelp: () => {
+        if (this.engine.isDemoActive()) {
+          this.engine.stopDemoMode();
+          return;
+        }
+        this.toggleHelp();
+      },
       onSaveMapPreset: (name?: string) => {
         this.engine.saveCurrentMapAsPreset(name);
       },
@@ -255,6 +262,15 @@ export class EngineUIAndInputBinder {
       this.toggleInspector();
     });
 
+    // アイテム＆ルールヘルプ表示切り替えコールバック (H キー)
+    inputManager.setOnToggleHelp(() => {
+      if (this.engine.isDemoActive()) {
+        this.engine.stopDemoMode();
+        return;
+      }
+      this.toggleHelp();
+    });
+
     // ギブアップ (Q キー) コールバック
     inputManager.setOnGiveUp(() => {
       if (this.engine.isDemoActive()) {
@@ -369,5 +385,14 @@ export class EngineUIAndInputBinder {
       totalTurns: this.engine.getTotalTurns(),
     };
     domUI.toggleInspector(inspectorData);
+  }
+
+  /**
+   * アイテム＆ルールヘルプモーダルの表示切り替え
+   */
+  public toggleHelp(): void {
+    const domUI = this.engine.getDomUI();
+    if (!domUI) return;
+    domUI.toggleHelp();
   }
 }
