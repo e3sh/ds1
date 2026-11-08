@@ -18,6 +18,12 @@ export interface NavigatorItemLockInfo {
   tacticalMetadata?: MapTacticalMetadata;
 }
 
+export interface BfsPathResult {
+  dir: Direction;
+  cost: number;
+  steps: number;
+}
+
 export class BotNavigator {
   // 到達不能ターゲット・ブラックリスト（座標キー "x,y" => 残り除外ターン数）
   private unreachableTargets: Map<string, number> = new Map();
@@ -145,15 +151,43 @@ export class BotNavigator {
     // ブラックリストに登録された到達不能目標なら即座にスキップ（BFSコスト完全ゼロ）
     if (!extraBlocked && this.isTargetUnreachable(to)) return null;
 
-    // 1. 通常の床のみで探索
-    const normalPath = this.executeBfs(from, to, map, player, enemies, allowDiagonal, dragon, false, extraBlocked, currentPhase, ghosts);
-    if (normalPath) return normalPath;
+    const canBreak = MagicSystem.canCast(player, 'BREAK').allowed;
+    const canKick = MagicSystem.canCast(player, 'KICK').allowed;
+    const canBreakOrKick = canBreak || (canKick && player.experience >= 3000);
 
-    // 2. 到達不能かつ BREAK 魔法が詠唱可能なら、BLOCKを通過可能（コスト高）として再探索
-    if (MagicSystem.canCast(player, 'BREAK').allowed) {
-      const breakPath = this.executeBfs(from, to, map, player, enemies, allowDiagonal, dragon, true, extraBlocked, currentPhase, ghosts);
-      if (breakPath) return breakPath;
+    // 1. 通常の床のみで探索
+    const normalResult = this.executeBfsDetailed(from, to, map, player, enemies, allowDiagonal, dragon, false, extraBlocked, currentPhase, ghosts);
+
+    // 2. BREAK または KICK が可能なら、ブロック通過可能ルートも探索
+    let breakResult: BfsPathResult | null = null;
+    if (canBreakOrKick) {
+      const manhattanDist = map.getTorusDistance(from, to).manhattan;
+      // 通常経路がない場合は必ず探索。
+      // 通常経路がある場合でも、直線距離に比べて8歩以上迂回している場合はBREAK探索を行って比較
+      const isDetour = !normalResult || (normalResult.steps - manhattanDist >= 8);
+      if (isDetour) {
+        breakResult = this.executeBfsDetailed(from, to, map, player, enemies, allowDiagonal, dragon, true, extraBlocked, currentPhase, ghosts);
+      }
     }
+
+    // 3. 最適経路の選定
+    if (!normalResult && breakResult) {
+      return breakResult.dir;
+    }
+
+    if (normalResult && breakResult) {
+      const manhattanDist = map.getTorusDistance(from, to).manhattan;
+      // ショートカット判定: 通常経路がマンハッタン距離より8歩以上迂回しており、
+      // かつ BREAK 経路の方がコストまたは歩数が大幅に短い場合、積極的に壁を掘る
+      const isSignificantShortcut = (normalResult.steps - manhattanDist >= 8 || normalResult.steps >= breakResult.steps + 4) &&
+                                    (breakResult.cost < normalResult.cost);
+      if (isSignificantShortcut) {
+        return breakResult.dir;
+      }
+      return normalResult.dir;
+    }
+
+    if (normalResult) return normalResult.dir;
 
     // 通常でもBREAKでも到達不能と判明した目標はブラックリストへ自動登録（特定迂回指定時を除く）
     if (!extraBlocked && map.getItem(to) !== 'CROWN') {
@@ -175,6 +209,23 @@ export class BotNavigator {
     currentPhase?: BotPhase,
     ghosts?: Ghost[]
   ): Direction | null {
+    const res = this.executeBfsDetailed(from, to, map, player, enemies, allowDiagonal, dragon, allowBreak, extraBlocked, currentPhase, ghosts);
+    return res ? res.dir : null;
+  }
+
+  public executeBfsDetailed(
+    from: Position,
+    to: Position,
+    map: WorldMap,
+    player: Player,
+    enemies: EnemyInstance[],
+    allowDiagonal: boolean,
+    dragon?: Dragon,
+    allowBreak: boolean = false,
+    extraBlocked?: Position[],
+    currentPhase?: BotPhase,
+    ghosts?: Ghost[]
+  ): BfsPathResult | null {
     if (!from || !to) return null;
 
     // 敵マスの高速判定マップ & 危険ゾーン（LETHAL/DANGER射程内）の事前セット化 (O(1) ルックアップ)
@@ -224,8 +275,8 @@ export class BotNavigator {
       }
     }
 
-    const queue: { pos: Position; firstDir: Direction | null; cost: number }[] = [
-      { pos: from, firstDir: null, cost: 0 },
+    const queue: { pos: Position; firstDir: Direction | null; cost: number; steps: number }[] = [
+      { pos: from, firstDir: null, cost: 0, steps: 0 },
     ];
     const visited = new Map<string, number>();
     visited.set(`${from.x},${from.y}`, 0);
@@ -250,7 +301,11 @@ export class BotNavigator {
       steps++;
       const current = queue.shift()!;
       if (current.pos.x === to.x && current.pos.y === to.y) {
-        return current.firstDir;
+        return {
+          dir: current.firstDir!,
+          cost: current.cost,
+          steps: current.steps,
+        };
       }
 
       for (const d of dirs) {
@@ -297,7 +352,7 @@ export class BotNavigator {
         const obj = map.getObject(nextPos);
         if (obj === 'BLOCK') {
           if (allowBreak) {
-            stepCost = 6;
+            stepCost = 3;
           } else if (player.holdItem === 'RING') {
             const pushDest = map.wrapPosition({
               x: nextPos.x + d.dx,
@@ -444,6 +499,7 @@ export class BotNavigator {
           pos: actualNextPos,
           firstDir: current.firstDir ?? d.dir,
           cost: newCost,
+          steps: current.steps + 1,
         };
 
         if (stepCost > 1) {
@@ -478,7 +534,10 @@ export class BotNavigator {
 
       if (map.getBaseTile(nextPos) === 'WALL_STATIC') continue;
       if (map.getBaseTile(nextPos) === 'GRAVE' && map.getObject(nextPos) === 'NONE') continue;
-      if (map.getObject(nextPos) === 'BLOCK') continue;
+      const isBlock = map.getObject(nextPos) === 'BLOCK';
+      const canBreak = MagicSystem.canCast(player, 'BREAK').allowed;
+      const canKick = MagicSystem.canCast(player, 'KICK').allowed;
+      if (isBlock && !canBreak && !canKick) continue;
 
       if (dragon) {
         const part = dragon.getPartAt(nextPos);
@@ -505,6 +564,15 @@ export class BotNavigator {
       }
 
       let penalty = 0;
+      if (isBlock) {
+        penalty += 30; // 通常の安全な空床を優先するが、引き返すよりは岩を壊して前進
+      }
+      if (this.recentPositions.length > 0) {
+        const lastPos = this.recentPositions[this.recentPositions.length - 1];
+        if (lastPos.x === nextPos.x && lastPos.y === nextPos.y) {
+          penalty += 80; // 直前マスへの逆戻り・ピンポン往復を強く抑止
+        }
+      }
       for (let i = 0; i < this.recentPositions.length; i++) {
         const rp = this.recentPositions[i];
         if (rp.x === nextPos.x && rp.y === nextPos.y) {
@@ -598,7 +666,10 @@ export class BotNavigator {
 
       if (map.getBaseTile(nextPos) === 'WALL_STATIC') continue;
       if (map.getBaseTile(nextPos) === 'GRAVE' && map.getObject(nextPos) === 'NONE') continue;
-      if (map.getObject(nextPos) === 'BLOCK') continue;
+      const isBlock = map.getObject(nextPos) === 'BLOCK';
+      const canBreak = MagicSystem.canCast(player, 'BREAK').allowed;
+      const canKick = MagicSystem.canCast(player, 'KICK').allowed;
+      if (isBlock && !canBreak && !canKick) continue;
       if (dragon && dragon.getPartAt(nextPos)) continue;
 
       const onTile = enemies.find(e => e.isAlive && e.pos.x === nextPos.x && e.pos.y === nextPos.y);

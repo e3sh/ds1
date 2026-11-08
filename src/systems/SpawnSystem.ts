@@ -175,6 +175,7 @@ export class SpawnSystem {
 
     for (const pos of candidates) {
       if (!map.isInside(pos) || !map.isPassableByEnemy(pos)) continue;
+      if (dragon && dragon.getPartAt(pos)) continue; // ドラゴン部位（頭・体・尾）への直接スポーン防止
       if (player.pos.x === pos.x && player.pos.y === pos.y) continue;
       if (enemies.some(e => e.isAlive && e.pos.x === pos.x && e.pos.y === pos.y)) continue;
 

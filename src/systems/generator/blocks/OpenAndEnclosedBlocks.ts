@@ -14,7 +14,8 @@ export const OPEN_4x4_PLAINS: ThemeBlockTemplate = {
   id: 'open_4x4_plains',
   size: '4x4',
   category: 'MISC',
-  weight: 4,
+  weight: 1,
+  maxInstances: 3,
   layout: [
     '....',
     '....',
@@ -43,7 +44,8 @@ export const OPEN_4x4_MEADOW_COIN: ThemeBlockTemplate = {
   id: 'open_4x4_meadow_coin',
   size: '4x4',
   category: 'MISC',
-  weight: 4,
+  weight: 1,
+  maxInstances: 3,
   layout: [
     '....',
     '.$..',
@@ -68,7 +70,8 @@ export const OPEN_8x8_COURTYARD: ThemeBlockTemplate = {
   id: 'open_8x8_courtyard',
   size: '8x8',
   category: 'MISC',
-  weight: 3,
+  weight: 1,
+  maxInstances: 1,
   layout: [
     '........',
     '........',
@@ -102,7 +105,8 @@ export const OPEN_8x8_PILLARS: ThemeBlockTemplate = {
   id: 'open_8x8_pillars',
   size: '8x8',
   category: 'MISC',
-  weight: 3,
+  weight: 1,
+  maxInstances: 2,
   layout: [
     '........',
     '..#..#..',
@@ -142,7 +146,7 @@ export const ENCLOSED_4x4_BOX: ThemeBlockTemplate = {
   id: 'enclosed_4x4_box',
   size: '4x4',
   category: 'MISC',
-  weight: 2,
+  weight: 3,
   maxInstances: 3,
   layout: [
     '####',
@@ -173,7 +177,7 @@ export const ENCLOSED_4x4_SOLID: ThemeBlockTemplate = {
   id: 'enclosed_4x4_solid',
   size: '4x4',
   category: 'MISC',
-  weight: 1,
+  weight: 2,
   maxInstances: 2,
   layout: [
     '####',
@@ -195,8 +199,8 @@ export const ENCLOSED_8x8_VAULT: ThemeBlockTemplate = {
   id: 'enclosed_8x8_vault',
   size: '8x8',
   category: 'TREASURE',
-  weight: 1,
-  maxInstances: 1,
+  weight: 2,
+  maxInstances: 2,
   layout: [
     '########',
     '#......#',
@@ -245,7 +249,8 @@ export const SUPPLY_4x4_PANTRY: ThemeBlockTemplate = {
   id: 'supply_4x4_pantry',
   size: '4x4',
   category: 'TREASURE',
-  weight: 4,
+  weight: 2,
+  maxInstances: 3,
   layout: [
     '#..#',
     '.C$.',
@@ -284,7 +289,8 @@ export const SUPPLY_4x4_CACHE: ThemeBlockTemplate = {
   id: 'supply_4x4_cache',
   size: '4x4',
   category: 'TREASURE',
-  weight: 4,
+  weight: 2,
+  maxInstances: 3,
   layout: [
     '###.',
     '#c$.',
@@ -318,7 +324,8 @@ export const SUPPLY_4x4_CROSSROAD: ThemeBlockTemplate = {
   id: 'supply_4x4_crossroad',
   size: '4x4',
   category: 'TREASURE',
-  weight: 4,
+  weight: 2,
+  maxInstances: 3,
   layout: [
     '.#..',
     '#CP.',

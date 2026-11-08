@@ -258,12 +258,18 @@ console.log('Testing 2: Auto-play verify launch from quick, preset, share-code &
   assert.strictEqual(engine.getState(), 'TITLE');
 
   // 2. プリセットからの自走検証
-  const curated = MapPresetManager.getAllPresets()[0];
-  assert.ok(curated, 'Curated preset must exist');
-  engine.startAutoPlayVerifyMode(undefined, curated);
+  const preset = MapPresetManager.savePreset({
+    name: '自走検証用プリセット',
+    seed: 888888,
+    options: {
+      topology: 'MULTI_SECTOR',
+    },
+  });
+  assert.ok(preset, 'Saved preset must exist');
+  engine.startAutoPlayVerifyMode(undefined, preset);
   assert.strictEqual(engine.isAutoPlayVerifyActive(), true);
   assert.strictEqual(engine.getState(), 'PLAYING');
-  assert.strictEqual(engine.getProceduralOptions()?.topology, curated.options.topology);
+  assert.strictEqual(engine.getProceduralOptions()?.topology, preset.options.topology);
 
   engine.stopAutoPlayVerifyMode(false);
   assert.strictEqual(engine.isAutoPlayVerifyActive(), false);

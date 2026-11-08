@@ -8,6 +8,7 @@ import { Ghost } from '../models/Ghost.js';
 import { ThreatEvaluator } from '../systems/ThreatEvaluator.js';
 import { MagicSystem } from '../systems/MagicSystem.js';
 import { MovementSystem } from '../systems/MovementSystem.js';
+import { KICK_MAX_RANGE } from '../config/Constants.js';
 
 import {
   BotSkillProfile,
@@ -50,6 +51,7 @@ export class AutoPlayBot {
   // アイテム持ち替え制御 (Hands-Free Rule)
   private itemToPickupPos: Position | null = null;
   private tempDroppedKeyPos: Position | null = null;
+  private justOpenedChestPos: Position | null = null;
 
   // 目標ロック＆ヒステリシス制御
   private lockedChestPos: Position | null = null;
@@ -58,6 +60,9 @@ export class AutoPlayBot {
   private lockedItemPos: Position | null = null;
   private lockedItemType?: TileType;
   private lockedItemTurns: number = 0;
+  // 直近でターゲット（ロック）に設定されたアイテム座標（局所ループ検知時の確実なブラックリスト化用）
+  private lastTargetItemPos: Position | null = null;
+  private recentTargetItemPositions: Position[] = [];
 
   private readonly MAX_TARGET_LOCK_TURNS: number = 20;
   private readonly TARGET_HYSTERESIS_BONUS: number = 3;
@@ -314,6 +319,13 @@ export class AutoPlayBot {
   }
 
   public setLockedItem(pos: Position, itemType: TileType): void {
+    this.lastTargetItemPos = { ...pos };
+    if (!this.recentTargetItemPositions.some(p => p.x === pos.x && p.y === pos.y)) {
+      this.recentTargetItemPositions.push({ ...pos });
+      if (this.recentTargetItemPositions.length > 5) {
+        this.recentTargetItemPositions.shift();
+      }
+    }
     if (
       !this.lockedItemPos ||
       this.lockedItemPos.x !== pos.x ||
@@ -344,6 +356,345 @@ export class AutoPlayBot {
         this.clearItemLock();
       }
     }
+
+    if (this.recentTargetItemPositions.length > 0) {
+      this.recentTargetItemPositions = this.recentTargetItemPositions.filter(p => map.getItem(p) !== 'NONE');
+    }
+  }
+
+  private getItemDisplayLabel(type: TileType): string {
+    switch (type) {
+      case 'POWER_STONE': return '💎 パワーストーン';
+      case 'POTION': return '🧪 ポーション';
+      case 'COIN': return '🪙 コイン';
+      case 'KEY': return '🗝️ 鍵';
+      case 'SWORD': return '🗡️ 剣';
+      case 'CROSS': return '✝️ 十字架';
+      case 'RING': return '💍 指輪';
+      case 'CROWN': return '👑 王冠';
+      default: return type;
+    }
+  }
+
+  /**
+   * 極近傍（マンハッタン距離 <= 2）に現在ロック中のアイテムより優先度が高い上位アイテムが存在し、
+   * 安全に回収可能か判定する（ついで回収の判定）
+   */
+  private hasNearbyHigherPriorityItem(
+    curPos: Position,
+    currentLockedType: TileType,
+    map: WorldMap,
+    enemies: EnemyInstance[],
+    player: Player,
+    targetStr: number
+  ): boolean {
+    const needStr = player.strength < targetStr;
+    const needMagic = player.magic < this.tuning.maxTargetMagic;
+
+    const higherTypes: TileType[] = [];
+    if (currentLockedType === 'COIN' || currentLockedType === 'KEY') {
+      if (needStr) higherTypes.push('POWER_STONE');
+      if (needMagic) higherTypes.push('POTION');
+    } else if (currentLockedType === 'POTION') {
+      if (needStr) higherTypes.push('POWER_STONE');
+    }
+
+    if (higherTypes.length === 0) return false;
+
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        if (Math.abs(dx) + Math.abs(dy) > 2) continue;
+        const p = map.wrapPosition({ x: curPos.x + dx, y: curPos.y + dy });
+        if (this.botNav.isTargetUnreachable(p)) continue;
+        const item = map.getItem(p);
+        if (item !== 'NONE' && higherTypes.includes(item)) {
+          const enemy = enemies.find(e => e.isAlive && e.pos.x === p.x && e.pos.y === p.y);
+          if (enemy) {
+            const threat = ThreatEvaluator.evaluateThreat(player, enemy);
+            if (threat !== 'ONE_SHOT' && threat !== 'SAFE') continue;
+          }
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 手ぶら時または鍵所持時、すでに有効にロックされているアイテムへの移動を優先継続する（スティッキーターゲット）
+   */
+  private tryStickyItemMove(
+    player: Player,
+    map: WorldMap,
+    enemies: EnemyInstance[],
+    dragon: Dragon,
+    targetStr: number
+  ): BotAction | null {
+    if (!this.lockedItemPos || !this.lockedItemType) return null;
+
+    if (map.getItem(this.lockedItemPos) !== this.lockedItemType) {
+      this.clearItemLock();
+      return null;
+    }
+
+    const curPos = player.pos;
+
+    // 足元に到達している場合
+    if (curPos.x === this.lockedItemPos.x && curPos.y === this.lockedItemPos.y) {
+      if (player.holdItem === 'NONE') {
+        return { type: 'SPACE' };
+      }
+      return null;
+    }
+
+    // 極近傍（マンハッタン距離 <= 2）に上位アイテムやついで回収すべき対象がある場合はスティッキー解除して上位アイテム回収へ
+    if (this.hasNearbyHigherPriorityItem(curPos, this.lockedItemType, map, enemies, player, targetStr)) {
+      return null;
+    }
+
+    // 鍵所持時に近傍（距離 <= 2）に開錠すべき宝箱がある場合は宝箱を優先
+    if (player.holdItem === 'KEY' && (player.strength < targetStr || this.shouldContinueChestClearing(player, map, enemies, dragon))) {
+      const chestCandidates = this.botNav.findNearestChestCandidates(curPos, map, enemies, player, 1, {
+        lockedChestPos: this.lockedChestPos,
+        hysteresisBonus: this.TARGET_HYSTERESIS_BONUS,
+        tacticalMetadata: map.tacticalMetadata,
+      });
+      if (chestCandidates.length > 0) {
+        const cDist = map.getTorusDistance(curPos, chestCandidates[0]).manhattan;
+        if (cDist <= 2) {
+          return null;
+        }
+      }
+    }
+
+    // ロック中アイテムへの安全な移動経路を探索（距離境界によるキャンセルを防ぎ、一貫して追跡）
+    const dir = this.botNav.findPath(curPos, this.lockedItemPos, map, player, enemies, player.canDiagonal, dragon);
+    if (dir) {
+      const dist = map.getTorusDistance(curPos, this.lockedItemPos).manhattan;
+      const itemLabel = this.getItemDisplayLabel(this.lockedItemType);
+      this.currentTargetDesc = `🎯 ロック継続: ${itemLabel} (${this.lockedItemPos.x}, ${this.lockedItemPos.y}) dist:${dist}`;
+      return this.handleMoveOrBreak(dir, player, map);
+    }
+
+    // 到達経路がない場合はロックを解除して通常探索へ
+    this.clearItemLock();
+    return null;
+  }
+
+  /**
+   * 魔力セーフティリザーブ判定
+   * player.magic === 1 かつ BREAK 習得済み (EXP >= 4000) の場合、
+   * コスト0の BREAK / KICK (非命中時) を永続維持するために、FREEZE / FLASH / RETURN の消費を温存する。
+   * ただし以下の緊急例外時は消費を許可する:
+   * 1. 隣接または直撃圏内に即死級 (LETHAL または 被ダメ >= 現HP) の敵がいて、安全な逃げ場がなく絶体絶命の場合
+   * 2. パワーストーン所持中の帰還、または王冠脱出フェーズ (CROWN_ESCAPE)
+   */
+  public canSpendMagicReserve(
+    player: Player,
+    _enemies: EnemyInstance[],
+    _map: WorldMap,
+    options?: { isLethalEmergency?: boolean; hasEvadeRoute?: boolean }
+  ): boolean {
+    if (player.magic > 1) return true;
+    if (player.magic <= 0) return false;
+
+    // player.magic === 1 の場合
+    // BREAK未習得 (EXP < 4000) であればリザーブする BREAK がないので使用可
+    if (player.experience < 4000) return true;
+
+    // 王冠脱出フェーズなら許可
+    if (this.currentPhase === 'CROWN_ESCAPE') return true;
+
+    // 即死級の緊急事態かつ逃げ場がない場合のみ許可
+    if (options?.isLethalEmergency && !options?.hasEvadeRoute) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * KICKスナイプ判定
+   * 目の前（4方向隣接マス）に岩(BLOCK)があり、その直線方向（最大15マス）に
+   * 障害物なく敵が存在する場合、KICKで長距離狙撃即死させる
+   */
+  public tryKickSnipe(
+    player: Player,
+    map: WorldMap,
+    enemies: EnemyInstance[],
+    dragon?: Dragon,
+    targetGoal?: Position | null
+  ): BotAction | null {
+    if (!MagicSystem.canCast(player, 'KICK').allowed) return null;
+
+    const dirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
+    const maxSteps = KICK_MAX_RANGE;
+
+    for (const dir of dirs) {
+      const rockPos = map.wrapPosition(MovementSystem.getNextPosition(player.pos, dir));
+      if (map.getObject(rockPos) !== 'BLOCK') continue;
+
+      let currPos = rockPos;
+      for (let step = 1; step <= maxSteps; step++) {
+        const nextPos = map.wrapPosition(MovementSystem.getNextPosition(currPos, dir));
+
+        // A. 生存している敵に衝突
+        const hitEnemy = enemies.find(e => e.isAlive && e.pos.x === nextPos.x && e.pos.y === nextPos.y);
+        if (hitEnemy) {
+          const threat = ThreatEvaluator.evaluateThreat(player, hitEnemy);
+          // MP=1 の場合はリザーブ保護（自爆転落防止）のため、
+          // 足元または極近傍（マンハッタン距離<=3以内）にすぐに拾える安全な POTION があるか、
+          // あるいは逃げ場のない LETHAL 敵への緊急自衛時以外は対敵スナイプを控える
+          if (player.magic === 1 && player.experience >= 4000) {
+            const hasNearbyPotion = map.getItem(player.pos) === 'POTION' ||
+              this.botNav.findNearestItemCandidates(player.pos, 'POTION', map, enemies, player, 1).some(
+                p => map.getTorusDistance(player.pos, p).manhattan <= 3
+              );
+            const isLethalEmergency = threat === 'LETHAL' && !this.botNav.findAdjacentSafeEmptyFloor(player.pos, map, enemies, dragon, player);
+            if (!hasNearbyPotion && !isLethalEmergency) {
+              break; // MP=0 転落防止のためスナイプ見送り
+            }
+          }
+
+          player.dir = dir;
+          this.currentTargetDesc = `🎯 KICKスナイプ狙撃 [${hitEnemy.name} (dist:${step + 1}, ${threat})]`;
+          return { type: 'MAGIC', magic: 'KICK' };
+        }
+
+        // B. 障害物に衝突（プレイヤー自身、ドラゴン部位、または移動不可マス）
+        const isPlayerAtNext = nextPos.x === player.pos.x && nextPos.y === player.pos.y;
+        const dragonPart = dragon ? dragon.getPartAt(nextPos) : null;
+        const isBlocked = isPlayerAtNext || dragonPart !== null || !map.isPushDestinationValid(nextPos, enemies);
+        if (isBlocked) {
+          break; // 岩が止まるか砕けるため射線終了
+        }
+
+        currPos = nextPos;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * 能動的KICKスナイプのポジショニング判定
+   * MPに余裕がある時（player.magic >= 2）、近傍の強敵の射線上に岩(BLOCK)があり、
+   * その岩を蹴る立ち位置(standPos)へ2〜3歩以内で安全に移動できるなら移動する。
+   */
+  public tryKickSnipePositioning(
+    player: Player,
+    map: WorldMap,
+    enemies: EnemyInstance[],
+    dragon?: Dragon
+  ): BotAction | null {
+    if (!MagicSystem.canCast(player, 'KICK').allowed || player.magic < 2) return null;
+
+    // 近傍（距離10以内）の生存敵で、DANGERまたはLETHAL、あるいは狩り対象の敵をリストアップ
+    const dangerousEnemies = enemies.filter(e => {
+      if (!e.isAlive || e.isPermanentlyFrozen) return false;
+      const d = map.getTorusDistance(player.pos, e.pos).manhattan;
+      if (d > 10) return false;
+      const threat = ThreatEvaluator.evaluateThreat(player, e);
+      return threat === 'DANGER' || threat === 'LETHAL' || threat === 'ONE_SHOT';
+    });
+
+    if (dangerousEnemies.length === 0) return null;
+
+    const dirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
+    const oppDirs: Record<string, Direction> = {
+      UP: 'DOWN',
+      DOWN: 'UP',
+      LEFT: 'RIGHT',
+      RIGHT: 'LEFT',
+    };
+
+    // プレイヤーの周囲（マンハッタン距離1〜3）にある BLOCK を探索
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dx = -3; dx <= 3; dx++) {
+        const manhattan = Math.abs(dx) + Math.abs(dy);
+        if (manhattan < 1 || manhattan > 3) continue;
+        const rockPos = map.wrapPosition({ x: player.pos.x + dx, y: player.pos.y + dy });
+        if (map.getObject(rockPos) !== 'BLOCK') continue;
+
+        // この岩から4直角方向に敵がいるか射線チェック
+        for (const dir of dirs) {
+          let currPos = rockPos;
+          let hitEnemy: EnemyInstance | null = null;
+          for (let step = 1; step <= KICK_MAX_RANGE; step++) {
+            const nextPos = map.wrapPosition(MovementSystem.getNextPosition(currPos, dir));
+            const enemy = dangerousEnemies.find(e => e.pos.x === nextPos.x && e.pos.y === nextPos.y);
+            if (enemy) {
+              hitEnemy = enemy;
+              break;
+            }
+            const isBlocked = !map.isPushDestinationValid(nextPos, enemies) || (dragon && dragon.getPartAt(nextPos) !== null);
+            if (isBlocked) break;
+            currPos = nextPos;
+          }
+
+          if (hitEnemy) {
+            // 岩をこの方向へ蹴るための立ち位置（岩の反対隣接）
+            const kickDirOpp = oppDirs[dir];
+            const standPos = map.wrapPosition(MovementSystem.getNextPosition(rockPos, kickDirOpp));
+
+            // standPos が現在のプレイヤー位置なら既に tryKickSnipe が処理しているはず
+            if (standPos.x === player.pos.x && standPos.y === player.pos.y) continue;
+
+            // standPos が安全に侵入可能か確認
+            if (map.getBaseTile(standPos) === 'WALL_STATIC' || map.getObject(standPos) !== 'NONE') continue;
+            if (enemies.some(e => e.isAlive && e.pos.x === standPos.x && e.pos.y === standPos.y)) continue;
+
+            // プレイヤーから standPos への安全な移動経路
+            const dirToStand = this.botNav.findPath(player.pos, standPos, map, player, enemies, false, dragon);
+            if (dirToStand) {
+              this.currentTargetDesc = `🎯 KICK狙撃ポジショニング [${hitEnemy.name}狙い -> (${standPos.x}, ${standPos.y})]`;
+              return this.handleMoveOrBreak(dirToStand, player, map);
+            }
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * 最終局面前の積極的宝箱開錠・事前POTION備蓄の継続判定
+   * 目標STRに達していても、MPが目標最大値未満であるか、
+   * または近傍に安全に到達可能な未開封宝箱が存在する場合は
+   * 鍵を手放さずに宝箱を開錠してリソースを床に解放する。
+   */
+  public shouldContinueChestClearing(
+    player: Player,
+    map: WorldMap,
+    enemies: EnemyInstance[],
+    _dragon?: Dragon,
+    targetDefenseExp?: number
+  ): boolean {
+    const nearbyChests = this.botNav.findNearestChestCandidates(player.pos, map, enemies, player, 5, {
+      tacticalMetadata: map.tacticalMetadata,
+    });
+    if (nearbyChests.length === 0) return false;
+
+    // A. 自身のMPが目標最大値未満の場合、未開封宝箱があれば開錠継続してMP補充・POTION排出を狙う
+    if (player.magic < this.tuning.maxTargetMagic) {
+      return true;
+    }
+
+    // B. MPは目標値に達しているが、防御EXPが未達（決戦準備中）の場合、
+    // 周辺（マンハッタン距離20マス以内）の宝箱を開けて床にPOTION備蓄を作っておく
+    const targetDefense = targetDefenseExp ?? this.getEffectiveTargetDefenseExp(enemies);
+    const needDefense = player.experience < targetDefense;
+    const maxChestDist = needDefense ? 20 : 5; // 防御完了後は直近（5マス以内）のみ開けて即決戦へ
+
+    for (const chestPos of nearbyChests) {
+      const dist = map.getTorusDistance(player.pos, chestPos).manhattan;
+      if (dist <= maxChestDist) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   public assessMap(map: WorldMap, _player?: Player): MapAssessment {
@@ -457,7 +808,7 @@ export class AutoPlayBot {
       this.eightStepController.clearEightStepState();
       this.clearTargetLock();
       this.currentTargetDesc = `安全離脱・徘徊中 [残り ${this.forceWanderTurns}T]`;
-      return this.botNav.wanderSafe(player, map, enemies, dragon, this.turnsInPhase);
+      return this.handleWanderSafe(player, map, enemies, dragon);
     }
 
     // 1. フェーズ自動遷移の判定
@@ -487,7 +838,7 @@ export class AutoPlayBot {
         this.clearTargetLock();
         this.forceWanderTurns = 3;
         this.currentTargetDesc = '持ち替えタイムアウト脱出';
-        return this.botNav.wanderSafe(player, map, enemies, dragon, this.turnsInPhase);
+        return this.handleWanderSafe(player, map, enemies, dragon);
       }
     } else {
       this.itemSwapTurns = 0;
@@ -516,14 +867,15 @@ export class AutoPlayBot {
         isPingPong = true;
       }
 
+      // 狭小周回ループ検知: 直近3〜4歩の短いサイクルでの完全同一巡回のみを検知（十字路の自然な交差は誤検知しない）
       isStuckOrLooping = isPingPong;
-      if (!isStuckOrLooping && rLen >= (2 + offset)) {
-        for (let lookback = 2 + offset; lookback <= Math.min(5 + offset, rLen); lookback++) {
-          const prev = this.botNav.recentPositions[rLen - lookback];
-          if (prev && prev.x === player.pos.x && prev.y === player.pos.y) {
-            isStuckOrLooping = true;
-            break;
-          }
+      if (!isStuckOrLooping && rLen >= (4 + offset)) {
+        const prev3 = rLen >= (3 + offset) ? this.botNav.recentPositions[rLen - 3 - offset] : null;
+        const prev4 = rLen >= (4 + offset) ? this.botNav.recentPositions[rLen - 4 - offset] : null;
+        if (prev3 && player.pos.x === prev3.x && player.pos.y === prev3.y) {
+          isStuckOrLooping = true;
+        } else if (prev4 && player.pos.x === prev4.x && player.pos.y === prev4.y) {
+          isStuckOrLooping = true;
         }
       }
 
@@ -540,32 +892,40 @@ export class AutoPlayBot {
 
     // 5. ピンポン往復・局所ループ検出時の多層エスケープ
     if (this.pingPongCount >= 2 || this.botNav.oscillationCount >= 3) {
-      // (a) 現在ロックしていたターゲットを即座にブラックリスト（40ターン除外）
+      // (a) 現在ロックしていたターゲットを短時間ブラックリスト（12ターン除外）
       if (this.lockedChestPos) {
-        this.botNav.markTargetUnreachable(this.lockedChestPos, 40);
+        this.botNav.markTargetUnreachable(this.lockedChestPos, 12);
       }
       if (this.lockedItemPos) {
-        this.botNav.markTargetUnreachable(this.lockedItemPos, 40);
+        this.botNav.markTargetUnreachable(this.lockedItemPos, 12);
       }
+      if (this.lastTargetItemPos) {
+        this.botNav.markTargetUnreachable(this.lastTargetItemPos, 12);
+      }
+      for (const p of this.recentTargetItemPositions) {
+        this.botNav.markTargetUnreachable(p, 12);
+      }
+      this.recentTargetItemPositions = [];
+      this.lastTargetItemPos = null;
       this.clearTargetLock();
-      this.tempDroppedKeyPos = null;
       this.itemToPickupPos = null;
       this.eightStepController.clearEightStepState();
 
       // (b) 直前にいたマス（1手前）を引き返し抑止タイルに指定
       if (prev1) {
         this.botNav.recentEvadedTile = { ...prev1 };
-        this.botNav.recentEvadedTurns = 5;
+        this.botNav.recentEvadedTurns = 4;
       }
 
-      // (c) 3〜4ターンの連続安全徘徊へ移行
+      // (c) 3ターンの安全徘徊へ移行
       this.forceWanderTurns = 3;
       this.botNav.oscillationCount = 0;
       this.pingPongCount = 0;
 
       // (d) 隣接に敵がいる場合、FREEZE または FLASH で無力化
+      // 要件②: 魔力セーフティリザーブ保護（MP=1時はピンポン脱出で安易に魔法を消費しない）
       const adjacentEnemies = this.botNav.getAdjacentEnemies(player.pos, enemies, map);
-      if (adjacentEnemies.length > 0 && player.magic > 0 && !player.hasDeath) {
+      if (adjacentEnemies.length > 0 && player.magic > 0 && !player.hasDeath && this.canSpendMagicReserve(player, enemies, map)) {
         if (MagicSystem.canCast(player, 'FREEZE').allowed) {
           const adjTarget = adjacentEnemies.find(({ enemy }) => !enemy.isPermanentlyFrozen);
           if (adjTarget) {
@@ -580,7 +940,7 @@ export class AutoPlayBot {
       }
 
       this.currentTargetDesc = '⚠️ ピンポン往復検知: 安全離脱徘徊';
-      return this.botNav.wanderSafe(player, map, enemies, dragon, this.turnsInPhase);
+      return this.handleWanderSafe(player, map, enemies, dragon);
     }
 
     // 5. 各フェーズの主戦略行動
@@ -688,6 +1048,7 @@ export class AutoPlayBot {
     const canDamageDragon = player.hasSword && player.strength >= targetStr;
     const hasDiagonal = player.experience >= 12000 || player.canDiagonal;
     const targetDefense = this.getEffectiveTargetDefenseExp(enemies);
+    const minDragonMagic = Math.min(3, this.tuning.maxTargetMagic);
 
     if (canDamageDragon && (hasDiagonal || this.profile === 'NOVICE')) {
       if (this.currentPhase === 'POWER_RUSH') {
@@ -702,12 +1063,12 @@ export class AutoPlayBot {
              ThreatEvaluator.evaluateThreat(player, e) === 'ONE_SHOT' &&
              map.getTorusDistance(player.pos, e.pos).manhattan <= 35
       );
-      const minDragonMagic = Math.min(3, this.tuning.maxTargetMagic);
       // 防御力・MP・HPの十分性を総合評価: 首討伐後の激化と王冠脱出（魔法封印）に耐えうる備蓄
       const hasEnoughMagic = player.magic >= minDragonMagic ||
         (player.magic >= 2 && player.experience >= targetDefense) ||
         (this.defensePrepTurns > 60 && player.magic >= 1) ||
         (this.defensePrepTurns > 100);
+
       const hasEnoughHp = player.hp >= player.maxHp * 0.7 || player.hp >= 50000;
       const hasMinDefense = (player.experience >= targetDefense && !hasLethalEnemy) ||
         (!hasNearbyHuntableEnemy && !hasLethalEnemy && player.experience >= 50000) ||
@@ -734,6 +1095,13 @@ export class AutoPlayBot {
           this.setPhase('GRAVE_SEAL');
           return;
         }
+      }
+
+      // 要件①: 目標STR・EXP到達時でも、MPが最低決戦ライン未満（minDragonMagic未満）の場合は、
+      // 決戦・移転へ突撃せず、POWER_RUSH を継続してMPを整えてから遷移する
+      if (player.magic < minDragonMagic) {
+        this.setPhase('POWER_RUSH');
+        return;
       }
 
       // 2-C. 我が家前線基地移転戦術 (RELOCATE_HOME)
@@ -834,7 +1202,7 @@ export class AutoPlayBot {
 
       // 振動状態（進退ループ中: oscillationCount >= 2）で、近傍に未凍結の敵がいる場合、
       // RETURN で逃げ戻るのではなく FREEZE / FLASH で敵を無力化して活路を開く！
-      if (this.botNav.oscillationCount >= 2 && !player.hasDeath && !hasPowerStone) {
+      if (this.botNav.oscillationCount >= 2 && !player.hasDeath && !hasPowerStone && this.canSpendMagicReserve(player, enemies, map)) {
         if (MagicSystem.canCast(player, 'FREEZE').allowed) {
           const adjTarget = adjacentEnemies.find(
             ({ enemy }) => !enemy.isPermanentlyFrozen
@@ -849,7 +1217,7 @@ export class AutoPlayBot {
       }
 
       const isEscapePhase = dragon.isAllHeadsDefeated || this.currentPhase === 'CROWN_ESCAPE';
-      if (!isEscapePhase || hasPowerStone || (player.holdItem === 'NONE' && isPinch && player.magic >= 2)) {
+      if ((!isEscapePhase || hasPowerStone || (player.holdItem === 'NONE' && isPinch && player.magic >= 2)) && this.canSpendMagicReserve(player, enemies, map)) {
         if (MagicSystem.canCast(player, 'RETURN').allowed && !player.isFlying) {
           this.currentTargetDesc = '🚨 緊急退避: RETURN魔法帰還';
           return { type: 'MAGIC', magic: 'RETURN' };
@@ -857,18 +1225,37 @@ export class AutoPlayBot {
       }
 
       if (hasLethalAdjacent && !player.hasDeath) {
-        if (MagicSystem.canCast(player, 'FREEZE').allowed) {
-          const adjLethal = adjacentEnemies.find(
-            ({ enemy }) => ThreatEvaluator.evaluateThreat(player, enemy) === 'LETHAL' && !enemy.isPermanentlyFrozen
-          );
-          if (adjLethal) {
-            this.currentTargetDesc = `🚨 緊急回避: FREEZE詠唱 (${adjLethal.enemy.name})`;
-            return { type: 'MAGIC', magic: 'FREEZE' };
-          }
+        // A. 目の前に岩があれば KICK スナイプで反撃即死撃破を試みる
+        const emergencyKick = this.tryKickSnipe(player, map, enemies, dragon);
+        if (emergencyKick) {
+          return emergencyKick;
         }
-        if (MagicSystem.canCast(player, 'FLASH').allowed) {
-          this.currentTargetDesc = '🚨 緊急回避: FLASH詠唱';
-          return { type: 'MAGIC', magic: 'FLASH' };
+
+        // B. 安全な退避先（逃げ道）の有無を確認
+        const evadeDir = this.botNav.findEvadeDirection(player.pos, map, enemies, player, dragon);
+        const canCastEmergency = this.canSpendMagicReserve(player, enemies, map, {
+          isLethalEmergency: true,
+          hasEvadeRoute: evadeDir !== null,
+        });
+
+        if (canCastEmergency) {
+          if (MagicSystem.canCast(player, 'FREEZE').allowed) {
+            const adjLethal = adjacentEnemies.find(
+              ({ enemy }) => ThreatEvaluator.evaluateThreat(player, enemy) === 'LETHAL' && !enemy.isPermanentlyFrozen
+            );
+            if (adjLethal) {
+              this.currentTargetDesc = `🚨 緊急回避: FREEZE詠唱 (${adjLethal.enemy.name})`;
+              return { type: 'MAGIC', magic: 'FREEZE' };
+            }
+          }
+          if (MagicSystem.canCast(player, 'FLASH').allowed) {
+            this.currentTargetDesc = '🚨 緊急回避: FLASH詠唱';
+            return { type: 'MAGIC', magic: 'FLASH' };
+          }
+        } else if (evadeDir) {
+          // MP=1 温存のため、安全な逃げ場があれば移動で回避
+          this.currentTargetDesc = '🚨 緊急退避: MPリザーブ温存のため安全マスへ回避移動';
+          return this.handleMoveOrBreak(evadeDir, player, map);
         }
       }
 
@@ -934,8 +1321,21 @@ export class AutoPlayBot {
         this.botNav.clearUnreachableTargets();
         return { type: 'MAGIC', magic: 'BREAK' };
       }
+      if (MagicSystem.canCast(player, 'KICK').allowed) {
+        player.dir = dir;
+        this.botNav.clearUnreachableTargets();
+        return { type: 'MAGIC', magic: 'KICK' };
+      }
     }
     return { type: 'MOVE', dir };
+  }
+
+  public handleWanderSafe(player: Player, map: WorldMap, enemies: EnemyInstance[], dragon?: Dragon): BotAction {
+    const act = this.botNav.wanderSafe(player, map, enemies, dragon, this.turnsInPhase);
+    if (act.type === 'MOVE') {
+      return this.handleMoveOrBreak(act.dir, player, map);
+    }
+    return act;
   }
 
   private findAdjacentDropTile(
@@ -998,10 +1398,13 @@ export class AutoPlayBot {
           return this.handleMoveOrBreak(dir, player, map);
         }
       }
-      this.clearItemLock();
     }
 
     if (player.hasSword && player.holdItem === 'NONE') {
+      // 0. スティッキーターゲットの確認（ロック中のアイテムへ優先移動）
+      const stickyAction = this.tryStickyItemMove(player, map, enemies, dragon, 0);
+      if (stickyAction) return stickyAction;
+
       // 1. 最優先: POTION回収 (MP備蓄)
       if (player.magic < this.tuning.maxTargetMagic) {
         const potionCandidates = this.botNav.findNearestItemCandidates(player.pos, 'POTION', map, enemies, player, 5, {
@@ -1021,7 +1424,6 @@ export class AutoPlayBot {
             }
           }
         }
-        this.clearItemLock();
       }
 
       // 2. 近傍のコイン回収 (非戦闘EXP獲得による早期魔法解禁: EXPONENTIAL限定、MP備蓄優先)
@@ -1046,7 +1448,6 @@ export class AutoPlayBot {
             }
           }
         }
-        this.clearItemLock();
       }
 
       const keyCandidates = this.botNav.findNearestItemCandidates(player.pos, 'KEY', map, enemies, player, 5, {
@@ -1065,7 +1466,7 @@ export class AutoPlayBot {
       this.clearItemLock();
     }
 
-    return this.botNav.wanderSafe(player, map, enemies, dragon, this.turnsInPhase);
+    return this.handleWanderSafe(player, map, enemies, dragon);
   }
 
   private actGraveSeal(player: Player, map: WorldMap, enemies: EnemyInstance[], dragon: Dragon): BotAction {
@@ -1110,20 +1511,30 @@ export class AutoPlayBot {
     // 1. パワーストーン所持中なら我が家へ最速帰還＆奉納！
     if (player.holdItem === 'POWER_STONE') {
       this.eightStepController.clearEightStepState();
-      this.tempDroppedKeyPos = null;
+      // ※注意: tempDroppedKeyPos はここでは消去しない（奉納後に鍵回収へ復帰するため）
       this.currentTargetDesc = `💎 パワーストーン奉納帰還 -> HOME(${map.realHomePos.x}, ${map.realHomePos.y})`;
-      if (MagicSystem.canCast(player, 'RETURN').allowed && !player.isFlying) {
+      const dirToHome = this.botNav.findPath(curPos, map.realHomePos, map, player, enemies, player.canDiagonal, dragon);
+      const canCastReturn = MagicSystem.canCast(player, 'RETURN').allowed && !player.isFlying;
+
+      // MP=1 の時は原則 RETURN 禁止（MP=0自爆転落防止のため徒歩帰還）。
+      // 例外: 徒歩ルートが遮断（dirToHome === null）され、周囲に敵がいて絶体絶命の場合のみ
+      const isEmergencyBlocked = !dirToHome && enemies.some(e => e.isAlive && map.getTorusDistance(curPos, e.pos).chebyshev <= 2);
+      const allowReturn = canCastReturn && (player.magic >= 2 || player.experience < 4000 || isEmergencyBlocked);
+
+      if (allowReturn) {
         return { type: 'MAGIC', magic: 'RETURN' };
       }
-      const dirToHome = this.botNav.findPath(curPos, map.realHomePos, map, player, enemies, player.canDiagonal, dragon);
       if (dirToHome) return this.handleMoveOrBreak(dirToHome, player, map);
-      return this.botNav.wanderSafe(player, map, enemies, dragon, this.turnsInPhase);
+      if (canCastReturn) return { type: 'MAGIC', magic: 'RETURN' }; // 徒歩ルートもなく徘徊もできない最終手段
+      return this.handleWanderSafe(player, map, enemies, dragon);
     }
 
-    // 我が家に到達した場合はアイテム一時置き状態を完全クリア
+    // 我が家に到達した場合は退避アイテム取得状態をクリア（一時置き鍵は存在確認して維持）
     if (curPos.x === map.realHomePos.x && curPos.y === map.realHomePos.y) {
-      this.tempDroppedKeyPos = null;
       this.itemToPickupPos = null;
+      if (this.tempDroppedKeyPos !== null && map.getItem(this.tempDroppedKeyPos) !== 'KEY') {
+        this.tempDroppedKeyPos = null;
+      }
     }
 
     // 1-B. 8歩周期宝箱開錠モード中なら歩数調整＆確定開錠を最優先！
@@ -1137,11 +1548,13 @@ export class AutoPlayBot {
     // （EXPONENTIALモード時、コイン所持時、未解禁魔法があり換金で到達見込みがある場合や、近傍に家がある場合）
     if (!isClassic && player.gold >= 2 && player.experience < 12000 && this.itemToPickupPos === null) {
       this.currentTargetDesc = `🪙 コイン早期換金帰還 [所持:${player.gold}枚] -> HOME`;
-      if (MagicSystem.canCast(player, 'RETURN').allowed && !player.isFlying) {
+      if (MagicSystem.canCast(player, 'RETURN').allowed && !player.isFlying && this.canSpendMagicReserve(player, enemies, map)) {
         return { type: 'MAGIC', magic: 'RETURN' };
       }
       const distToHome = map.getTorusDistance(curPos, map.realHomePos).manhattan;
-      if (distToHome <= 15 || player.gold >= 3) {
+      const shouldReturnHomeForCoin = (player.experience < 4000 && (distToHome <= 25 || player.gold >= 2)) ||
+                                      distToHome <= 15 || player.gold >= 3;
+      if (shouldReturnHomeForCoin) {
         const dirToHome = this.botNav.findPath(curPos, map.realHomePos, map, player, enemies, player.canDiagonal, dragon);
         if (dirToHome) return this.handleMoveOrBreak(dirToHome, player, map);
       }
@@ -1154,7 +1567,15 @@ export class AutoPlayBot {
     // 鍵所持中の一時置きを伴うコイン回収は、MPに余裕があり周囲が安全で、かつ本当にコインEXP/オーバーヒールが必要な局面のみに厳格限定
     const needCoinWithKey = !isClassic && isSafeAround && player.magic >= 2 &&
       (player.experience < 2000 || player.hp < player.maxHp * 0.4);
-    const isValuableItem = floorItem === 'POWER_STONE' ||
+
+    const isChestJustOpened = this.justOpenedChestPos !== null &&
+      this.justOpenedChestPos.x === curPos.x && this.justOpenedChestPos.y === curPos.y;
+    const needChests = player.strength < targetStr || this.shouldContinueChestClearing(player, map, enemies, dragon);
+    // 道端の床置き石を踏んだだけで鍵を捨てるのを厳禁とする。
+    // 石への持ち替えは「宝箱直後」「周囲に宝箱なし」「8歩周期確定石」に厳格限定
+    const allowStoneSwap = !needChests || isChestJustOpened || (player.stepCountSinceStone === 0);
+
+    const isValuableItem = (floorItem === 'POWER_STONE' && allowStoneSwap) ||
       (floorItem === 'POTION' && player.magic < this.tuning.maxTargetMagic) ||
       (floorItem === 'COIN' && needCoinWithKey);
 
@@ -1240,24 +1661,39 @@ export class AutoPlayBot {
 
     // 3. 宝箱開錠（8歩周期の活用）
     if (floorObj === 'CHEST' && player.holdItem === 'KEY' && this.itemToPickupPos === null) {
+      this.justOpenedChestPos = { ...curPos };
       this.currentTargetDesc = `🔓 宝箱開錠 (${curPos.x}, ${curPos.y})`;
       return { type: 'SPACE' };
+    }
+
+    // 3-B. KICK魔法による遠距離スナイプ（反撃不可・直線強敵即死撃破）
+    const kickAction = this.tryKickSnipe(player, map, enemies, dragon);
+    if (kickAction) {
+      return kickAction;
+    }
+
+    // 3-C. 能動的 KICK スナイプポジショニング（MP>=2時、近傍強敵を狙撃するための射点へ移動）
+    const kickPosAction = this.tryKickSnipePositioning(player, map, enemies, dragon);
+    if (kickPosAction) {
+      return kickPosAction;
     }
 
     // 4. 周囲の安全な敵を撃破（EXP稼ぎ＆障害排除）
     const adjacentTargets = this.botNav.getAdjacentEnemies(curPos, enemies, map);
 
     if (adjacentTargets.length >= 2 || adjacentTargets.some(({ enemy }) => ThreatEvaluator.evaluateThreat(player, enemy) === 'DANGER')) {
-      if (MagicSystem.canCast(player, 'FREEZE').allowed) {
-        const target = adjacentTargets.find(({ enemy }) => !enemy.isPermanentlyFrozen);
-        if (target) {
-          this.currentTargetDesc = `❄️ FREEZE詠唱: 隣接危険敵足止め (${target.enemy.name})`;
-          return { type: 'MAGIC', magic: 'FREEZE' };
+      if (this.canSpendMagicReserve(player, enemies, map)) {
+        if (MagicSystem.canCast(player, 'FREEZE').allowed) {
+          const target = adjacentTargets.find(({ enemy }) => !enemy.isPermanentlyFrozen);
+          if (target) {
+            this.currentTargetDesc = `❄️ FREEZE詠唱: 隣接危険敵足止め (${target.enemy.name})`;
+            return { type: 'MAGIC', magic: 'FREEZE' };
+          }
         }
-      }
-      if (MagicSystem.canCast(player, 'FLASH').allowed) {
-        this.currentTargetDesc = '⚡ FLASH詠唱: 全敵足止め';
-        return { type: 'MAGIC', magic: 'FLASH' };
+        if (MagicSystem.canCast(player, 'FLASH').allowed) {
+          this.currentTargetDesc = '⚡ FLASH詠唱: 全敵足止め';
+          return { type: 'MAGIC', magic: 'FLASH' };
+        }
       }
     }
 
@@ -1332,6 +1768,10 @@ export class AutoPlayBot {
 
     // 5. 鍵を持っている場合: 最寄りの宝箱へ向かう（近傍POTIONの一時回収、厳格限定の近傍コイン回収も含む）
     if (player.holdItem === 'KEY') {
+      // 鍵所持時の一時回収スティッキーチェック
+      const stickyKeyAction = this.tryStickyItemMove(player, map, enemies, dragon, targetStr);
+      if (stickyKeyAction) return stickyKeyAction;
+
       // 5-A. 近傍POTIONの一時回収（最優先！MP枯渇を徹底防止）
       if (player.magic < this.tuning.maxTargetMagic && this.itemToPickupPos === null && this.tempDroppedKeyPos === null) {
         const potionCandidates = this.botNav.findNearestItemCandidates(curPos, 'POTION', map, enemies, player, 5, {
@@ -1339,7 +1779,9 @@ export class AutoPlayBot {
           lockedItemType: this.lockedItemType,
           hysteresisBonus: this.TARGET_HYSTERESIS_BONUS,
         });
-        const maxDist = player.magic <= 1 ? 30 : (player.strength >= targetStr ? 25 : 12);
+        // 鍵所持中は宝箱開錠を最優先！MP>=2あれば遠くのPOTIONへ脇道に逸れず宝箱を目指す。
+        // （宝箱を開ければPOTIONも石も出るため）
+        const maxDist = player.magic <= 1 ? 25 : (player.strength >= targetStr ? 20 : 3);
         for (const candidate of potionCandidates) {
           const pDist = map.getTorusDistance(curPos, candidate).manhattan;
           if (pDist <= maxDist) {
@@ -1353,8 +1795,27 @@ export class AutoPlayBot {
         }
       }
 
-      // 5-B. 宝箱へ向かう（STR未到達時）
-      if (player.strength < targetStr) {
+      // 5-B. 宝箱へ向かう（STR未到達時、または事前クリアリング継続中）
+      const needChestClearing = player.strength < targetStr || this.shouldContinueChestClearing(player, map, enemies, dragon);
+      if (needChestClearing) {
+        // 通り道や近傍（マンハッタン距離2〜3マス以内）に未開封の宝箱がある場合は、
+        // 8歩周期外の通常開錠であっても積極的に開けて回転率とリソース解放を高める
+        const immediateChests = this.botNav.findNearestChestCandidates(curPos, map, enemies, player, 1, {
+          tacticalMetadata: map.tacticalMetadata,
+        });
+        if (immediateChests.length > 0) {
+          const immChest = immediateChests[0];
+          const immDist = map.getTorusDistance(curPos, immChest).manhattan;
+          if (immDist <= 3) {
+            this.currentTargetDesc = `📦 近傍宝箱即座開錠 (${immChest.x}, ${immChest.y}) dist:${immDist}`;
+            const dir = this.botNav.findPath(curPos, immChest, map, player, enemies, player.canDiagonal, dragon);
+            if (dir) {
+              this.setLockedChest(immChest);
+              return this.handleMoveOrBreak(dir, player, map);
+            }
+          }
+        }
+
         const chestCandidates = this.botNav.findNearestChestCandidates(curPos, map, enemies, player, 5, {
           lockedChestPos: this.lockedChestPos,
           hysteresisBonus: this.TARGET_HYSTERESIS_BONUS,
@@ -1392,8 +1853,8 @@ export class AutoPlayBot {
           }
         }
       } else {
-        // 目標STR達成後は宝箱開錠不要。即座に鍵を手放して手ぶらでPOTION回収・敵狩りへ
-        this.currentTargetDesc = '🗝️ 鍵を手放す（目標STR達成）';
+        // 目標STR達成かつ事前クリアリング完了（MP十分または周辺宝箱なし）
+        this.currentTargetDesc = '🗝️ 鍵を手放す（目標STR＆リソース確保完了）';
         if (floorItem === 'NONE' && floorObj === 'NONE') {
           return { type: 'SPACE' };
         }
@@ -1410,10 +1871,16 @@ export class AutoPlayBot {
 
     // 6. 手ぶらの場合: 床のパワーストーン、POTION、最寄りの鍵を回収
     if (player.holdItem === 'NONE') {
+      // 0. スティッキーターゲットの確認（ロック中のアイテムへ優先移動）
+      const stickyAction = this.tryStickyItemMove(player, map, enemies, dragon, targetStr);
+      if (stickyAction) return stickyAction;
+
       const needMagic = player.magic < this.tuning.maxTargetMagic;
       const strDone = player.strength >= targetStr;
+      const needKeyForChests = player.strength < targetStr || this.shouldContinueChestClearing(player, map, enemies, dragon);
 
-      if (strDone && needMagic) {
+      // 6-A. MP枯渇・飢餓時（MP <= 1）の生命線確保（最優先POTION回収）
+      if (needMagic && player.magic <= 1) {
         const potionCandidates = this.botNav.findNearestItemCandidates(curPos, 'POTION', map, enemies, player, 5, {
           lockedItemPos: this.lockedItemPos,
           lockedItemType: this.lockedItemType,
@@ -1421,19 +1888,45 @@ export class AutoPlayBot {
         });
         for (const nearestPotion of potionCandidates) {
           const pDist = map.getTorusDistance(curPos, nearestPotion).manhattan;
-          this.currentTargetDesc = `🧪 ポーション回収 (${nearestPotion.x}, ${nearestPotion.y}) dist:${pDist}`;
-          if (curPos.x === nearestPotion.x && curPos.y === nearestPotion.y) {
-            return { type: 'SPACE' };
-          }
-          const dir = this.botNav.findPath(curPos, nearestPotion, map, player, enemies, player.canDiagonal, dragon);
-          if (dir) {
-            this.setLockedItem(nearestPotion, 'POTION');
-            return this.handleMoveOrBreak(dir, player, map);
+          if (pDist <= 35) {
+            this.currentTargetDesc = `🧪 ポーション緊急回収 (${nearestPotion.x}, ${nearestPotion.y}) dist:${pDist}`;
+            if (curPos.x === nearestPotion.x && curPos.y === nearestPotion.y) {
+              return { type: 'SPACE' };
+            }
+            const dir = this.botNav.findPath(curPos, nearestPotion, map, player, enemies, player.canDiagonal, dragon);
+            if (dir) {
+              this.setLockedItem(nearestPotion, 'POTION');
+              return this.handleMoveOrBreak(dir, player, map);
+            }
           }
         }
-        this.clearItemLock();
       }
 
+      // 6-B. 宝箱開錠サイクルの確立: 未開封宝箱があり、近傍に鍵があるなら遠方の石探索より鍵回収を優先！
+      if (needKeyForChests) {
+        const keyCandidates = this.botNav.findNearestItemCandidates(curPos, 'KEY', map, enemies, player, 5, {
+          lockedItemPos: this.lockedItemPos,
+          lockedItemType: this.lockedItemType,
+          hysteresisBonus: this.TARGET_HYSTERESIS_BONUS,
+        });
+        const maxKeyDist = player.strength < targetStr ? 40 : 25;
+        for (const nearestKey of keyCandidates) {
+          const kDist = map.getTorusDistance(curPos, nearestKey).manhattan;
+          if (kDist <= maxKeyDist) {
+            this.currentTargetDesc = `🗝️ 鍵回収 (${nearestKey.x}, ${nearestKey.y}) dist:${kDist}`;
+            if (curPos.x === nearestKey.x && curPos.y === nearestKey.y) {
+              return { type: 'SPACE' };
+            }
+            const dir = this.botNav.findPath(curPos, nearestKey, map, player, enemies, player.canDiagonal, dragon);
+            if (dir) {
+              this.setLockedItem(nearestKey, 'KEY');
+              return this.handleMoveOrBreak(dir, player, map);
+            }
+          }
+        }
+      }
+
+      // 6-C. STR未達時のパワーストーン回収
       if (!strDone) {
         const stoneCandidates = this.botNav.findNearestItemCandidates(curPos, 'POWER_STONE', map, enemies, player, 5, {
           lockedItemPos: this.lockedItemPos,
@@ -1454,9 +1947,9 @@ export class AutoPlayBot {
             }
           }
         }
-        this.clearItemLock();
       }
 
+      // 6-D. 通常の POTION 回収（MP備蓄）
       if (needMagic) {
         const potionCandidates = this.botNav.findNearestItemCandidates(curPos, 'POTION', map, enemies, player, 5, {
           lockedItemPos: this.lockedItemPos,
@@ -1465,7 +1958,7 @@ export class AutoPlayBot {
         });
         for (const nearestPotion of potionCandidates) {
           const pDist = map.getTorusDistance(curPos, nearestPotion).manhattan;
-          const maxDist = player.magic <= 1 ? 35 : (strDone || pDist <= 15 ? 18 : 0);
+          const maxDist = strDone || pDist <= 15 ? 18 : 10;
           if (pDist <= maxDist) {
             this.currentTargetDesc = `🧪 ポーション回収 (${nearestPotion.x}, ${nearestPotion.y}) dist:${pDist}`;
             if (curPos.x === nearestPotion.x && curPos.y === nearestPotion.y) {
@@ -1478,7 +1971,6 @@ export class AutoPlayBot {
             }
           }
         }
-        this.clearItemLock();
       }
 
       // 手ぶら時の近傍コイン回収 (MP枯渇時はPOTION/KEYを優先。MP>=1または最序盤EXP<2000かつ周囲安全時のみ)
@@ -1494,7 +1986,7 @@ export class AutoPlayBot {
           lockedItemType: this.lockedItemType,
           hysteresisBonus: this.TARGET_HYSTERESIS_BONUS,
         });
-        const maxCoinDist = !isClassic ? (player.experience < 2000 ? 6 : 3) : 3;
+        const maxCoinDist = !isClassic ? (player.experience < 4000 ? 15 : (player.experience < 12000 ? 8 : 4)) : 3;
         for (const nearestCoin of coinCandidates) {
           const cDist = map.getTorusDistance(curPos, nearestCoin).manhattan;
           if (cDist <= maxCoinDist) {
@@ -1509,33 +2001,15 @@ export class AutoPlayBot {
             }
           }
         }
-        this.clearItemLock();
       }
 
-      if (player.strength < targetStr) {
-        const keyCandidates = this.botNav.findNearestItemCandidates(curPos, 'KEY', map, enemies, player, 5, {
-          lockedItemPos: this.lockedItemPos,
-          lockedItemType: this.lockedItemType,
-          hysteresisBonus: this.TARGET_HYSTERESIS_BONUS,
-        });
-        for (const nearestKey of keyCandidates) {
-          const kDist = map.getTorusDistance(curPos, nearestKey).manhattan;
-          this.currentTargetDesc = `🗝️ 鍵回収 (${nearestKey.x}, ${nearestKey.y}) dist:${kDist}`;
-          if (curPos.x === nearestKey.x && curPos.y === nearestKey.y) {
-            return { type: 'SPACE' };
-          }
-          const dir = this.botNav.findPath(curPos, nearestKey, map, player, enemies, player.canDiagonal, dragon);
-          if (dir) {
-            this.setLockedItem(nearestKey, 'KEY');
-            return this.handleMoveOrBreak(dir, player, map);
-          }
-        }
-        this.clearItemLock();
-      }
+
+      // すべてのアイテム候補が見つからなかった場合のみロック解除
+      this.clearItemLock();
     }
 
     this.currentTargetDesc = '🧭 安全徘徊探索中';
-    return this.botNav.wanderSafe(player, map, enemies, dragon, this.turnsInPhase);
+    return this.handleWanderSafe(player, map, enemies, dragon);
   }
 
   public actFarming(player: Player, map: WorldMap, enemies: EnemyInstance[], dragon: Dragon): BotAction {
@@ -1562,6 +2036,13 @@ export class AutoPlayBot {
     const curPos = player.pos;
     const isLastHead = livingHeads.length === 1;
 
+    // 足元が宝箱で鍵を持っていれば開錠（MP枯渇フォールバックや通りすがり）
+    const floorObj = map.getObject(curPos);
+    if (floorObj === 'CHEST' && player.holdItem === 'KEY') {
+      this.currentTargetDesc = `🔓 決戦中宝箱開錠 (${curPos.x}, ${curPos.y})`;
+      return { type: 'SPACE' };
+    }
+
     // 0. 首討伐後の世界変化（怒り・上位敵湧き・全魔法封印）を見据えた安全制御
     // HPは70%未満かつ5万未満の場合に回復へ（HP5万以上あれば上位敵の一撃にも耐えられる）
     const isDamaged = player.hp < player.maxHp * 0.7 && player.hp < 50000;
@@ -1580,24 +2061,64 @@ export class AutoPlayBot {
     }
 
     // MP枯渇時は近傍POTION補給を優先
-    if (isMpLow && player.holdItem === 'NONE') {
-      const potionPos = this.botNav.findNearestItem(curPos, 'POTION', map, enemies, player);
-      if (potionPos) {
-        const pDist = map.getTorusDistance(curPos, potionPos).manhattan;
-        if (pDist <= 20) {
-          this.currentTargetDesc = `🧪 決戦中MP補給へ移動 (${potionPos.x}, ${potionPos.y}) dist:${pDist}`;
-          if (curPos.x === potionPos.x && curPos.y === potionPos.y) {
-            return { type: 'SPACE' };
+    if (isMpLow) {
+      if (player.holdItem === 'NONE') {
+        const potionPos = this.botNav.findNearestItem(curPos, 'POTION', map, enemies, player);
+        if (potionPos) {
+          const pDist = map.getTorusDistance(curPos, potionPos).manhattan;
+          if (pDist <= 20) {
+            this.currentTargetDesc = `🧪 決戦中MP補給へ移動 (${potionPos.x}, ${potionPos.y}) dist:${pDist}`;
+            if (curPos.x === potionPos.x && curPos.y === potionPos.y) {
+              return { type: 'SPACE' };
+            }
+            const dir = this.botNav.findPath(curPos, potionPos, map, player, enemies, player.canDiagonal, dragon);
+            if (dir) return this.handleMoveOrBreak(dir, player, map);
           }
-          const dir = this.botNav.findPath(curPos, potionPos, map, player, enemies, player.canDiagonal, dragon);
-          if (dir) return this.handleMoveOrBreak(dir, player, map);
+        }
+
+        // 床置きPOTIONが近傍にない場合のセーフティネット:
+        // 近傍に鍵と未開封宝箱があれば、鍵を回収して開錠しPOTIONを探す
+        const keyCandidates = this.botNav.findNearestItemCandidates(curPos, 'KEY', map, enemies, player, 3);
+        const chestCandidates = this.botNav.findNearestChestCandidates(curPos, map, enemies, player, 3);
+        if (keyCandidates.length > 0 && chestCandidates.length > 0) {
+          const nearestKey = keyCandidates[0];
+          const kDist = map.getTorusDistance(curPos, nearestKey).manhattan;
+          if (kDist <= 20) {
+            this.currentTargetDesc = `🗝️ 決戦中MP枯渇フォールバック: 鍵回収 (${nearestKey.x}, ${nearestKey.y}) dist:${kDist}`;
+            if (curPos.x === nearestKey.x && curPos.y === nearestKey.y) {
+              return { type: 'SPACE' };
+            }
+            const dir = this.botNav.findPath(curPos, nearestKey, map, player, enemies, player.canDiagonal, dragon);
+            if (dir) return this.handleMoveOrBreak(dir, player, map);
+          }
+        }
+      } else if (player.holdItem === 'KEY') {
+        // すでに鍵を持っている場合、未開封宝箱を開錠してPOTION排出を狙う
+        const chestCandidates = this.botNav.findNearestChestCandidates(curPos, map, enemies, player, 3);
+        if (chestCandidates.length > 0) {
+          const targetChest = chestCandidates[0];
+          const cDist = map.getTorusDistance(curPos, targetChest).manhattan;
+          if (cDist <= 20) {
+            this.currentTargetDesc = `📦 決戦中MP枯渇フォールバック: 宝箱開錠 (${targetChest.x}, ${targetChest.y}) dist:${cDist}`;
+            if (curPos.x === targetChest.x && curPos.y === targetChest.y) {
+              return { type: 'SPACE' };
+            }
+            const dir = this.botNav.findPath(curPos, targetChest, map, player, enemies, player.canDiagonal, dragon);
+            if (dir) return this.handleMoveOrBreak(dir, player, map);
+          }
         }
       }
     }
 
+    // KICKスナイプによる射線上の敵排除
+    const kickAction = this.tryKickSnipe(player, map, enemies, dragon);
+    if (kickAction) {
+      return kickAction;
+    }
+
     // 最後の首で隣接に危険な敵がいる場合、FREEZE等で無力化してから首を攻撃
     if (isLastHead && hasDangerousAdjacent && player.magic > 0 && !player.hasDeath) {
-      if (MagicSystem.canCast(player, 'FREEZE').allowed) {
+      if (this.canSpendMagicReserve(player, enemies, map) && MagicSystem.canCast(player, 'FREEZE').allowed) {
         this.currentTargetDesc = '❄️ 最終首撃破前の隣接危険敵FREEZE無力化';
         return { type: 'MAGIC', magic: 'FREEZE' };
       }
@@ -1873,7 +2394,7 @@ export class AutoPlayBot {
       const nearbyEnemies = enemies.filter(
         e => e.isAlive && !e.isPermanentlyFrozen && map.getTorusDistance(curPos, e.pos).chebyshev <= 2
       );
-      if (nearbyEnemies.length > 0 && MagicSystem.canCast(player, 'FREEZE').allowed) {
+      if (nearbyEnemies.length > 0 && this.canSpendMagicReserve(player, enemies, map) && MagicSystem.canCast(player, 'FREEZE').allowed) {
         return { type: 'MAGIC', magic: 'FREEZE' };
       }
     }

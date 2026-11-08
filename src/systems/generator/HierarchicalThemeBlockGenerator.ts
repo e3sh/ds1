@@ -110,7 +110,7 @@ export class HierarchicalThemeBlockGenerator {
     this.connectEdgePorts(map, placedBlocks, rng);
 
     // 7. スロット予算アクティベーション（目標宝箱数・墓数調整）
-    this.activateBudgets(map, targetChests, targetGraves, rng);
+    this.activateBudgets(map, targetChests, targetGraves, placedBlocks, rng);
 
     // 8. 難易度別ブートストラップ導線保証（剣・鍵・指輪・十字架・壺・パワーストーン）
     this.ensureBootstrapRequirements(map, difficulty, pacing, archetype, rng);
@@ -183,8 +183,15 @@ export class HierarchicalThemeBlockGenerator {
     }
     const largeTemplates = rng.shuffle([...largePool]);
 
-    // トポロジーに応じた特定ブロックの配置上限（導線遮断・窒息の徹底防止）
+    // トポロジーに応じた特定ブロックの配置上限（導線遮断・窒息の徹底防止および空間過多の防止）
     const maxInstancesPerBlock: Record<string, number> = {
+      open_8x8_courtyard: 1,
+      open_8x8_pillars: topology === 'PILLAR_GRID' ? 3 : 2,
+      open_4x4_plains: 2,
+      open_4x4_meadow_coin: 2,
+      supply_4x4_pantry: 3,
+      supply_4x4_cache: 3,
+      supply_4x4_crossroad: 3,
       enclosed_4x4_solid: 2,
       enclosed_4x4_box: 3,
       enclosed_8x8_vault: 1,
@@ -199,9 +206,11 @@ export class HierarchicalThemeBlockGenerator {
       .filter(b => b.size === '8x8' && b.category !== 'DRAGON' && b.category !== 'HOME')
       .map(b => {
         let weight = b.weight ?? 1;
-        if (topology === 'PILLAR_GRID' && b.id === 'open_8x8_pillars') weight *= 3;
-        if (topology === 'STANDARD_ROOMS' && (b.id === 'open_8x8_courtyard' || b.id === 'treasure_8x8_gallery')) weight *= 2;
-        if (topology === 'SPIRAL_LABYRINTH' && b.id === 'maze_8x8_winding') weight *= 2;
+        // 構造性のあるブロック（宝物庫・迷路・墓）を優先して部屋構造を形成
+        if (b.category === 'TREASURE' || b.category === 'MAZE') weight = 3;
+        else if (b.category === 'GRAVE') weight = 2;
+        if (topology === 'PILLAR_GRID' && b.id === 'open_8x8_pillars') weight = 3;
+        if (topology === 'SPIRAL_LABYRINTH' && b.id === 'maze_8x8_winding') weight = 4;
         return { ...b, weight };
       });
     const mediumTemplates = rng.shuffle([...mediumPool]);
@@ -211,10 +220,12 @@ export class HierarchicalThemeBlockGenerator {
       .filter(b => b.size === '4x4' && b.category !== 'HOME')
       .map(b => {
         let weight = b.weight ?? 1;
-        // 補給所 (SUPPLY_*) は物資循環のため高ウェイト
-        if (b.id.startsWith('supply_')) weight = 5;
-        if (topology === 'STANDARD_ROOMS' && b.id.startsWith('open_')) weight *= 2;
-        if (topology === 'NARROW_MAZE' && b.id.startsWith('maze_')) weight *= 2;
+        // 通路・回廊・部屋を形成するブロックのウェイトを強化し、構造美を高める
+        if (b.category === 'CORRIDOR' || b.id.startsWith('maze_')) weight = 4;
+        else if (b.category === 'TREASURE') weight = 3;
+        else if (b.category === 'GRAVE') weight = 2;
+        else if (b.id.startsWith('enclosed_')) weight = 3;
+        if (topology === 'NARROW_MAZE' && b.id.startsWith('maze_')) weight = 5;
         return { ...b, weight };
       });
     const smallTemplates = rng.shuffle([...smallPool]);
@@ -252,14 +263,11 @@ export class HierarchicalThemeBlockGenerator {
       const dragonBlock = placedBlocks.find(b => b.template.category === 'DRAGON');
       if (dragonBlock) {
         let coreLocalOffset = { x: 3, y: 3 };
-        let prefab: 'COMPACT_5x5' | 'FORTRESS_7x7' = 'COMPACT_5x5';
         if (dragonBlock.template.size === '12x12') coreLocalOffset = { x: 5, y: 5 };
         else if (dragonBlock.template.size === '16x16') {
           coreLocalOffset = { x: 7, y: 7 };
-          prefab = 'FORTRESS_7x7';
         } else if (dragonBlock.template.size === '24x24') {
           coreLocalOffset = { x: 11, y: 11 };
-          prefab = 'FORTRESS_7x7';
         }
 
         const originX = dragonBlock.cellX * CELL_SIZE_TILES;
@@ -267,7 +275,8 @@ export class HierarchicalThemeBlockGenerator {
         const cx = (originX + coreLocalOffset.x) % WORLD_SIZE_TILES;
         const cy = (originY + coreLocalOffset.y) % WORLD_SIZE_TILES;
         map.dragonCenter = { x: cx, y: cy };
-        ProceduralMapGenerator.applyDragonPrefab(map, map.dragonCenter, prefab, rng as any);
+        // テンプレート固有の迷路壁や要塞構造を破壊しないため、テンプレート配置時は applyDragonPrefab の上書きをスキップ
+        // （ドラゴン5x5不変コアは Step 10 の enforceCriticalClearance で厳密に保護・保証される）
       }
     }
 
@@ -297,24 +306,29 @@ export class HierarchicalThemeBlockGenerator {
 
   /**
    * ブロック境界のエッジポート接続（通路開通処理）
-   * 4x4境界のポート位置を空床(EMPTY)で開通させ、ブロック間の通路を自然に繋げる
+   * 【スマート穿孔規約】:
+   * 1. テンプレート本来のレイアウト上で壁('#')やオブジェクト(G, C, P等)として定義されているマスは破壊しない。
+   * 2. ポートとして開放されている('layout[ly][lx] === "."')位置のみを通路開通対象とする。
+   * 3. 意図しない壁破壊を防ぎ、部屋の輪郭（外壁ライン）とパズル構造を100%保護する。
    */
   private static connectEdgePorts(
     map: WorldMap,
     placedBlocks: PlacedThemeBlock[],
     _rng: SeedRandom
   ): void {
+    // 1. 各ブロックの正当なオープンポート（layout上で '.' のマス）のワールド座標を収集
+    const openPortCoords = new Set<string>();
+
     for (const block of placedBlocks) {
       if (!block.template.edgePorts || block.template.edgePorts.length === 0) continue;
 
       const originX = block.cellX * CELL_SIZE_TILES;
       const originY = block.cellY * CELL_SIZE_TILES;
+      const sizeTiles = block.template.layout.length;
 
       for (const port of block.template.edgePorts) {
         let lx = 0;
         let ly = 0;
-        const sizeTiles = block.template.layout.length;
-
         switch (port.direction) {
           case 'NORTH':
             lx = port.cellIndex * 4 + port.offsetInCell;
@@ -334,62 +348,132 @@ export class HierarchicalThemeBlockGenerator {
             break;
         }
 
-        const wx = (originX + lx) % WORLD_SIZE_TILES;
-        const wy = (originY + ly) % WORLD_SIZE_TILES;
-
-        // ポートマス自体が壁の場合、通行可能にする
-        if (map.getObject({ x: wx, y: wy }) === 'BLOCK') {
-          map.setObject({ x: wx, y: wy }, 'NONE');
+        // テンプレート本来のレイアウトで '.' であるポートのみを開放候補とする
+        const tplChar = block.template.layout[ly]?.[lx];
+        if (tplChar === '.') {
+          const wx = (originX + lx) % WORLD_SIZE_TILES;
+          const wy = (originY + ly) % WORLD_SIZE_TILES;
+          openPortCoords.add(`${wx},${wy}`);
         }
+      }
+    }
+
+    // 2. オープンポート位置に意図せず重なったBLOCKがあれば開通
+    for (const coordKey of openPortCoords) {
+      const [wxStr, wyStr] = coordKey.split(',');
+      const wx = parseInt(wxStr, 10);
+      const wy = parseInt(wyStr, 10);
+      const pos = { x: wx, y: wy };
+
+      if (map.getObject(pos) === 'BLOCK') {
+        map.setObject(pos, 'NONE');
       }
     }
   }
 
   /**
    * スロット予算アクティベーション（目標宝箱数・墓数調整）
+   * 1. テンプレート本来の宝箱スロット('c')を優先的にアクティブ化
+   * 2. 不足分は「空き地の真ん中」ではなく「部屋の隅・壁沿い」を優先して配置
+   * 3. 墓の追加時に単発ブロックを散布する処理を撤廃し、孤立ドットノイズを防止
    */
   private static activateBudgets(
     map: WorldMap,
     targetChests: number,
     targetGraves: number,
+    placedBlocks: PlacedThemeBlock[],
     rng: SeedRandom
   ): void {
-    // 1. 現在の宝箱数をカウント
-    let currentChests = 0;
-    const freeFloorPositions: Position[] = [];
+    // 1. テンプレート内の意図された宝箱スロット ('c') のワールド座標を収集
+    const designedChestSlots: Position[] = [];
+    for (const placed of placedBlocks) {
+      const tpl = placed.template;
+      const sizeTiles = tpl.layout.length;
+      const originX = placed.cellX * CELL_SIZE_TILES;
+      const originY = placed.cellY * CELL_SIZE_TILES;
 
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        const pos = { x, y };
-        const obj = map.getObject(pos);
-        if (obj === 'CHEST') {
-          currentChests++;
-        } else if (
-          map.getBaseTile(pos) === 'EMPTY' &&
-          obj === 'NONE' &&
-          map.getItem(pos) === 'NONE'
-        ) {
-          // ドラゴン要塞至近および我が家至近は除外
-          const dDist = map.getTorusDistance(pos, map.dragonCenter).chebyshev;
-          const hDist = map.getTorusDistance(pos, map.homePos).chebyshev;
-          if (dDist > 3 && hDist > 2) {
-            freeFloorPositions.push(pos);
+      for (let ly = 0; ly < sizeTiles; ly++) {
+        for (let lx = 0; lx < sizeTiles; lx++) {
+          if (tpl.layout[ly][lx] === 'c') {
+            const wx = ((originX + lx) % WORLD_SIZE_TILES + WORLD_SIZE_TILES) % WORLD_SIZE_TILES;
+            const wy = ((originY + ly) % WORLD_SIZE_TILES + WORLD_SIZE_TILES) % WORLD_SIZE_TILES;
+            const pos = { x: wx, y: wy };
+            // 現在床かつアイテムなしであることを確認
+            if (map.getBaseTile(pos) === 'EMPTY' && map.getObject(pos) === 'NONE') {
+              designedChestSlots.push(pos);
+            }
           }
         }
       }
     }
 
-    // 2. 目標宝箱数までの不足分を配置
-    const neededChests = Math.max(0, targetChests - currentChests);
-    if (neededChests > 0 && freeFloorPositions.length > 0) {
-      const shuffledFloors = rng.shuffle(freeFloorPositions);
-      const toPlace = Math.min(neededChests, shuffledFloors.length);
-      for (let i = 0; i < toPlace; i++) {
-        map.setObject(shuffledFloors[i], 'CHEST');
+    // 2. 現在の宝箱数をカウント
+    let currentChests = 0;
+    for (let y = 0; y < map.height; y++) {
+      for (let x = 0; x < map.width; x++) {
+        const obj = map.getObject({ x, y });
+        if (obj === 'CHEST' || obj === 'CHEST_DRAGON') {
+          currentChests++;
+        }
       }
     }
 
-    // 3. 墓（GRAVE）の調整
+    // 3. まず意図された宝箱スロット ('c') を優先的にアクティベート
+    let neededChests = Math.max(0, targetChests - currentChests);
+    if (neededChests > 0 && designedChestSlots.length > 0) {
+      const shuffledSlots = rng.shuffle([...designedChestSlots]);
+      const toActivate = Math.min(neededChests, shuffledSlots.length);
+      for (let i = 0; i < toActivate; i++) {
+        map.setObject(shuffledSlots[i], 'CHEST');
+        currentChests++;
+      }
+      neededChests = Math.max(0, targetChests - currentChests);
+    }
+
+    // 4. それでも不足する場合、空き床から「壁際（部屋の隅）」を優先して配置
+    if (neededChests > 0) {
+      const freeFloorsWithWallScore: { pos: Position; score: number }[] = [];
+
+      for (let y = 0; y < map.height; y++) {
+        for (let x = 0; x < map.width; x++) {
+          const pos = { x, y };
+          if (
+            map.getBaseTile(pos) === 'EMPTY' &&
+            map.getObject(pos) === 'NONE' &&
+            map.getItem(pos) === 'NONE'
+          ) {
+            const dDist = map.getTorusDistance(pos, map.dragonCenter).chebyshev;
+            const hDist = map.getTorusDistance(pos, map.homePos).chebyshev;
+            if (dDist > 3 && hDist > 2) {
+              // 周囲8マスの壁スコアを計算
+              let wallScore = 0;
+              const dirs = [
+                { dx: -1, dy: 0 }, { dx: 1, dy: 0 }, { dx: 0, dy: -1 }, { dx: 0, dy: 1 },
+                { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: -1, dy: 1 }, { dx: 1, dy: 1 },
+              ];
+              for (const d of dirs) {
+                const np = map.wrapPosition({ x: x + d.dx, y: y + d.dy });
+                if (map.getObject(np) === 'BLOCK' || map.getBaseTile(np) === 'WALL_STATIC') {
+                  wallScore++;
+                }
+              }
+              freeFloorsWithWallScore.push({ pos, score: wallScore });
+            }
+          }
+        }
+      }
+
+      // 壁際（スコア1以上）を優先し、同スコア内ではランダムにシャッフル
+      const shuffledFloors = rng.shuffle(freeFloorsWithWallScore);
+      shuffledFloors.sort((a, b) => b.score - a.score);
+
+      const toPlace = Math.min(neededChests, shuffledFloors.length);
+      for (let i = 0; i < toPlace; i++) {
+        map.setObject(shuffledFloors[i].pos, 'CHEST');
+      }
+    }
+
+    // 5. 墓（GRAVE）の調整
     let currentGraves = 0;
     for (let y = 0; y < map.height; y++) {
       for (let x = 0; x < map.width; x++) {
@@ -399,24 +483,39 @@ export class HierarchicalThemeBlockGenerator {
       }
     }
 
-    // 墓が目標墓数に満たない場合、安全な空き床に墓＋隣接ブロックを配置
+    // 墓が不足する場合、安全な空き床（壁際）に墓を配置（単発ブロックの追加は廃止）
     const neededGraves = Math.max(0, targetGraves - currentGraves);
     if (neededGraves > 0) {
-      const remainingFloors = rng.shuffle(
-        freeFloorPositions.filter(p => map.getObject(p) === 'NONE')
-      );
-      let placedGrave = 0;
-      for (const fp of remainingFloors) {
-        if (placedGrave >= neededGraves) break;
-        if (this.isCompletelyFree(map, fp.x, fp.y)) {
-          map.setBaseTile(fp, 'GRAVE');
-          placedGrave++;
-          // 隣接1マスにブロックを配置
-          const adjPos = map.wrapPosition({ x: fp.x + 1, y: fp.y });
-          if (this.isCompletelyFree(map, adjPos.x, adjPos.y)) {
-            map.setObject(adjPos, 'BLOCK');
+      const freeGraveCandidates: { pos: Position; score: number }[] = [];
+      for (let y = 0; y < map.height; y++) {
+        for (let x = 0; x < map.width; x++) {
+          const pos = { x, y };
+          if (this.isCompletelyFree(map, x, y)) {
+            const dDist = map.getTorusDistance(pos, map.dragonCenter).chebyshev;
+            const hDist = map.getTorusDistance(pos, map.homePos).chebyshev;
+            if (dDist > 4 && hDist > 3) {
+              let wallScore = 0;
+              const dirs = [
+                { dx: -1, dy: 0 }, { dx: 1, dy: 0 }, { dx: 0, dy: -1 }, { dx: 0, dy: 1 },
+              ];
+              for (const d of dirs) {
+                const np = map.wrapPosition({ x: x + d.dx, y: y + d.dy });
+                if (map.getObject(np) === 'BLOCK' || map.getBaseTile(np) === 'WALL_STATIC') {
+                  wallScore++;
+                }
+              }
+              freeGraveCandidates.push({ pos, score: wallScore });
+            }
           }
         }
+      }
+
+      const shuffledGraves = rng.shuffle(freeGraveCandidates);
+      shuffledGraves.sort((a, b) => b.score - a.score);
+
+      const toPlace = Math.min(neededGraves, shuffledGraves.length);
+      for (let i = 0; i < toPlace; i++) {
+        map.setBaseTile(shuffledGraves[i].pos, 'GRAVE');
       }
     }
   }

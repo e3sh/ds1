@@ -54,8 +54,9 @@ export class SessionController {
     this.engine.setGhosts(ghosts);
   }
 
-  public startGame(options?: ProceduralMapOptions): void {
-    if (options?.topology === 'CLASSIC_FIXED') {
+  public startGame(options?: ProceduralMapOptions | number): void {
+    const opts = typeof options === 'number' ? { seed: options } : options;
+    if (opts?.topology === 'CLASSIC_FIXED') {
       this.startClassicGame();
       return;
     }
@@ -63,7 +64,7 @@ export class SessionController {
       topology: 'MULTI_SECTOR',
       difficulty: 'NORMAL',
       pacing: 'STANDARD',
-      ...options,
+      ...opts,
     });
   }
 

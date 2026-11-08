@@ -783,8 +783,9 @@ export class WorldMap {
   /**
    * 一般モンスターおよびゴーストが進入可能か
    * 十字架（CROSS）の上には進入不可（結界）
+   * オプションで dragon を渡すことで、ドラゴンの部位マス（頭・胴体・尻尾）への進入を防止可能
    */
-  public isPassableByEnemy(pos: Position): boolean {
+  public isPassableByEnemy(pos: Position, dragon?: { getPartAt(pos: Position): any }): boolean {
     const p = this.wrapPosition(pos);
 
     // 外壁・家・岩・宝箱は進入不可
@@ -794,6 +795,9 @@ export class WorldMap {
 
     // 床に十字架（CROSS）があるマスには進入不可
     if (this.itemTiles[p.y][p.x] === 'CROSS') return false;
+
+    // ドラゴンの部位マス（頭・胴体・尻尾）には進入不可
+    if (dragon && dragon.getPartAt(p)) return false;
 
     return true;
   }

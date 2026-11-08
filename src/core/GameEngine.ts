@@ -221,7 +221,7 @@ export class GameEngine {
   // セッション・開始・リセット・保存（SessionController 委譲）
   // ==========================================================================
 
-  public startGame(options?: ProceduralMapOptions): void {
+  public startGame(options?: ProceduralMapOptions | number): void {
     this.sessionController.startGame(options);
   }
 

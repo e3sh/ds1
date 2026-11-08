@@ -39,6 +39,8 @@ import './test-theme-block-allocator.js';
 import './test-theme-block-catalog.js';
 import './test-hierarchical-generator.js';
 import './test-autoplay-tactical-metadata.js';
+import './test-autoplay-sticky-target.js';
+import './test-autoplay-magic-and-chest.js';
 import './systems/MapProfiler.test.js';
 
 

@@ -58,8 +58,8 @@ export class ThemeBlockAllocator {
     });
 
     if (available.length === 0) {
-      // 上限に達していないフォールバック（MISC / OPEN系優先、なければプール先頭）
-      const fallback = pool.find(t => t.category === 'MISC' && !t.id.includes('solid') && !t.id.includes('box')) ?? pool[0];
+      // 上限に達していないフォールバック（CORRIDOR/MAZE系またはTREASURE/GRAVE系優先、なければプール先頭）
+      const fallback = pool.find(t => t.category === 'CORRIDOR' || t.category === 'MAZE' || t.category === 'TREASURE' || t.category === 'GRAVE') ?? pool[0];
       return fallback;
     }
 

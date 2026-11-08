@@ -346,7 +346,7 @@ export class DOMUIManager {
             </button>
             <button class="action-btn-large" id="dom-demo-btn" style="background: linear-gradient(180deg, #1565c0 0%, #0d47a1 100%); border-color: #42a5f5; color: #fff; margin-top: 6px;">🎬 DEMO / チュートリアル [D]</button>
             <button class="action-btn-large" id="dom-open-custom-btn" style="background: linear-gradient(180deg, #4527a0 0%, #311b92 100%); border-color: #9575cd; color: #ede7f6; margin-top: 6px;">
-              🗺️ CHALLENGE CATALOG & SEED OBSERVATORY (ステージ選択・挑戦状カタログ・シード観測)
+              🗺️ CUSTOM STAGE & SEED OBSERVATORY (ステージ選択・保存シード・シード観測)
             </button>
           </div>
           </div>

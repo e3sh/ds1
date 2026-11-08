@@ -188,12 +188,9 @@ console.log('Testing 5: MapPresetManager metrics, share codes & clear recording.
   assert.strictEqual(imported.metrics?.playerCleared, true);
   assert.strictEqual(imported.metrics?.playerClearTurns, 1240);
 
-  // 公式プリセットに未踏破シードが含まれているか検証
-  const curated = MapPresetManager.getAllPresets();
-  const unbeatenCurated = curated.find(p => p.id === 'curated_unbeaten_nightmare');
-  assert.ok(unbeatenCurated !== undefined, 'curated_unbeaten_nightmare should exist in CURATED_PRESETS');
-  assert.strictEqual(unbeatenCurated.metrics?.isUnbeatenChallenge, true);
-  assert.strictEqual(unbeatenCurated.metrics?.botStatus, 'UNBEATEN_BY_BOT');
+  // 公式プリセット休止＆ユーザー保存シード管理限定運用の検証
+  const curated = MapPresetManager.getAllPresets().filter(p => p.isCurated);
+  assert.strictEqual(curated.length, 0, 'CURATED_PRESETS should be empty (curated catalog suspended in favor of saved seed management)');
 
   console.log('✓ 5. MapPresetManager metrics, share codes & clear recording verified.');
 }

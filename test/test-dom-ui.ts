@@ -458,11 +458,30 @@ console.log('--- DOM UI Layer Verification ---');
   assert.ok(presetSelect, '#dom-preset-select must exist');
   assert.ok(presetDetailCard.innerHTML.length > 0, 'Preset detail card should be populated with HTML');
 
-  // 3. ボット未踏破チャレンジプリセットの詳細カード描画検証
-  const nightmarePreset = CURATED_PRESETS.find(p => p.id === 'curated_unbeaten_nightmare');
-  assert.ok(nightmarePreset, 'Nightmare unbeaten curated preset must exist');
+  // 3. 公式カタログ休止と保存シード管理運用への限定検証 & 詳細カード描画検証
+  assert.strictEqual(CURATED_PRESETS.length, 0, 'CURATED_PRESETS should be empty until authentic curated maps are generated');
 
-  domUI.updatePresetDetailCard(nightmarePreset);
+  const testUnbeatenPreset: typeof CURATED_PRESETS[0] = {
+    id: 'test_unbeaten_challenge',
+    name: '🤖 ボット未踏破：テスト迷宮',
+    description: '未踏破テスト用プリセット',
+    createdAt: Date.now(),
+    isCurated: false,
+    seed: 999999,
+    options: {
+      difficulty: 'HARD',
+      pacing: 'MARATHON',
+      topology: 'SPIRAL_LABYRINTH',
+    },
+    metrics: {
+      estimatedDifficulty: 'NIGHTMARE',
+      botStatus: 'UNBEATEN_BY_BOT',
+      tags: ['UNBEATEN_BY_BOT', 'NIGHTMARE'],
+      isUnbeatenChallenge: true,
+    },
+  };
+
+  domUI.updatePresetDetailCard(testUnbeatenPreset);
   assert.ok(presetDetailCard.innerHTML.includes('ボット1600T未踏破チャレンジ'), 'Card should show unbeaten bot challenge status');
   assert.ok(presetDetailCard.innerHTML.includes('UNBEATEN_BY_BOT'), 'Card should show UNBEATEN_BY_BOT tag');
   assert.ok(presetDetailCard.innerHTML.includes('NIGHTMARE'), 'Card should display NIGHTMARE difficulty badge');

@@ -156,13 +156,9 @@ console.log('Testing 2: 9-Sector layout, dynamic anchor selection & line-of-fire
 // ============================================================================
 console.log('Testing 3: MapPresetManager save, load, curated presets & share codes...');
 {
-  // 3-A. 公式おすすめプリセットの検証
+  // 3-A. 公式おすすめプリセットの検証（セーブシード管理運用方針により現在は休止・0件）
   const curated = CURATED_PRESETS;
-  assert.ok(curated.length >= 5, 'Should have at least 5 curated presets');
-  const grandHall = curated.find(p => p.id === 'curated_grand_hall');
-  assert.ok(grandHall !== undefined);
-  assert.strictEqual(grandHall.seed, 777777);
-  assert.strictEqual(grandHall.isCurated, true);
+  assert.strictEqual(curated.length, 0, 'Curated presets should be empty under save-seed management policy');
 
   // 3-B. プリセット保存・一覧・削除の検証
   const testPreset = MapPresetManager.savePreset({
@@ -210,13 +206,20 @@ console.log('Testing 3: MapPresetManager save, load, curated presets & share cod
   const afterDelete = MapPresetManager.getAllPresets();
   assert.strictEqual(afterDelete.some(p => p.id === testPreset.id), false);
 
-  // 公式プリセットの削除防止
+  // 存在しないプリセットや公式プリセットの安全な削除防止
   const deleteCurated = MapPresetManager.deletePreset('curated_grand_hall');
-  assert.strictEqual(deleteCurated, false, 'Curated preset must not be deleted');
+  assert.strictEqual(deleteCurated, false, 'Non-existent or curated preset deletion should return false');
 
-  // 3-D. GameEngine とのプリセット起動連携
+  // 3-D. GameEngine とのプリセット起動連携 (保存シードから起動)
   const engine = new GameEngine();
-  engine.startPresetGame(grandHall);
+  const playPreset = MapPresetManager.savePreset({
+    name: '起動検証用シード',
+    seed: 777777,
+    options: {
+      topology: 'MULTI_SECTOR',
+    },
+  });
+  engine.startPresetGame(playPreset);
   assert.strictEqual(engine.getState(), 'PLAYING');
   assert.strictEqual(engine.isProceduralMode, true);
   assert.strictEqual(engine.getProceduralOptions()?.seed, 777777);

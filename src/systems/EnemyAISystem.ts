@@ -78,7 +78,7 @@ export class EnemyAISystem {
         }
       }
 
-      this.stepEnemy(enemy, mode, player, map, enemies, mitigationRatio, rng);
+      this.stepEnemy(enemy, mode, player, map, enemies, mitigationRatio, rng, dragon);
     }
   }
 
@@ -92,20 +92,10 @@ export class EnemyAISystem {
     map: WorldMap,
     enemies: EnemyInstance[],
     mitigationRatio: number = 1.0,
-    rng?: SeedRandom
+    rng?: SeedRandom,
+    dragon?: Dragon
   ): void {
     const effectiveRng = rng ?? this.defaultRng;
-    const isPlayerInHome = map.getBaseTile(player.pos) === 'HOME';
-    const { manhattan: currentDist } = map.getTorusDistance(enemy.pos, player.pos);
-    const isEngaged = CombatSystem.engagedEnemy?.id === enemy.id;
-
-    // プレイヤーが我が家(HOME)にいる場合は安全地帯（家の外壁の向こうから攻撃されない）
-    // プレイヤーに隣接しており、かつ家の中にいない場合のみ体当たり反撃・攻撃
-    if (currentDist === 1 && !isPlayerInHome && (isEngaged || mode === 'CHASE')) {
-      const combat = CombatSystem.resolveEnemyAttack(enemy, player, mitigationRatio);
-      EnemyAISystem.lastCombatResults.push(combat);
-      return;
-    }
 
     const directions: { dx: number; dy: number }[] = [
       { dx: 0, dy: -1 }, // UP
@@ -118,6 +108,35 @@ export class EnemyAISystem {
       { dx: 1, dy: 1 },   // DOWN_RIGHT
     ];
 
+    // フェイルセーフ: 万一敵がドラゴン部位の上に既に存在している場合、即座に安全な隣接床へ退去
+    if (dragon && dragon.getPartAt(enemy.pos)) {
+      for (const dir of directions) {
+        const escapePos = map.wrapPosition({ x: enemy.pos.x + dir.dx, y: enemy.pos.y + dir.dy });
+        if (
+          map.isPassableByEnemy(escapePos) &&
+          !dragon.getPartAt(escapePos) &&
+          escapePos.x !== player.pos.x &&
+          escapePos.y !== player.pos.y &&
+          !enemies.some(e => e.isAlive && e.id !== enemy.id && e.pos.x === escapePos.x && e.pos.y === escapePos.y)
+        ) {
+          enemy.pos = escapePos;
+          break;
+        }
+      }
+    }
+
+    const isPlayerInHome = map.getBaseTile(player.pos) === 'HOME';
+    const { manhattan: currentDist } = map.getTorusDistance(enemy.pos, player.pos);
+    const isEngaged = CombatSystem.engagedEnemy?.id === enemy.id;
+
+    // プレイヤーが我が家(HOME)にいる場合は安全地帯（家の外壁の向こうから攻撃されない）
+    // プレイヤーに隣接しており、かつ家の中にいない場合のみ体当たり反撃・攻撃
+    if (currentDist === 1 && !isPlayerInHome && (isEngaged || mode === 'CHASE')) {
+      const combat = CombatSystem.resolveEnemyAttack(enemy, player, mitigationRatio);
+      EnemyAISystem.lastCombatResults.push(combat);
+      return;
+    }
+
     if (mode === 'WANDER') {
       // 徘徊モード: 周囲の侵入可能マスの中からランダムに移動（その場にとどまる選択肢も含む）
       const validCandidates: Position[] = [];
@@ -127,6 +146,7 @@ export class EnemyAISystem {
           y: enemy.pos.y + dir.dy,
         });
         if (!map.isPassableByEnemy(candidate)) continue;
+        if (dragon && dragon.getPartAt(candidate)) continue; // ドラゴン部位（頭・体・尾）への侵入禁止
         if (candidate.x === player.pos.x && candidate.y === player.pos.y) continue;
         const occupied = enemies.some(
           e => e.isAlive && e.id !== enemy.id && e.pos.x === candidate.x && e.pos.y === candidate.y
@@ -152,6 +172,11 @@ export class EnemyAISystem {
 
       // 1. 地形侵入判定（十字架(CROSS)の上には入れない）
       if (!map.isPassableByEnemy(candidate)) {
+        continue;
+      }
+
+      // 1-B. ドラゴン部位（頭・胴体・尻尾）への侵入禁止
+      if (dragon && dragon.getPartAt(candidate)) {
         continue;
       }
 

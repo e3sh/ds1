@@ -36,8 +36,8 @@ export class CustomStageModal {
         <div class="modal-content-box custom-modal-box" style="max-width: 1100px; width: 95%; max-height: 92vh; overflow-y: auto; border: 2px solid #7e57c2; box-shadow: 0 0 40px rgba(126, 87, 194, 0.4);">
           <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #5e35b1; padding-bottom: 10px; margin-bottom: 14px;">
             <div>
-              <h2 style="margin: 0; font-size: 18px; color: #d1c4e9; display: flex; align-items: center; gap: 8px;">[CHALLENGE CATALOG & SEED OBSERVATORY]</h2>
-              <div style="font-size: 11px; color: #9fa8da; margin-top: 2px;">厳選カタログ挑戦・シード観測プロファイル・自走検証（手動プレイ or 自動自走検証）</div>
+              <h2 style="margin: 0; font-size: 18px; color: #d1c4e9; display: flex; align-items: center; gap: 8px;">[CUSTOM STAGE & SEED OBSERVATORY]</h2>
+              <div style="font-size: 11px; color: #9fa8da; margin-top: 2px;">ダンジョン生成・保存シード管理・シード観測プロファイル・自走検証</div>
             </div>
             <button class="action-btn-secondary" id="dom-custom-back-btn" style="background: #281a4b; color: #d1c4e9; border: 1px solid #7e57c2; padding: 6px 14px; font-size: 12px; border-radius: 4px; cursor: pointer; font-weight: bold;">← タイトルへ戻る</button>
           </div>
@@ -51,7 +51,7 @@ export class CustomStageModal {
               </label>
               <label class="custom-tab-item" id="dom-tab-preset">
                 <input type="radio" name="custom-mode-type" value="PRESET" id="dom-type-radio-preset" style="display: none;" />
-                <span>[CATALOG] 挑戦状カタログ</span>
+                <span>[SAVED] 保存済みシード</span>
               </label>
               <label class="custom-tab-item" id="dom-tab-share">
                 <input type="radio" name="custom-mode-type" value="SHARE_CODE" id="dom-type-radio-share" style="display: none;" />
@@ -124,9 +124,9 @@ export class CustomStageModal {
             </div>
           </div>
 
-          <!-- ② 挑戦状カタログ（プリセット）パネル -->
+          <!-- ② 保存済みシード（プリセット）パネル -->
           <div id="dom-panel-preset" class="custom-type-panel hidden" style="background: rgba(20, 10, 40, 0.75); border: 1px solid #7e57c2; border-radius: 4px; padding: 12px; margin-bottom: 12px; text-align: left;">
-            <div style="font-weight: bold; color: #b39ddb; margin-bottom: 8px; font-size: 13px;">[CHALLENGE CATALOG] 挑戦状カタログ＆保存シード</div>
+            <div style="font-weight: bold; color: #b39ddb; margin-bottom: 8px; font-size: 13px;">[SAVED SEEDS] 保存済みシード管理</div>
             <div style="display: flex; gap: 6px; align-items: center;">
               <select id="dom-preset-select" style="flex: 1; background: #120a26; color: #eee; border: 1px solid #5e35b1; padding: 6px; border-radius: 3px; font-size: 12px;"></select>
               <button id="dom-preset-share-btn" style="background: #281a4b; color: #b39ddb; border: 1px solid #7e57c2; padding: 6px 12px; font-size: 11px; border-radius: 3px; cursor: pointer;" title="クリップボードへ共有コードをコピー">共有</button>
@@ -883,27 +883,51 @@ export class CustomStageModal {
 
   public refreshPresetList(): void {
     const presetSelect = this.container?.querySelector('#dom-preset-select') as HTMLSelectElement | null;
+    const shareBtn = this.container?.querySelector('#dom-preset-share-btn') as HTMLButtonElement | null;
+    const deleteBtn = this.container?.querySelector('#dom-preset-delete-btn') as HTMLButtonElement | null;
     if (!presetSelect) return;
 
     const presets = MapPresetManager.getAllPresets();
-    presetSelect.innerHTML = presets.map(p => {
-      let tag = p.isCurated ? '★ [公式]' : '💾 [保存]';
-      if (p.metrics?.playerCleared) {
-        tag = '🏆 [踏破済]';
-      } else if (p.metrics?.isUnbeatenChallenge || p.metrics?.botStatus === 'UNBEATEN_BY_BOT') {
-        tag = '🤖 [未踏破]';
-      }
-      const diffTag = p.metrics?.estimatedDifficulty ? ` [${p.metrics.estimatedDifficulty}]` : '';
-      return `<option value="${p.id}">${tag}${diffTag} ${p.name} (Seed: ${p.seed})</option>`;
-    }).join('');
+    if (presets.length === 0) {
+      presetSelect.innerHTML = '<option value="">(保存されたシードはありません)</option>';
+      if (shareBtn) shareBtn.disabled = true;
+      if (deleteBtn) deleteBtn.disabled = true;
+    } else {
+      if (shareBtn) shareBtn.disabled = false;
+      if (deleteBtn) deleteBtn.disabled = false;
+      presetSelect.innerHTML = presets.map(p => {
+        let tag = p.isCurated ? '★ [公式]' : '💾 [保存]';
+        if (p.metrics?.playerCleared) {
+          tag = '🏆 [踏破済]';
+        } else if (p.metrics?.isUnbeatenChallenge || p.metrics?.botStatus === 'UNBEATEN_BY_BOT') {
+          tag = '🤖 [未踏破]';
+        }
+        const diffTag = p.metrics?.estimatedDifficulty ? ` [${p.metrics.estimatedDifficulty}]` : '';
+        return `<option value="${p.id}">${tag}${diffTag} ${p.name} (Seed: ${p.seed})</option>`;
+      }).join('');
+    }
 
     this.updatePresetDetailCardFromSelected();
   }
 
   public updatePresetDetailCardFromSelected(): void {
     const presetSelect = this.container?.querySelector('#dom-preset-select') as HTMLSelectElement | null;
-    if (!presetSelect) return;
+    const cardEl = this.container?.querySelector('#dom-preset-detail-card') as HTMLElement | null;
+    if (!presetSelect || !cardEl) return;
     const presets = MapPresetManager.getAllPresets();
+    if (presets.length === 0) {
+      cardEl.innerHTML = `
+        <div style="padding: 18px; text-align: center; color: #b39ddb; background: rgba(18, 10, 38, 0.85); border-radius: 4px; border: 1px dashed #5e35b1; margin-top: 10px;">
+          <div style="font-size: 14px; font-weight: bold; margin-bottom: 6px;">📂 保存されたシードがありません</div>
+          <div style="font-size: 11px; color: #9fa8da; line-height: 1.6;">
+            ゲームプレイ中に「マップ保存」ボタンを押すか、<br>
+            <strong>[SHARE]</strong> タブから共有コード (DS1MAP:...) をインポートすると、<br>
+            お気に入りのシードをここに保存していつでも再挑戦・自走検証できます。
+          </div>
+        </div>
+      `;
+      return;
+    }
     const selected = presets.find(p => p.id === presetSelect.value) ?? presets[0];
     if (selected) {
       this.updatePresetDetailCard(selected);
