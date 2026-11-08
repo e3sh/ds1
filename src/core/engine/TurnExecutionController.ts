@@ -96,7 +96,24 @@ export class TurnExecutionController {
           audio.playBreak();
         }
       } else if (magic.type === 'BREAK') {
+        const breakPos = result.breakPos ?? MovementSystem.getNextPosition(player.pos, player.dir);
+        combatEffects.triggerMagicBreak(breakPos);
         audio.playBreak();
+      } else if (magic.type === 'RETURN') {
+        combatEffects.triggerMagicReturn(player.pos);
+        audio.playMagicCast();
+      } else if (magic.type === 'JUMP') {
+        combatEffects.triggerMagicJump(player.pos);
+        audio.playMagicCast();
+      } else if (magic.type === 'FLASH') {
+        combatEffects.triggerMagicFlash(player.pos);
+        audio.playMagicCast();
+      } else if (magic.type === 'FREEZE') {
+        combatEffects.triggerMagicFreeze(player.pos, result.frozenPositions);
+        audio.playMagicCast();
+      } else if (magic.type === 'FLY') {
+        combatEffects.triggerMagicFly(player.pos);
+        audio.playMagicCast();
       } else {
         audio.playMagicCast();
       }

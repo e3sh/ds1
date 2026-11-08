@@ -45,6 +45,9 @@ function parseArgs(): SimulationConfig {
     } else if (key === '--botProfile' && val) {
       config.botProfile = val as BotSkillProfile;
       if (!raw.includes('=')) i++;
+    } else if (key === '--botVersion' && val) {
+      config.botVersion = val as 'v1' | 'v2';
+      if (!raw.includes('=')) i++;
     } else if (key === '--graveSealPolicy' && val) {
       config.strategyTuning!.graveSealPolicy = val as GraveSealPolicy;
       if (!raw.includes('=')) i++;

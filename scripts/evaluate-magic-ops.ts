@@ -105,7 +105,7 @@ for (const seed of seeds) {
   });
 
   const stateStr = engine.getState();
-  console.log(`Seed ${seed}: State=${stateStr}, Phase=${bot.currentPhase}, Turns=${turn}, STR=${finalPlayer.strength}, EXP=${finalPlayer.experience}, MP=${finalPlayer.magic} (0MP:${mpZeroTurns}T, 1MP:${mpOneTurns}T), BREAK=${breakCasts}, KICK=${kickCasts}, FREEZE=${freezeCasts}, RETURN=${returnCasts}, ChestsLeft=${remainingChests}`);
+  console.log(`Seed ${seed}: State=${stateStr}, Phase=${bot.currentPhase}, Turns=${turn}, STR=${finalPlayer.strength}, EXP=${finalPlayer.experience}, Crowns=${finalPlayer.crowns}/4, MP=${finalPlayer.magic} (0MP:${mpZeroTurns}T, 1MP:${mpOneTurns}T), BREAK=${breakCasts}, KICK=${kickCasts}, FREEZE=${freezeCasts}, RETURN=${returnCasts}, ChestsLeft=${remainingChests}`);
 }
 
 console.log('\n=== 評価サマリー ===');

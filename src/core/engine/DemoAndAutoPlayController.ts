@@ -2,6 +2,7 @@ import { Position } from '../../models/Types.js';
 import { ProceduralMapOptions } from '../../systems/ProceduralMapGenerator.js';
 import { MapPresetData } from '../../services/MapPresetManager.js';
 import { AutoPlayBot } from '../../ai/AutoPlayBot.js';
+import { AdaptiveAutoPlayBot } from '../../ai/v2/AdaptiveAutoPlayBot.js';
 import type { GameEngine } from '../GameEngine.js';
 
 export class DemoAndAutoPlayController {
@@ -11,7 +12,8 @@ export class DemoAndAutoPlayController {
   private isAutoPlayVerify: boolean = false;
   private autoPlaySpeed: number = 1;
   private isAutoPlayPaused: boolean = false;
-  private demoBot: AutoPlayBot | null = null;
+  private demoBot: AutoPlayBot | AdaptiveAutoPlayBot | null = null;
+  private useV2Bot: boolean = false;
   private demoIntervalId: number | null = null;
   private demoEndDelayFrames: number = 0;
   private demoTurns: number = 0;
@@ -21,8 +23,35 @@ export class DemoAndAutoPlayController {
   // Demoモード中の自動消音（Sound Off）と復元用ステート
   private savedMuteBeforeDemo: boolean | null = null;
 
+  // 魔法発動時の演出待機ディレイタイマー (ms) および字幕
+  private magicDelayTimerMs: number = 0;
+  private magicSpecialNotice: string | null = null;
+
   constructor(engine: GameEngine) {
     this.engine = engine;
+
+    // 魔法発動イベントの監視（RETURNやJUMP等の演出待機ディレイ制御）
+    this.engine.getEventBus().on('magic:cast', (data: any) => {
+      if (!this.isDemoMode || !data.success) return;
+      const type = data.details?.type;
+      if (type === 'RETURN') {
+        this.magicDelayTimerMs = 480;
+        this.magicSpecialNotice = '🏠【RETURN発動】我が家へ瞬時帰還しました！';
+      } else if (type === 'JUMP') {
+        this.magicDelayTimerMs = 450;
+        this.magicSpecialNotice = '🌀【JUMP発動】テレポートしました！';
+      } else if (type === 'FLASH') {
+        this.magicDelayTimerMs = 350;
+        this.magicSpecialNotice = '⚡【FLASH発動】全モンスターを一時行動停止！';
+      } else if (type === 'FREEZE') {
+        this.magicDelayTimerMs = 300;
+        this.magicSpecialNotice = '❄️【FREEZE発動】周囲の敵を永久凍結！';
+      }
+    });
+  }
+
+  public getMagicDelayTimer(): number {
+    return this.magicDelayTimerMs;
   }
 
   public isDemoActive(): boolean {
@@ -57,11 +86,37 @@ export class DemoAndAutoPlayController {
     this.demoStuckFrames = val;
   }
 
-  public getDemoBot(): AutoPlayBot | null {
+  public setUseV2Bot(val: boolean): void {
+    this.useV2Bot = val;
+    if (this.demoBot !== null) {
+      this.demoBot = this.createBotInstance();
+    }
+  }
+
+  public isUsingV2Bot(): boolean {
+    return this.useV2Bot;
+  }
+
+  public toggleBotVersion(): boolean {
+    this.useV2Bot = !this.useV2Bot;
+    if (this.demoBot !== null) {
+      this.demoBot = this.createBotInstance();
+    }
+    return this.useV2Bot;
+  }
+
+  private createBotInstance(profile: 'NOVICE' | 'STANDARD' | 'EXPERT' = 'STANDARD'): AutoPlayBot | AdaptiveAutoPlayBot {
+    if (this.useV2Bot) {
+      return new AdaptiveAutoPlayBot({ profile });
+    }
+    return new AutoPlayBot({ profile });
+  }
+
+  public getDemoBot(): AutoPlayBot | AdaptiveAutoPlayBot | null {
     return this.demoBot;
   }
 
-  public setDemoBot(bot: AutoPlayBot | null): void {
+  public setDemoBot(bot: AutoPlayBot | AdaptiveAutoPlayBot | null): void {
     this.demoBot = bot;
   }
 
@@ -101,6 +156,8 @@ export class DemoAndAutoPlayController {
     this.demoTurns = 0;
     this.demoStuckFrames = 0;
     this.lastDemoPos = null;
+    this.magicDelayTimerMs = 0;
+    this.magicSpecialNotice = null;
 
     // テンポの良い標準設定でデモ用ゲームを開始
     this.engine.startProceduralGame({
@@ -108,7 +165,7 @@ export class DemoAndAutoPlayController {
       difficulty: 'EASY',
       pacing: 'BLITZ',
     });
-    this.demoBot = new AutoPlayBot({ profile: 'STANDARD' });
+    this.demoBot = this.createBotInstance('STANDARD');
 
     // デモ用字幕オーバーレイ表示
     const initialTip = this.demoBot.getTutorialMessage();
@@ -145,8 +202,10 @@ export class DemoAndAutoPlayController {
     this.demoTurns = 0;
     this.demoStuckFrames = 0;
     this.lastDemoPos = null;
+    this.magicDelayTimerMs = 0;
+    this.magicSpecialNotice = null;
 
-    this.demoBot = new AutoPlayBot({ profile: 'STANDARD' });
+    this.demoBot = this.createBotInstance('STANDARD');
 
     // 自走検証用オーバーレイ表示
     const domUI = this.engine.getDomUI();
@@ -208,6 +267,8 @@ export class DemoAndAutoPlayController {
     this.isAutoPlayVerify = false;
     this.demoBot = null;
     this.isAutoPlayPaused = false;
+    this.magicDelayTimerMs = 0;
+    this.magicSpecialNotice = null;
 
     const domUI = this.engine.getDomUI();
     domUI?.hideAutoPlayOverlay();
@@ -240,7 +301,7 @@ export class DemoAndAutoPlayController {
     this.lastDemoPos = { ...this.engine.getPlayer().pos };
 
     // 新たなAutoPlayBotインスタンスを生成（現在の状態から最適行動を自律判断）
-    this.demoBot = new AutoPlayBot({ profile: 'STANDARD' });
+    this.demoBot = this.createBotInstance('STANDARD');
 
     // 自走検証用オーバーレイ表示
     const domUI = this.engine.getDomUI();
@@ -302,6 +363,23 @@ export class DemoAndAutoPlayController {
       return;
     }
     this.demoEndDelayFrames = 0;
+
+    // 魔法演出ディレイ待機（RETURN, JUMP発動時に約400〜500ms待機して視覚認識を保証）
+    if (this.magicDelayTimerMs > 0) {
+      const stepDuration = this.autoPlaySpeed > 0 ? Math.max(20, Math.round(180 / this.autoPlaySpeed)) : 180;
+      this.magicDelayTimerMs = Math.max(0, this.magicDelayTimerMs - stepDuration);
+      this.engine.stepFrame(stepDuration);
+      if (this.magicSpecialNotice) {
+        if (this.isAutoPlayVerify) {
+          const statusText = `T:${this.demoTurns} | ${this.magicSpecialNotice} (演出待機中)`;
+          domUI?.setDemoMessage(statusText);
+        } else {
+          domUI?.setDemoMessage(this.magicSpecialNotice);
+        }
+      }
+      return;
+    }
+    this.magicSpecialNotice = null;
 
     this.demoTurns++;
     // 1. 最大ターン数制限（通常デモ: 500ターン / 自走検証: タイムアウト完全廃止で無制限）
@@ -367,6 +445,8 @@ export class DemoAndAutoPlayController {
     this.demoTurns = 0;
     this.demoStuckFrames = 0;
     this.lastDemoPos = null;
+    this.magicDelayTimerMs = 0;
+    this.magicSpecialNotice = null;
 
     if (this.demoIntervalId !== null && typeof window !== 'undefined') {
       window.clearInterval(this.demoIntervalId);

@@ -1,4 +1,4 @@
-import { TILE_SIZE, PLAYER_SCREEN_TILE_X, PLAYER_SCREEN_TILE_Y } from '../config/Constants.js';
+import { TILE_SIZE, PLAYER_SCREEN_TILE_X, PLAYER_SCREEN_TILE_Y, SCREEN_WIDTH, SCREEN_HEIGHT } from '../config/Constants.js';
 import { Position } from '../models/Types.js';
 import { WorldMap } from '../models/WorldMap.js';
 import { TileGraphics } from './TileGraphics.js';
@@ -16,7 +16,16 @@ export interface KickSlideAnimation {
 
 export interface CombatEffect {
   id: string;
-  type: 'PLAYER_ATTACK' | 'ENEMY_COUNTER' | 'ENEMY_KILL' | 'DAMAGE_POPUP';
+  type:
+    | 'PLAYER_ATTACK'
+    | 'ENEMY_COUNTER'
+    | 'ENEMY_KILL'
+    | 'DAMAGE_POPUP'
+    | 'MAGIC_WARP'
+    | 'MAGIC_FREEZE'
+    | 'MAGIC_FLY'
+    | 'BLOCK_BREAK'
+    | 'TEXT_POPUP';
   worldPos?: Position;
   screenPixelX?: number;
   screenPixelY?: number;
@@ -24,6 +33,10 @@ export interface CombatEffect {
   elapsedMs: number;
   damageValue?: number;
   isGuard?: boolean;
+  text?: string;
+  textColor?: string;
+  borderColor?: string;
+  subType?: 'RETURN' | 'JUMP';
 }
 
 export class CombatEffectManager {
@@ -35,6 +48,11 @@ export class CombatEffectManager {
 
   // 敵ごとのフラッシュ・フリッカータイマー (敵ID -> 残りms)
   public enemyFlickerMap: Map<string, number> = new Map();
+
+  // 画面全体フラッシュ演出用タイマー (ms)
+  private screenFlashTimer: number = 0;
+  private screenFlashDuration: number = 0;
+  private screenFlashColor: string = 'rgba(255, 255, 255, 0.8)';
 
   // KICK魔法の岩スライドアニメーション
   private kickSlide: KickSlideAnimation | null = null;
@@ -167,11 +185,183 @@ export class CombatEffectManager {
   }
 
   /**
+   * 画面全体フラッシュの登録
+   * @param durationMs フラッシュ持続時間 (ms)
+   * @param color フラッシュ色（例: rgba(255, 255, 255, 0.8)）
+   */
+  public triggerScreenFlash(durationMs: number = 180, color: string = 'rgba(255, 255, 255, 0.8)'): void {
+    this.screenFlashTimer = durationMs;
+    this.screenFlashDuration = durationMs;
+    this.screenFlashColor = color;
+  }
+
+  /**
+   * 画面フラッシュ状態の取得（テスト・デバッグ用）
+   */
+  public getScreenFlash(): { active: boolean; alpha: number; color: string } | null {
+    if (this.screenFlashTimer <= 0) return null;
+    const alpha = this.screenFlashDuration > 0 ? this.screenFlashTimer / this.screenFlashDuration : 0;
+    return {
+      active: true,
+      alpha,
+      color: this.screenFlashColor,
+    };
+  }
+
+  /**
+   * 汎用テキストポップアップの登録
+   */
+  public triggerTextPopup(pos: Position, text: string, color: string = '#ffffff', durationMs: number = 700): void {
+    this.effects.push({
+      id: `text_${this.nextId++}`,
+      type: 'TEXT_POPUP',
+      worldPos: { ...pos },
+      durationMs,
+      elapsedMs: 0,
+      text,
+      textColor: color,
+    });
+  }
+
+  /**
+   * RETURN（我が家へ帰還）演出の登録
+   * - 帰還先（我が家）位置にワープ出現エフェクト
+   * - プレイヤー頭上に RETURN! ポップアップ
+   * - 画面全体にシアン・ホワイト系のフラッシュ演出
+   */
+  public triggerMagicReturn(playerPos: Position): void {
+    const idBase = `return_${this.nextId++}`;
+    // 画面フラッシュ (160ms, 淡いシアンホワイト)
+    this.triggerScreenFlash(160, 'rgba(215, 248, 255, 0.72)');
+
+    // プレイヤー頭上に RETURN!
+    this.triggerTextPopup(playerPos, 'RETURN!', '#00ffff', 700);
+
+    // 我が家へのワープ出現エフェクト (420ms)
+    this.effects.push({
+      id: `${idBase}_warp`,
+      type: 'MAGIC_WARP',
+      worldPos: { ...playerPos },
+      durationMs: 420,
+      elapsedMs: 0,
+      subType: 'RETURN',
+    });
+  }
+
+  /**
+   * JUMP（ワープ）演出の登録
+   * - ワープ先位置にワープ出現エフェクト
+   * - プレイヤー頭上に JUMP! ポップアップ
+   */
+  public triggerMagicJump(playerPos: Position): void {
+    const idBase = `jump_${this.nextId++}`;
+    // プレイヤー頭上に JUMP!
+    this.triggerTextPopup(playerPos, 'JUMP!', '#d288ff', 700);
+
+    // ワープ先への出現エフェクト (420ms, パープルマゼンタ系)
+    this.effects.push({
+      id: `${idBase}_warp`,
+      type: 'MAGIC_WARP',
+      worldPos: { ...playerPos },
+      durationMs: 420,
+      elapsedMs: 0,
+      subType: 'JUMP',
+    });
+  }
+
+  /**
+   * FLASH（全体行動停止）演出の登録
+   * - 画面全体ホワイトフラッシュ (180ms)
+   * - プレイヤー頭上に FLASH! ポップアップ
+   */
+  public triggerMagicFlash(playerPos: Position): void {
+    // 画面全体ホワイトフラッシュ
+    this.triggerScreenFlash(180, 'rgba(255, 255, 255, 0.85)');
+
+    // プレイヤー頭上に FLASH!
+    this.triggerTextPopup(playerPos, 'FLASH!', '#ffff55', 700);
+  }
+
+  /**
+   * FREEZE（周囲永久凍結）演出の登録
+   * - プレイヤー頭上に FREEZE! ポップアップ
+   * - プレイヤー周囲8マスおよび凍結した敵座標に氷結晶エフェクト
+   */
+  public triggerMagicFreeze(playerPos: Position, frozenPositions?: Position[]): void {
+    // プレイヤー頭上に FREEZE!
+    this.triggerTextPopup(playerPos, 'FREEZE!', '#55e0ff', 700);
+
+    // 周囲8マスに氷結エフェクトを展開
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        this.effects.push({
+          id: `freeze_${this.nextId++}`,
+          type: 'MAGIC_FREEZE',
+          worldPos: { x: playerPos.x + dx, y: playerPos.y + dy },
+          durationMs: 350,
+          elapsedMs: 0,
+        });
+      }
+    }
+
+    // 凍結対象が指定されていればその座標にも追加
+    if (frozenPositions) {
+      for (const pos of frozenPositions) {
+        this.effects.push({
+          id: `freeze_target_${this.nextId++}`,
+          type: 'MAGIC_FREEZE',
+          worldPos: { ...pos },
+          durationMs: 380,
+          elapsedMs: 0,
+        });
+      }
+    }
+  }
+
+  /**
+   * BREAK（ブロック破壊）演出の登録
+   * - 破壊されたブロック座標に石材四散ドット演出
+   */
+  public triggerMagicBreak(targetPos: Position): void {
+    this.effects.push({
+      id: `break_${this.nextId++}`,
+      type: 'BLOCK_BREAK',
+      worldPos: { ...targetPos },
+      durationMs: 260,
+      elapsedMs: 0,
+    });
+  }
+
+  /**
+   * FLY（飛行変身）演出の登録
+   * - プレイヤー位置に光の羽根スパーク
+   * - プレイヤー頭上に FLY! ポップアップ
+   */
+  public triggerMagicFly(playerPos: Position): void {
+    // プレイヤー頭上に FLY!
+    this.triggerTextPopup(playerPos, 'FLY!', '#ffee44', 700);
+
+    // 光の羽・飛行スパーク
+    this.effects.push({
+      id: `fly_${this.nextId++}`,
+      type: 'MAGIC_FLY',
+      worldPos: { ...playerPos },
+      durationMs: 420,
+      elapsedMs: 0,
+    });
+  }
+
+  /**
    * 毎フレームの更新処理
    */
   public update(deltaMs: number): void {
     if (this.playerHurtTimer > 0) {
       this.playerHurtTimer = Math.max(0, this.playerHurtTimer - deltaMs);
+    }
+
+    if (this.screenFlashTimer > 0) {
+      this.screenFlashTimer = Math.max(0, this.screenFlashTimer - deltaMs);
     }
 
     for (const [enemyId, timer] of this.enemyFlickerMap.entries()) {
@@ -297,6 +487,36 @@ export class CombatEffectManager {
           this.drawDamagePopup(ctx, sx, sy, effect, progress);
           break;
         }
+
+        case 'MAGIC_WARP': {
+          // ワープ出現エフェクト（RETURN, JUMP）
+          this.drawWarpEffect(ctx, sx, sy, progress, effect.subType);
+          break;
+        }
+
+        case 'MAGIC_FREEZE': {
+          // 氷結晶スパークエフェクト（FREEZE）
+          this.drawFreezeSpark(ctx, sx, sy, progress);
+          break;
+        }
+
+        case 'MAGIC_FLY': {
+          // 羽根・光スパークエフェクト（FLY）
+          this.drawFlySpark(ctx, sx, sy, progress);
+          break;
+        }
+
+        case 'BLOCK_BREAK': {
+          // 岩破砕エフェクト（BREAK）
+          this.drawBreakExplosion(ctx, sx, sy, progress);
+          break;
+        }
+
+        case 'TEXT_POPUP': {
+          // 汎用テキストポップアップ（RETURN!, JUMP!, FLASH!, FREEZE!, FLY! 等）
+          this.drawTextPopup(ctx, sx, sy, effect, progress);
+          break;
+        }
       }
     }
 
@@ -329,6 +549,9 @@ export class CombatEffectManager {
         this.drawKickDust(ctx, sx, sy, idx, this.kickSlide.path);
       }
     }
+
+    // 画面全体フラッシュ演出（ホワイト・シアン等のフラッシュオーバーレイ）
+    this.drawScreenFlash(ctx);
   }
 
   /**
@@ -448,6 +671,257 @@ export class CombatEffectManager {
   }
 
   /**
+   * 汎用テキストポップアップの描画（RETURN!, JUMP!, FLASH!, FREEZE!, FLY! 等）
+   */
+  private drawTextPopup(
+    ctx: CanvasRenderingContext2D,
+    sx: number,
+    sy: number,
+    effect: CombatEffect,
+    progress: number
+  ): void {
+    if (!effect.text) return;
+    ctx.save();
+    const midX = sx + TILE_SIZE / 2;
+    // 時間経過で上方に16px上昇
+    const midY = sy - 4 - progress * 16;
+
+    const alpha = 1.0 - progress * 0.75;
+    ctx.globalAlpha = Math.max(0, alpha);
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+
+    const color = effect.textColor ?? '#ffffff';
+
+    // くっきりした太字ブラック縁取り（上下左右4方向＋斜め）
+    ctx.fillStyle = '#000000';
+    ctx.fillText(effect.text, midX + 1, midY);
+    ctx.fillText(effect.text, midX - 1, midY);
+    ctx.fillText(effect.text, midX, midY + 1);
+    ctx.fillText(effect.text, midX, midY - 1);
+    ctx.fillText(effect.text, midX + 1, midY + 1);
+    ctx.fillText(effect.text, midX - 1, midY - 1);
+
+    // テキスト本体
+    ctx.fillStyle = color;
+    ctx.fillText(effect.text, midX, midY);
+
+    ctx.restore();
+  }
+
+  /**
+   * ワープ出現エフェクトの描画（RETURN, JUMP）
+   * 光のリング、回転魔法陣、上昇する垂直光柱とスパーク
+   */
+  private drawWarpEffect(
+    ctx: CanvasRenderingContext2D,
+    sx: number,
+    sy: number,
+    progress: number,
+    subType?: 'RETURN' | 'JUMP'
+  ): void {
+    ctx.save();
+    const midX = sx + TILE_SIZE / 2;
+    const midY = sy + TILE_SIZE / 2;
+
+    const isReturn = subType === 'RETURN';
+    const mainColor = isReturn ? '#00ffff' : '#d288ff';
+    const subColor = isReturn ? '#ffffff' : '#ffaaff';
+    const alpha = 1.0 - progress;
+
+    // 1. 垂直の光柱（光のピラー：天から足元へ）
+    ctx.fillStyle = subColor;
+    ctx.globalAlpha = Math.max(0, alpha * 0.45);
+    const pillarWidth = Math.max(2, Math.floor(TILE_SIZE * 0.35 * (1 - progress)));
+    ctx.fillRect(midX - pillarWidth / 2, sy - TILE_SIZE * 0.6, pillarWidth, TILE_SIZE * 1.8);
+
+    // 2. 外側へ拡散する光のリング（波紋）
+    ctx.strokeStyle = mainColor;
+    ctx.lineWidth = 2.5;
+    ctx.globalAlpha = Math.max(0, alpha * 0.85);
+    const ringRadius = (TILE_SIZE * 0.85) * progress;
+    ctx.beginPath();
+    ctx.arc(midX, midY, ringRadius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 3. 回転する幾何学魔法陣（四芒星 / 菱形フレーム）
+    ctx.save();
+    ctx.translate(midX, midY);
+    ctx.rotate(progress * Math.PI * 1.5);
+    ctx.strokeStyle = subColor;
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = Math.max(0, alpha * 0.75);
+
+    const diamondSize = (TILE_SIZE * 0.5) * (1 - progress * 0.3);
+    ctx.beginPath();
+    ctx.moveTo(0, -diamondSize);
+    ctx.lineTo(diamondSize, 0);
+    ctx.lineTo(0, diamondSize);
+    ctx.lineTo(-diamondSize, 0);
+    ctx.closePath();
+    ctx.stroke();
+
+    // 4. 回転キラキラスパーク粒子（4隅のドット）
+    ctx.fillStyle = mainColor;
+    ctx.globalAlpha = Math.max(0, alpha);
+    const sparkDist = diamondSize * 1.1;
+    ctx.fillRect(-sparkDist - 1.5, -1.5, 3, 3);
+    ctx.fillRect(sparkDist - 1.5, -1.5, 3, 3);
+    ctx.fillRect(-1.5, -sparkDist - 1.5, 3, 3);
+    ctx.fillRect(-1.5, sparkDist - 1.5, 3, 3);
+    ctx.restore();
+
+    // 5. 中心のコアスパーク光
+    ctx.fillStyle = '#ffffff';
+    ctx.globalAlpha = Math.max(0, alpha * 0.9);
+    const coreSize = Math.max(2, Math.floor(6 * (1 - progress)));
+    ctx.fillRect(midX - coreSize / 2, midY - coreSize / 2, coreSize, coreSize);
+
+    ctx.restore();
+  }
+
+  /**
+   * 氷結晶スパークエフェクトの描画（FREEZE）
+   * 8方向の氷柱スパークと氷結クリスタル枠
+   */
+  private drawFreezeSpark(ctx: CanvasRenderingContext2D, sx: number, sy: number, progress: number): void {
+    ctx.save();
+    const midX = sx + TILE_SIZE / 2;
+    const midY = sy + TILE_SIZE / 2;
+    const alpha = 1.0 - progress;
+
+    // 1. マス外周の氷結クリスタル枠グロー
+    ctx.strokeStyle = '#00e5ff';
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = Math.max(0, alpha * 0.7);
+    ctx.strokeRect(sx + 2, sy + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+
+    // 2. 8方向の鋭い氷柱スパークライン
+    ctx.globalAlpha = Math.max(0, alpha);
+    const lineLen = (TILE_SIZE * 0.55) * Math.sin(progress * Math.PI);
+
+    // 十字ライン (白)
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(midX - lineLen, midY);
+    ctx.lineTo(midX + lineLen, midY);
+    ctx.moveTo(midX, midY - lineLen);
+    ctx.lineTo(midX, midY + lineLen);
+    ctx.stroke();
+
+    // 斜めライン (水色)
+    ctx.strokeStyle = '#80f0ff';
+    ctx.lineWidth = 1.5;
+    const diag = lineLen * 0.7;
+    ctx.beginPath();
+    ctx.moveTo(midX - diag, midY - diag);
+    ctx.lineTo(midX + diag, midY + diag);
+    ctx.moveTo(midX + diag, midY - diag);
+    ctx.lineTo(midX - diag, midY + diag);
+    ctx.stroke();
+
+    // 3. 四散する微細な氷粒ドット
+    ctx.fillStyle = '#ffffff';
+    const dist = progress * (TILE_SIZE * 0.4);
+    for (let i = 0; i < 4; i++) {
+      const angle = (i * Math.PI) / 2 + Math.PI / 4;
+      const px = midX + Math.cos(angle) * dist;
+      const py = midY + Math.sin(angle) * dist;
+      ctx.fillRect(px - 1, py - 1, 2, 2);
+    }
+
+    ctx.restore();
+  }
+
+  /**
+   * 飛行変身スパークの描画（FLY）
+   * 左右に羽ばたく光の翼と、舞い上がる金白の羽パーティクル
+   */
+  private drawFlySpark(ctx: CanvasRenderingContext2D, sx: number, sy: number, progress: number): void {
+    ctx.save();
+    const midX = sx + TILE_SIZE / 2;
+    const midY = sy + TILE_SIZE / 2;
+    const alpha = 1.0 - progress;
+
+    // 1. 光の翼（左右に広がる羽のシルエット）
+    ctx.fillStyle = progress < 0.5 ? '#ffffff' : '#ffee55';
+    ctx.globalAlpha = Math.max(0, alpha * 0.85);
+
+    const wingSpread = (TILE_SIZE * 0.6) * Math.sin(progress * Math.PI);
+    // 左翼
+    ctx.fillRect(midX - wingSpread - 4, midY - 4 - progress * 8, 5, 3);
+    ctx.fillRect(midX - wingSpread * 0.6 - 2, midY - 6 - progress * 10, 4, 3);
+    // 右翼
+    ctx.fillRect(midX + wingSpread - 1, midY - 4 - progress * 8, 5, 3);
+    ctx.fillRect(midX + wingSpread * 0.6 - 2, midY - 6 - progress * 10, 4, 3);
+
+    // 2. 上方に舞い上がる光の羽ドット
+    ctx.fillStyle = '#ffffff';
+    ctx.globalAlpha = Math.max(0, alpha);
+    const riseY = progress * 18;
+    ctx.fillRect(midX - 5, midY - riseY, 2, 3);
+    ctx.fillRect(midX + 4, midY - riseY - 4, 3, 2);
+    ctx.fillRect(midX - 1, midY - riseY - 8, 2, 2);
+
+    // 3. 中心の光球
+    ctx.fillStyle = '#ffff88';
+    ctx.fillRect(midX - 2, midY - 2, 4, 4);
+
+    ctx.restore();
+  }
+
+  /**
+   * ブロック破砕エフェクトの描画（BREAK）
+   * 岩・石材の四散ドット演出
+   */
+  private drawBreakExplosion(ctx: CanvasRenderingContext2D, sx: number, sy: number, progress: number): void {
+    ctx.save();
+    const midX = sx + TILE_SIZE / 2;
+    const midY = sy + TILE_SIZE / 2;
+    const dist = progress * (TILE_SIZE * 0.7);
+    const alpha = 1.0 - progress * 0.6;
+    ctx.globalAlpha = Math.max(0, alpha);
+
+    // 8方向＋微小ランダムに飛び散る石材破片ドット
+    for (let i = 0; i < 8; i++) {
+      const angle = (i * Math.PI) / 4;
+      const px = midX + Math.cos(angle) * dist;
+      const py = midY + Math.sin(angle) * dist;
+
+      // 破片ごとに色を変える（灰色、砂土色、衝撃白）
+      if (i % 3 === 0) {
+        ctx.fillStyle = '#b0b0b0';
+      } else if (i % 3 === 1) {
+        ctx.fillStyle = '#dcd6b2';
+      } else {
+        ctx.fillStyle = '#ffffff';
+      }
+      ctx.fillRect(px - 1.5, py - 1.5, 3, 3);
+    }
+
+    // 中心部の砕石ダスト（小さな土煙）
+    ctx.fillStyle = '#9e9e9e';
+    ctx.fillRect(midX - 3, midY - 3, 6, 6);
+
+    ctx.restore();
+  }
+
+  /**
+   * 画面全体フラッシュの描画
+   */
+  private drawScreenFlash(ctx: CanvasRenderingContext2D): void {
+    if (this.screenFlashTimer <= 0 || this.screenFlashDuration <= 0) return;
+    const alpha = this.screenFlashTimer / this.screenFlashDuration;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    ctx.fillStyle = this.screenFlashColor;
+    ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+    ctx.restore();
+  }
+
+  /**
    * KICK滑走時の土煙・残像エフェクト描画
    */
   private drawKickDust(
@@ -492,6 +966,7 @@ export class CombatEffectManager {
     this.effects = [];
     this.playerHurtTimer = 0;
     this.enemyFlickerMap.clear();
+    this.screenFlashTimer = 0;
     this.kickSlide = null;
   }
 }

@@ -334,6 +334,8 @@ export class HomeRelocationTactics {
         const safeDir = this.botNav.findAdjacentSafeEmptyFloor(curPos, map, enemies, dragon, player);
         if (safeDir) return { type: 'MOVE', dir: safeDir };
       }
+      // RINGを手放すまでDRAGON_SLAYへ移行させない
+      return { type: 'SPACE' };
     }
 
     if (player.holdItem === 'NONE') {

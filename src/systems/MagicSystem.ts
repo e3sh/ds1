@@ -18,6 +18,9 @@ export interface CastResult {
   kickPath?: Position[];
   kickHitEnemy?: { id: string; pos: Position; name: string };
   kickCrushed?: boolean;
+  breakPos?: Position;
+  frozenPositions?: Position[];
+  warpDestPos?: Position;
 }
 
 export class MagicSystem {
@@ -132,7 +135,7 @@ export class MagicSystem {
       // ブロックを破壊して下地タイル（EMPTY等）に戻す
       map.setTile(targetPos, map.getBaseTile(targetPos) === 'GRAVE' ? 'GRAVE' : 'EMPTY');
       // 実質消費0（ストックは減らない）
-      return { success: true, message: '目の前のブロックを破壊した！', magicType: 'BREAK' };
+      return { success: true, message: '目の前のブロックを破壊した！', magicType: 'BREAK', breakPos: { ...targetPos } };
     }
 
     return { success: false, message: '破壊できるブロックがありません' };
@@ -252,6 +255,7 @@ export class MagicSystem {
     player.magic = Math.max(0, player.magic - 1);
 
     let frozenCount = 0;
+    const frozenPositions: Position[] = [];
     for (const enemy of enemies) {
       if (!enemy.isAlive) continue;
       const dx = Math.abs(enemy.pos.x - player.pos.x);
@@ -261,6 +265,7 @@ export class MagicSystem {
         enemy.isPermanentlyFrozen = true;
         enemy.frozenTimer = Infinity;
         frozenCount++;
+        frozenPositions.push({ ...enemy.pos });
       }
     }
 
@@ -268,6 +273,7 @@ export class MagicSystem {
       success: true,
       message: `FREEZE発動！ 周囲のモンスター(${frozenCount}体)を永久凍結させた！`,
       magicType: 'FREEZE',
+      frozenPositions,
     };
   }
 
@@ -322,7 +328,7 @@ export class MagicSystem {
       // ゴーストのマスが通過可能であれば直接ワープ
       if (map.isPassable(targetGhost.pos)) {
         player.pos = { ...targetGhost.pos };
-        return { success: true, message: 'JUMP発動！ ゴーストの場所へワープした！', magicType: 'JUMP' };
+        return { success: true, message: 'JUMP発動！ ゴーストの場所へワープした！', magicType: 'JUMP', warpDestPos: { ...player.pos } };
       }
 
       // ゴーストが壁を通過中の場合: 最も近い安全な通過可能マスを探索して着地
@@ -348,12 +354,12 @@ export class MagicSystem {
       if (nearestPassable !== null) {
         const dest: Position = nearestPassable;
         player.pos = { x: dest.x, y: dest.y };
-        return { success: true, message: 'JUMP発動！ ゴーストの近くの通路へワープした！', magicType: 'JUMP' };
+        return { success: true, message: 'JUMP発動！ ゴーストの近くの通路へワープした！', magicType: 'JUMP', warpDestPos: { ...player.pos } };
       }
 
       // 万一最寄りが見つからない場合でもゴースト位置へ
       player.pos = { ...targetGhost.pos };
-      return { success: true, message: 'JUMP発動！ ゴーストの場所へワープした！', magicType: 'JUMP' };
+      return { success: true, message: 'JUMP発動！ ゴーストの場所へワープした！', magicType: 'JUMP', warpDestPos: { ...player.pos } };
     }
 
     // ゴーストがいない場合はランダムな空きマス
@@ -366,7 +372,7 @@ export class MagicSystem {
       }
     }
 
-    return { success: true, message: 'JUMP発動！ マップのどこかへワープした！', magicType: 'JUMP' };
+    return { success: true, message: 'JUMP発動！ マップのどこかへワープした！', magicType: 'JUMP', warpDestPos: { ...player.pos } };
   }
 
   /**
@@ -381,6 +387,7 @@ export class MagicSystem {
       success: true,
       message: 'RETURN発動！ 我が家へ帰還した！',
       magicType: 'RETURN',
+      warpDestPos: { ...player.pos },
     };
   }
 

@@ -162,9 +162,10 @@ export class BotNavigator {
     let breakResult: BfsPathResult | null = null;
     if (canBreakOrKick) {
       const manhattanDist = map.getTorusDistance(from, to).manhattan;
-      // 通常経路がない場合は必ず探索。
-      // 通常経路がある場合でも、直線距離に比べて8歩以上迂回している場合はBREAK探索を行って比較
-      const isDetour = !normalResult || (normalResult.steps - manhattanDist >= 8);
+      // 我が家への帰還経路、またはドラゴン要塞への進軍経路、または迂回が生じている場合は積極的にBREAK経路を探索
+      const isHomeOrDragonRoute = (to.x === map.realHomePos.x && to.y === map.realHomePos.y) ||
+                                  (map.dragonCenter && map.getTorusDistance(to, map.dragonCenter).chebyshev <= 8);
+      const isDetour = !normalResult || (normalResult.steps - manhattanDist >= 3) || isHomeOrDragonRoute;
       if (isDetour) {
         breakResult = this.executeBfsDetailed(from, to, map, player, enemies, allowDiagonal, dragon, true, extraBlocked, currentPhase, ghosts);
       }
@@ -177,9 +178,12 @@ export class BotNavigator {
 
     if (normalResult && breakResult) {
       const manhattanDist = map.getTorusDistance(from, to).manhattan;
-      // ショートカット判定: 通常経路がマンハッタン距離より8歩以上迂回しており、
-      // かつ BREAK 経路の方がコストまたは歩数が大幅に短い場合、積極的に壁を掘る
-      const isSignificantShortcut = (normalResult.steps - manhattanDist >= 8 || normalResult.steps >= breakResult.steps + 4) &&
+      // 要件③: BREAK による幹線ルート（高速道路）の積極的開拓
+      // コスト0のBREAKにより直線的に直通路を開通させるため、
+      // BREAK経路の方が歩数が短い、または通常経路が迂回しておりBREAK経路が直線的、
+      // あるいはBREAK経路の総コストが低い場合は積極的に直通路を粉砕開拓する
+      const isSignificantShortcut = (breakResult.steps < normalResult.steps) ||
+                                    (normalResult.steps - manhattanDist >= 3 && breakResult.steps <= normalResult.steps + 2) ||
                                     (breakResult.cost < normalResult.cost);
       if (isSignificantShortcut) {
         return breakResult.dir;
@@ -352,7 +356,7 @@ export class BotNavigator {
         const obj = map.getObject(nextPos);
         if (obj === 'BLOCK') {
           if (allowBreak) {
-            stepCost = 3;
+            stepCost = 1.6; // コスト0のBREAKによる幹線道路開拓（数歩の迂回より粉砕直進を優先）
           } else if (player.holdItem === 'RING') {
             const pushDest = map.wrapPosition({
               x: nextPos.x + d.dx,
@@ -685,6 +689,15 @@ export class BotNavigator {
 
       let score = minDistToLethals * 100 + minManhattanToLethals * 10;
       if (dir.includes('_')) score += 5;
+
+      // 生存している危険敵（LETHAL/DANGER）の直角隣接マス（マンハッタン距離1）は敵の殴り射程内！
+      const isOrthogonalToAnyLethal = enemies.some(
+        e => e.isAlive && !e.isPermanentlyFrozen && map.getTorusDistance(nextPos, e.pos).manhattan === 1 &&
+             (ThreatEvaluator.evaluateThreat(player, e) === 'LETHAL' || e.atk >= player.hp)
+      );
+      if (isOrthogonalToAnyLethal) {
+        score -= 5000;
+      }
 
       if (score > bestScore) {
         bestScore = score;

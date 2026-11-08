@@ -1,6 +1,8 @@
 import assert from 'node:assert';
 import { CombatEffectManager } from '../src/view/CombatEffectManager.js';
 import { Player } from '../src/models/Player.js';
+import { GameEngine } from '../src/core/GameEngine.js';
+import { AutoPlayBot } from '../src/ai/AutoPlayBot.js';
 import {
   MAP_VIEW_HEIGHT,
   MAP_VIEW_WIDTH,
@@ -405,6 +407,70 @@ console.log('Testing 12: CombatEffectManager KICK slide animation and tile hidin
   assert.strictEqual(effects.isTileHiddenByKickAnimation({ x: 5, y: 5 }), false);
 
   console.log('✓ 12. CombatEffectManager KICK slide animation & tile hiding verified.');
+}
+
+// テスト13: 魔法視覚エフェクト（RETURN, JUMP, FLASH, FREEZE, BREAK, FLY）と画面フラッシュ
+{
+  console.log('Testing 13: Magic visual effects and screen flash lifecycle...');
+  const effects = new CombatEffectManager();
+
+  // 13-1. RETURN エフェクト & 画面フラッシュ
+  effects.triggerMagicReturn({ x: 10, y: 10 });
+  const flash = effects.getScreenFlash();
+  assert.ok(flash !== null, 'Screen flash should be active after RETURN');
+  assert.strictEqual(flash?.active, true);
+  assert.ok((flash?.alpha ?? 0) > 0.5, 'Screen flash alpha should be high initially');
+
+  // 時間経過でフラッシュ終了
+  effects.update(180);
+  assert.strictEqual(effects.getScreenFlash(), null, 'Screen flash should expire after duration');
+
+  // 13-2. FLASH 魔法エフェクト
+  effects.triggerMagicFlash({ x: 10, y: 10 });
+  assert.ok(effects.getScreenFlash() !== null, 'Screen flash should be active after FLASH');
+  effects.update(200);
+  assert.strictEqual(effects.getScreenFlash(), null);
+
+  // 13-3. JUMP, FREEZE, BREAK, FLY エフェクト登録とクリア
+  effects.triggerMagicJump({ x: 5, y: 5 });
+  effects.triggerMagicFreeze({ x: 5, y: 5 }, [{ x: 6, y: 5 }]);
+  effects.triggerMagicBreak({ x: 5, y: 6 });
+  effects.triggerMagicFly({ x: 5, y: 5 });
+
+  effects.clear();
+  assert.strictEqual(effects.getScreenFlash(), null);
+  console.log('✓ 13. Magic visual effects & screen flash lifecycle verified.');
+}
+
+// テスト14: オートプレイ時の魔法発動演出ディレイ制御の検証
+{
+  console.log('Testing 14: AutoPlay magic delay and subtitle notification...');
+  const engine = new GameEngine();
+  const demoController = engine.getDemoController();
+
+  engine.setState('PLAYING');
+  demoController.setDemoMode(true);
+  demoController.setDemoBot(new AutoPlayBot({ profile: 'STANDARD' }));
+  assert.strictEqual(demoController.getMagicDelayTimer(), 0);
+
+  // RETURN魔法発動イベントを発火
+  engine.getEventBus().emit('magic:cast', {
+    magicName: 'RETURN',
+    cost: 1,
+    success: true,
+    details: { type: 'RETURN' },
+  });
+
+  // RETURN発動により約480msの演出待機ディレイがセットされること
+  assert.strictEqual(demoController.getMagicDelayTimer(), 480, 'Magic delay timer should be 480ms on RETURN');
+
+  // stepDemo 実行時にディレイが消費され、演出フレーム進行が行われること
+  demoController.stepDemo();
+  assert.ok(demoController.getMagicDelayTimer() < 480, 'Timer should decrease during delay');
+
+  demoController.stopDemoMode();
+  assert.strictEqual(demoController.getMagicDelayTimer(), 0, 'Timer should be reset on stop');
+  console.log('✓ 14. AutoPlay magic delay & subtitle notification verified.');
 }
 
 console.log('--- ✓ All Visual & Combat Effects Tests Passed Successfully! ---');

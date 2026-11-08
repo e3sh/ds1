@@ -59,7 +59,9 @@ export const DRAGON_8x8_MAZE_LAIR: ThemeBlockTemplate = {
   allowFlip: false,
   dragonLairStyle: 'MAZE_LAIR',
   botTuning: {
-    enableHomeRelocation: false,
+    enableHomeRelocation: true,
+    homeRelocateTargetDistMin: 5,
+    homeRelocateTargetDistMax: 8,
   },
   edgePorts: [
     { direction: 'NORTH', cellIndex: 0, offsetInCell: 2 },
@@ -100,7 +102,9 @@ export const DRAGON_12x12_MAZE_LAIR: ThemeBlockTemplate = {
   allowFlip: false,
   dragonLairStyle: 'MAZE_LAIR',
   botTuning: {
-    enableHomeRelocation: false,
+    enableHomeRelocation: true,
+    homeRelocateTargetDistMin: 5,
+    homeRelocateTargetDistMax: 8,
   },
   edgePorts: [
     { direction: 'NORTH', cellIndex: 0, offsetInCell: 2 },

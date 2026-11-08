@@ -60,7 +60,7 @@ console.log('Testing 1: Map assessment and recommended policy calculation...');
 console.log('Testing 2: CROWN_ESCAPE potion collection on low magic...');
 {
   const engine = new GameEngine({ headless: true });
-  engine.startGame();
+  engine.startGame(123456);
   const player = engine.getPlayer();
   const map = engine.getMap();
   const dragon = engine.getDragon();
@@ -135,7 +135,7 @@ console.log('Testing 2: CROWN_ESCAPE potion collection on low magic...');
 console.log('Testing 3: Grave seal phase transition and policy overrides...');
 {
   const engine = new GameEngine({ headless: true });
-  engine.startGame();
+  engine.startGame(123456);
   const player = engine.getPlayer();
   const map = engine.getMap();
 
@@ -170,7 +170,7 @@ console.log('Testing 3: Grave seal phase transition and policy overrides...');
 console.log('Testing 4: Coin collection & non-combat early magic unlock...');
 {
   const engine = new GameEngine({ headless: true });
-  engine.startGame();
+  engine.startGame(123456);
   const player = engine.getPlayer();
   const map = engine.getMap();
 

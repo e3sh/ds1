@@ -190,7 +190,7 @@ console.log('Testing 4: AutoPlayBot state machine, phase transition & decision m
   // 4-D. ドラゴン討伐条件 (STR >= 350,000 & 防御力EXP育成 & MP備蓄完了) 達成時のフェーズ遷移
   player.hp = 1000;
   player.strength = 450000;
-  player.experience = 60000; // 防御力育成前（EXP 60,000）: 周囲に狩れる敵がいれば POWER_RUSH 継続
+  player.experience = 15000; // 防御力育成前（新基準 targetDefense 40,000 未達）: 周囲に狩れる敵がいれば POWER_RUSH 継続
   player.magic = 5;
   botStandard.graveSealAborted = true; // 墓封鎖完了状態として移転/決戦進軍を検証
   const actionFarmExp = botStandard.decideAction(engine);
@@ -380,18 +380,21 @@ console.log('Testing 6: Death emergency priority & Potion pickup/swap with magic
     assert.strictEqual(player.holdItem, 'KEY', 'Player must safely hold KEY again after swap');
   }
 
-  // 6-D. MP確保後の RETURN 魔法による瞬時帰還検証
+  // 6-D. MP確保後の RETURN 魔法による瞬時帰還検証（遠隔地からの安全ワープ）
   {
     const bot = new AutoPlayBot({ profile: 'STANDARD' });
     const engine = new GameEngine({ seed: 44444 });
     engine.startGame();
     const player = engine.getPlayer();
+    const map = engine.getMap();
 
     player.hasSword = true;
     player.holdItem = 'POWER_STONE';
     player.experience = 2000; // RETURN習得
-    player.magic = 1;         // MPあり
+    player.magic = 3;         // 序盤RETURN許可MP（>= 3）
     player.hasDeath = false;
+    // しきい値制限検証: 我が家から離れた遠隔地（距離15マス以上）からのRETURN
+    player.pos = map.wrapPosition({ x: map.realHomePos.x + 15, y: map.realHomePos.y + 15 });
 
     const action = bot.decideAction(engine);
     assert.strictEqual(action.type, 'MAGIC', 'Should cast RETURN magic when holding POWER_STONE with MP');

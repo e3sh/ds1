@@ -46,6 +46,7 @@ export interface DOMUICallbacks {
   onChangeAutoPlaySpeed?: (speedMultiplier: number) => void;
   onTakeoverAutoPlay?: () => void;
   onToggleAutoPlay?: () => void;
+  onToggleBotVersion?: () => boolean;
   onExitAutoPlayVerify?: () => void;
   onOpenCustomModal?: () => void;
   onCloseCustomModal?: () => void;
@@ -116,6 +117,7 @@ export class DOMUIManager {
   private autoplayToggleBtnEl: HTMLButtonElement | null = null;
   private autoplaySpeedBtns: { [key: number]: HTMLButtonElement | null } = {};
   private autoplayTakeoverBtnEl: HTMLButtonElement | null = null;
+  private autoplayBotVerBtnEl: HTMLButtonElement | null = null;
   private autoplayExitBtnEl: HTMLButtonElement | null = null;
   private isAutoPlayMode: boolean = false;
   private idleTimerId: number | null = null;
@@ -232,6 +234,7 @@ export class DOMUIManager {
               <button id="dom-autoplay-spd-5" class="autoplay-spd-btn" style="background: #263238; color: #ccc; border: 1px solid #546e7a; padding: 2px 8px; font-size: 11px; border-radius: 3px; cursor: pointer;">5x 高速</button>
               <button id="dom-autoplay-spd-0" class="autoplay-spd-btn" style="background: #263238; color: #ccc; border: 1px solid #546e7a; padding: 2px 8px; font-size: 11px; border-radius: 3px; cursor: pointer;">⏸ 一時停止</button>
             </div>
+            <button id="dom-autoplay-botver-btn" style="background: #1a237e; color: #90caf9; border: 1px solid #3f51b5; padding: 3px 8px; font-size: 11px; font-weight: bold; border-radius: 3px; cursor: pointer;" title="AIエンジンの切替 (v1: 安定版 / v2: 実験版)">🤖 AI: v1 (安定)</button>
             <button id="dom-autoplay-takeover-btn" style="background: linear-gradient(180deg, #1565c0 0%, #0d47a1 100%); color: #fff; border: 1px solid #64b5f6; padding: 3px 10px; font-size: 11px; font-weight: bold; border-radius: 3px; cursor: pointer;">⚔ 手動操作に切替 [ENTER / Tab]</button>
             <button id="dom-autoplay-exit-btn" style="background: #3e1b24; color: #ef9a9a; border: 1px solid #c62828; padding: 3px 8px; font-size: 11px; border-radius: 3px; cursor: pointer;">🚪 終了 [ESC]</button>
           </div>
@@ -465,6 +468,7 @@ export class DOMUIManager {
     this.autoplayControlsEl = this.container.querySelector('#dom-autoplay-controls');
     this.autoplayToggleBtnEl = (document.getElementById('dom-autoplay-toggle-btn') ?? this.topBarEl?.querySelector('#dom-autoplay-toggle-btn') ?? this.container.querySelector('#dom-autoplay-toggle-btn')) as HTMLButtonElement | null;
     this.autoplayTakeoverBtnEl = this.container.querySelector('#dom-autoplay-takeover-btn');
+    this.autoplayBotVerBtnEl = this.container.querySelector('#dom-autoplay-botver-btn');
     this.autoplayExitBtnEl = this.container.querySelector('#dom-autoplay-exit-btn');
     this.autoplaySpeedBtns[1] = this.container.querySelector('#dom-autoplay-spd-1');
     this.autoplaySpeedBtns[2] = this.container.querySelector('#dom-autoplay-spd-2');
@@ -584,6 +588,15 @@ export class DOMUIManager {
       this.autoplayToggleBtnEl.addEventListener('click', () => {
         if (this.callbacks.onToggleAutoPlay) {
           this.callbacks.onToggleAutoPlay();
+        }
+      });
+    }
+
+    if (this.autoplayBotVerBtnEl) {
+      this.autoplayBotVerBtnEl.addEventListener('click', () => {
+        if (this.callbacks.onToggleBotVersion) {
+          const isV2 = this.callbacks.onToggleBotVersion();
+          this.updateBotVersionUI(isV2);
         }
       });
     }
@@ -1663,6 +1676,22 @@ export class DOMUIManager {
         this.autoplayToggleBtnEl.style.color = '#b0bec5';
         this.autoplayToggleBtnEl.style.borderColor = '#455a64';
         this.autoplayToggleBtnEl.style.fontWeight = 'normal';
+      }
+    }
+  }
+
+  public updateBotVersionUI(isV2: boolean): void {
+    if (this.autoplayBotVerBtnEl) {
+      if (isV2) {
+        this.autoplayBotVerBtnEl.textContent = '🤖 AI: v2 (実験中)';
+        this.autoplayBotVerBtnEl.style.background = '#4a148c';
+        this.autoplayBotVerBtnEl.style.color = '#e1bee7';
+        this.autoplayBotVerBtnEl.style.borderColor = '#ab47bc';
+      } else {
+        this.autoplayBotVerBtnEl.textContent = '🤖 AI: v1 (安定)';
+        this.autoplayBotVerBtnEl.style.background = '#1a237e';
+        this.autoplayBotVerBtnEl.style.color = '#90caf9';
+        this.autoplayBotVerBtnEl.style.borderColor = '#3f51b5';
       }
     }
   }

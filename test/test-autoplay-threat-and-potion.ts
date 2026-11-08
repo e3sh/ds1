@@ -23,8 +23,8 @@ console.log('--- AutoPlayBot Threat Evaluation & POTION Stock Priority Verificat
   player.hp = 10000;
   player.maxHp = 10000;
 
-  // 強敵（サイクロプス: ATK 450,000）を配置 -> player.experience=350,000 では被ダメ 100,000 >= HP 10,000 なので LETHAL!
-  const cyclops = new EnemyInstance({ typeId: 28, pos: { x: 15, y: 15 } });
+  // 近傍に強敵（サイクロプス: ATK 450,000）を配置 -> player.experience=350,000 では被ダメ 100,000 >= HP 10,000 なので LETHAL!
+  const cyclops = new EnemyInstance({ typeId: 28, pos: { x: player.pos.x + 3, y: player.pos.y + 3 } });
   const enemies = [cyclops];
 
   bot.setPhase('POWER_RUSH');

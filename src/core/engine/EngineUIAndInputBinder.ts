@@ -130,6 +130,9 @@ export class EngineUIAndInputBinder {
       onToggleAutoPlay: () => {
         this.engine.toggleAutoPlay();
       },
+      onToggleBotVersion: () => {
+        return this.engine.toggleBotVersion();
+      },
       onExitAutoPlayVerify: () => {
         this.engine.stopAutoPlayVerifyMode(true);
       },
