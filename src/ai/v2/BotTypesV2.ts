@@ -14,7 +14,8 @@ export type BotActionV2 =
   | { type: 'MOVE'; dir: Direction }
   | { type: 'SPACE' }
   | { type: 'MAGIC'; magic: string }
-  | { type: 'WAIT' };
+  | { type: 'WAIT' }
+  | { type: 'GIVE_UP' };
 
 /** マップ幾何サイズから導出される正規化距離スケール */
 export interface TacticalScale {

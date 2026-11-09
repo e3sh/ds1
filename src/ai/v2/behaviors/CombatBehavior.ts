@@ -35,15 +35,20 @@ export class CombatBehavior {
     const circlingAction = this.tryBreakCirclingLoop(player, map, enemies, dragon, nav, params);
     if (circlingAction) return circlingAction;
 
-    // 2. 緊急無力化: 隣接に危険敵がいて、MP温存ラインを満たしている場合
+    // 2. 緊急無力化: 隣接に未凍結・未スタンの危険敵がいて、MP温存ラインを満たしている場合
     const hasDangerousAdj = adjacentTargets.some(
-      ({ enemy }) => ThreatEvaluator.evaluateThreat(player, enemy) === 'LETHAL' ||
-                     ThreatEvaluator.evaluateThreat(player, enemy) === 'DANGER'
+      ({ enemy }) =>
+        !enemy.isPermanentlyFrozen &&
+        enemy.frozenTimer <= 0 &&
+        (ThreatEvaluator.evaluateThreat(player, enemy) === 'LETHAL' ||
+          ThreatEvaluator.evaluateThreat(player, enemy) === 'DANGER')
     );
 
     if (hasDangerousAdj && player.magic > params.magicReserveThreshold && !player.hasDeath) {
       if (MagicSystem.canCast(player, 'FREEZE').allowed) {
-        const unfrozen = adjacentTargets.find(({ enemy }) => !enemy.isPermanentlyFrozen);
+        const unfrozen = adjacentTargets.find(
+          ({ enemy }) => !enemy.isPermanentlyFrozen && enemy.frozenTimer <= 0
+        );
         if (unfrozen) {
           return {
             action: { type: 'MAGIC', magic: 'FREEZE' },
@@ -51,7 +56,8 @@ export class CombatBehavior {
           };
         }
       }
-      if (MagicSystem.canCast(player, 'FLASH').allowed) {
+      const hasAnyActive = enemies.some(e => e.isAlive && !e.isPermanentlyFrozen && e.frozenTimer <= 0);
+      if (hasAnyActive && MagicSystem.canCast(player, 'FLASH').allowed) {
         return {
           action: { type: 'MAGIC', magic: 'FLASH' },
           description: '⚡ FLASH全敵足止め詠唱',
@@ -305,10 +311,12 @@ export class CombatBehavior {
         }
       }
 
-      // A-2. もし BREAK が解禁済み (EXP >= 4000) で MP >= 1 なら、岩自体を壊して障害物を消滅させる
-      if (player.experience >= 4000 && player.magic >= 1) {
+      // A-2. もし BREAK が解禁済み (EXP >= 4000) で詠唱可能なら、岩自体を壊して障害物を消滅させる
+      if (MagicSystem.canCast(player, 'BREAK').allowed && map.getObject(obstaclePos) === 'BLOCK') {
         const dirToRock = nav.getAdjacentDirection(curPos, obstaclePos, map);
         if (dirToRock) {
+          player.dir = dirToRock;
+          nav.clearUnreachableTargets();
           return {
             action: { type: 'MAGIC', magic: 'BREAK' },
             description: `⛏️ 周回打開 BREAK岩破壊 (${obstaclePos.x}, ${obstaclePos.y})`,
@@ -321,7 +329,7 @@ export class CombatBehavior {
     // B-1. FREEZE 詠唱（永久氷像化して足止め＆墓封鎖バリケード化）
     const canSpendForFreeze = player.experience < 4000 || player.magic > params.magicReserveThreshold;
     if (canSpendForFreeze && !player.hasDeath && MagicSystem.canCast(player, 'FREEZE').allowed) {
-      if (!enemy.isPermanentlyFrozen) {
+      if (!enemy.isPermanentlyFrozen && enemy.frozenTimer <= 0) {
         return {
           action: { type: 'MAGIC', magic: 'FREEZE' },
           description: `❄️ 周回打開 FREEZE氷像化 (${enemy.name}) [墓/障害物封鎖]`,
@@ -330,7 +338,7 @@ export class CombatBehavior {
     }
 
     // B-2. FLASH 詠唱（全敵スタン）
-    if (canSpendForFreeze && !player.hasDeath && MagicSystem.canCast(player, 'FLASH').allowed) {
+    if (canSpendForFreeze && !player.hasDeath && !enemy.isPermanentlyFrozen && enemy.frozenTimer <= 0 && MagicSystem.canCast(player, 'FLASH').allowed) {
       return {
         action: { type: 'MAGIC', magic: 'FLASH' },
         description: `⚡ 周回打開 FLASHスタン (${enemy.name})`,

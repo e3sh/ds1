@@ -131,9 +131,9 @@ export class MagicSystem {
     const targetPos = map.wrapPosition(MovementSystem.getNextPosition(player.pos, player.dir));
     const tile = map.getTile(targetPos);
 
-    if (tile === 'BLOCK') {
-      // ブロックを破壊して下地タイル（EMPTY等）に戻す
-      map.setTile(targetPos, map.getBaseTile(targetPos) === 'GRAVE' ? 'GRAVE' : 'EMPTY');
+    if (tile === 'BLOCK' || map.getObject(targetPos) === 'BLOCK') {
+      // ブロックオブジェクトのみを破壊し、床上アイテムがあれば保持する
+      map.setObject(targetPos, 'NONE');
       // 実質消費0（ストックは減らない）
       return { success: true, message: '目の前のブロックを破壊した！', magicType: 'BREAK', breakPos: { ...targetPos } };
     }

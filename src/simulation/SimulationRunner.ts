@@ -85,6 +85,19 @@ export class SimulationRunner {
         // スナップショット記録
         const player = engine.getPlayer();
         telemetry.recordTurnSnapshot(turns, player.experience, player.strength, player.hasSword);
+
+        // Botが物理的詰みを検知してGiveUPした場合は3,000ターンを待たずに即座に終了
+        if ('isGivenUp' in bot && bot.isGivenUp) {
+          if (!player.deathInfo) {
+            player.deathInfo = {
+              cause: 'GIVE_UP_UNSOLVABLE',
+              message: '💀 詰み検知: 剣への到達経路が存在しないためギブアップ',
+              damage: 0,
+              turn: turns,
+            };
+          }
+          break;
+        }
       }
 
       const won = engine.getState() === 'STAGECLEAR';

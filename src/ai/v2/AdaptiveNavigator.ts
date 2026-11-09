@@ -39,6 +39,11 @@ export class AdaptiveNavigator {
   private readonly HEAT_ADD: number = 10.0;
   private readonly HEAT_DECAY: number = 0.85;
 
+  // 1-C. 開拓履歴・新規マス停滞ターン追跡 (物理的詰み検知用)
+  private visitedTilesEver: Set<string> = new Set();
+  public turnsSinceNewTile: number = 0;
+  public consecutiveSwordBlockedTurns: number = 0;
+
   // 2. 統合振動・停滞カウンタ
   public oscillationCount: number = 0;
   public pingPongCount: number = 0;
@@ -81,6 +86,14 @@ export class AdaptiveNavigator {
     }
     const curKey = `${playerPos.x},${playerPos.y}`;
     this.heatMap.set(curKey, (this.heatMap.get(curKey) ?? 0) + this.HEAT_ADD);
+
+    // A-3. 新規未踏マス開拓の追跡
+    if (this.visitedTilesEver.has(curKey)) {
+      this.turnsSinceNewTile++;
+    } else {
+      this.visitedTilesEver.add(curKey);
+      this.turnsSinceNewTile = 0;
+    }
 
     // B. ピンポン往復 (A -> B -> A) および狭小ループの厳格検知
     const rLen = this.recentPositions.length;
@@ -241,9 +254,9 @@ export class AdaptiveNavigator {
 
       if (!isBlock && !isGrave) continue;
 
-      // その障害物の周囲にいる未凍結の生存敵を探す
+      // その障害物の周囲にいる未凍結・未スタンの生存敵を探す
       for (const enemy of enemies) {
-        if (!enemy.isAlive || enemy.isPermanentlyFrozen) continue;
+        if (!enemy.isAlive || enemy.isPermanentlyFrozen || enemy.frozenTimer > 0) continue;
         const distFromObs = map.getTorusDistance(obsPos, enemy.pos).manhattan;
         const distFromPlayer = map.getTorusDistance(curPos, enemy.pos).manhattan;
 
@@ -258,6 +271,108 @@ export class AdaptiveNavigator {
     }
 
     return null;
+  }
+
+  /**
+   * 序盤の剣回収前ハマり（物理的詰み）の検知
+   *
+   * 条件:
+   * 1. 剣未所持 (!player.hasSword) かつ BREAK / JUMP / FLY 魔法が使えない
+   * 2. マップ上のすべての剣 (SWORD) への経路が到達不能 (findPath === null)
+   * 3. 岩を動かす指輪 (RING) も未所持かつ到達可能な RING も存在しない
+   * 4. 訪問ヒートマップによる局所熱量飽和 (周辺半径2の総熱量 >= 40 かつ 現在地熱量 >= 12)、
+   *    または新規未踏マスへの移動が 35 ターン以上発生していない
+   */
+  public detectEarlySwordTrap(
+    player: Player,
+    map: WorldMap,
+    enemies: EnemyInstance[],
+    params: DynamicBotParameters,
+    dragon?: Dragon
+  ): boolean {
+    if (player.hasSword) {
+      this.consecutiveSwordBlockedTurns = 0;
+      return false;
+    }
+    if (MagicSystem.canCast(player, 'BREAK').allowed) return false;
+    if (MagicSystem.canCast(player, 'JUMP').allowed) return false;
+    if (MagicSystem.canCast(player, 'FLY').allowed) return false;
+
+    const curPos = player.pos;
+    // 剣が足元にあるなら詰みではない
+    if (map.getItem(curPos) === 'SWORD') {
+      this.consecutiveSwordBlockedTurns = 0;
+      return false;
+    }
+
+    // 1. 訪問ヒートマップの局所飽和チェック（軽量な事前判定）
+    const curHeat = this.getHeat(curPos);
+    const neighborhoodHeat = this.getNeighborhoodHeat(curPos, map, 2);
+    const isHeatSaturated = curHeat >= 11 && neighborhoodHeat >= 48 && this.turnsSinceNewTile >= 10;
+    const isLongStagnant = this.turnsSinceNewTile >= 45 && neighborhoodHeat >= 42;
+
+    if (!isHeatSaturated && !isLongStagnant) {
+      return false;
+    }
+
+    // 2. マップ上のすべての剣 (SWORD) を列挙（一時ブラックリストを無視して真の到達性を検査）
+    const swordPositions: Position[] = [];
+    const ringPositions: Position[] = [];
+    for (let y = 0; y < map.height; y++) {
+      for (let x = 0; x < map.width; x++) {
+        const p = { x, y };
+        const item = map.getItem(p);
+        if (item === 'SWORD') {
+          swordPositions.push(p);
+        } else if (item === 'RING') {
+          ringPositions.push(p);
+        }
+      }
+    }
+
+    // 剣が1本でも到達可能なら詰みではない
+    for (const swordPos of swordPositions) {
+      const dir = this.findPath(curPos, swordPos, map, player, enemies, params, { dragon });
+      if (dir !== null) {
+        this.consecutiveSwordBlockedTurns = 0;
+        return false;
+      }
+    }
+
+    // 未所持だが到達可能な指輪 (RING) があり、指輪を持てば剣へ到達できる可能性がある場合は除外
+    if (player.holdItem !== 'RING') {
+      for (const ringPos of ringPositions) {
+        const dirToRing = this.findPath(curPos, ringPos, map, player, enemies, params, { dragon });
+        if (dirToRing !== null) {
+          const testPlayerWithRing = { ...player, holdItem: 'RING' } as Player;
+          const canReachSwordWithRing = swordPositions.some(
+            sp => this.findPath(ringPos, sp, map, testPlayerWithRing, enemies, params, { dragon }) !== null
+          );
+          if (canReachSwordWithRing) {
+            this.consecutiveSwordBlockedTurns = 0;
+            return false;
+          }
+        }
+      }
+    }
+
+    this.consecutiveSwordBlockedTurns++;
+
+    // 3. 静的地形（壁・岩）自体で完全に封鎖されているか確認（敵を除外しても経路がない場合は即時確定）
+    const isStaticallySealed = swordPositions.every(
+      sp => this.findPath(curPos, sp, map, player, [], params, { dragon }) === null
+    );
+
+    if (isStaticallySealed && isHeatSaturated) {
+      return true;
+    }
+
+    // 敵による封鎖も含め、長期間（新規未踏マスなし55ターン以上）完全にハマっている場合も詰み確定
+    if (isLongStagnant && this.consecutiveSwordBlockedTurns >= 15) {
+      return true;
+    }
+
+    return false;
   }
 
   // ==========================================================================
@@ -317,11 +432,12 @@ export class AdaptiveNavigator {
       if (!e.isAlive) continue;
       enemyTileMap.set(`${e.pos.x},${e.pos.y}`, e);
 
-      if (!e.isPermanentlyFrozen) {
+      if (!e.isPermanentlyFrozen && e.frozenTimer <= 0) {
         if (to && e.pos.x === to.x && e.pos.y === to.y) continue;
 
         const rawDmg = Math.max(0, e.atk - effectiveDef);
-        const isLethal = rawDmg >= player.hp || ThreatEvaluator.evaluateThreat(player, e) === 'LETHAL';
+        const isTwoShotWithCrown = player.holdItem === 'CROWN' && rawDmg >= player.hp * 0.45;
+        const isLethal = rawDmg >= player.hp || isTwoShotWithCrown || ThreatEvaluator.evaluateThreat(player, e) === 'LETHAL';
         const isDangerous = isLethal || rawDmg >= player.hp * params.dangerHpRatio || rawDmg >= 10000 || (player.holdItem === 'CROWN' && rawDmg > 0);
 
         if (isLethal) {
@@ -330,7 +446,10 @@ export class AdaptiveNavigator {
             const p = map.wrapPosition({ x: e.pos.x + cd.dx, y: e.pos.y + cd.dy });
             lethalOrthogonalZones.add(`${p.x},${p.y}`);
           }
-          const diagDeltas = [{ dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: -1, dy: 1 }, { dx: 1, dy: 1 }];
+          const diagDeltas = [
+            { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: -1, dy: 1 }, { dx: 1, dy: 1 },
+            { dx: 0, dy: -2 }, { dx: 0, dy: 2 }, { dx: -2, dy: 0 }, { dx: 2, dy: 0 },
+          ];
           for (const dd of diagDeltas) {
             const p = map.wrapPosition({ x: e.pos.x + dd.dx, y: e.pos.y + dd.dy });
             lethalChebyshevZones.add(`${p.x},${p.y}`);
@@ -451,8 +570,18 @@ export class AdaptiveNavigator {
         // 敵マス進入判定
         const enemyOnTile = enemyTileMap.get(key);
         if (enemyOnTile) {
-          if (player.holdItem === 'CROWN' || d.dir.includes('_')) continue;
+          if (player.holdItem === 'CROSS' || d.dir.includes('_')) continue;
           const threat = ThreatEvaluator.evaluateThreat(player, enemyOnTile);
+          if (player.holdItem === 'CROWN' && threat !== 'ONE_SHOT') continue;
+          // 初手で敵を撃破する場合、プレイヤーはその場に留まるため他に即死敵が隣接していたら攻撃不可
+          if (current.firstDir === null) {
+            const hasOtherLethalAtFrom = enemies.some(e => {
+              if (!e.isAlive || e.isPermanentlyFrozen || e.frozenTimer > 0 || e.id === enemyOnTile.id) return false;
+              if (map.getTorusDistance(from, e.pos).manhattan !== 1) return false;
+              return Math.max(0, e.atk - effectiveDef) >= player.hp;
+            });
+            if (hasOtherLethalAtFrom) continue;
+          }
           if (player.hp < player.maxHp * params.emergencyHpRatio && threat !== 'ONE_SHOT' && !(nextPos.x === to.x && nextPos.y === to.y)) {
             continue;
           }
@@ -466,9 +595,7 @@ export class AdaptiveNavigator {
         // 即死敵の直角隣接への飛び込み禁止（我が家への帰還時のみ入室許可）
         const isTargetHome = to && to.x === map.realHomePos.x && to.y === map.realHomePos.y && nextPos.x === to.x && nextPos.y === to.y;
         if (lethalOrthogonalZones.has(key) && !enemyTileMap.has(key) && !isTargetHome) {
-          const isCurInOrthogonal = lethalOrthogonalZones.has(`${from.x},${from.y}`);
-          if (!isCurInOrthogonal) continue;
-          else stepCost += 5000;
+          continue;
         }
 
         if (lethalChebyshevZones.has(key) && !enemyTileMap.has(key) && !isTargetHome) {
@@ -529,13 +656,9 @@ export class AdaptiveNavigator {
           steps: current.steps + 1,
         };
 
-        if (stepCost > 1) {
-          queue.push(item);
-        } else {
-          const insertIdx = queue.findIndex(q => q.cost > newCost);
-          if (insertIdx === -1) queue.push(item);
-          else queue.splice(insertIdx, 0, item);
-        }
+        const insertIdx = queue.findIndex(q => q.cost > newCost);
+        if (insertIdx === -1) queue.push(item);
+        else queue.splice(insertIdx, 0, item);
       }
     }
 
@@ -579,9 +702,9 @@ export class AdaptiveNavigator {
         if (ThreatEvaluator.evaluateThreat(player, enemy) !== 'ONE_SHOT') continue;
       }
 
-      // 即死敵の直角隣接マスへの飛び込み禁止
+      // 即死敵の直角隣接マスへの飛び込み禁止（スタン・永久凍結中は行動不能のため除外）
       const hasAdjacentLethalEnemy = enemies.some(e => {
-        if (!e.isAlive || e.isPermanentlyFrozen) return false;
+        if (!e.isAlive || e.isPermanentlyFrozen || e.frozenTimer > 0) return false;
         const d = map.getTorusDistance(nextPos, e.pos).manhattan;
         if (d !== 1) return false;
         const rawDmg = Math.max(0, e.atk - player.experience);
@@ -684,13 +807,39 @@ export class AdaptiveNavigator {
         continue;
       }
 
-      const hasAdjacentEnemy = enemies.some(e => {
-        if (!e.isAlive || e.isPermanentlyFrozen) return false;
-        return map.getTorusDistance(nextPos, e.pos).manhattan === 1;
-      });
-      if (hasAdjacentEnemy) continue;
+      // 我が家（指輪非所持時）は絶対安全地帯なので最優先退避先
+      if (map.getBaseTile(nextPos) === 'HOME' && player.holdItem !== 'RING') {
+        return dir;
+      }
 
-      let penalty = 0;
+      const effectiveDef = Math.floor(player.experience * 1.0);
+      let hasLethalOrthogonal = false;
+      let enemyPenalty = 0;
+
+      for (const e of enemies) {
+        if (!e.isAlive || e.isPermanentlyFrozen || e.frozenTimer > 0) continue;
+        const dist = map.getTorusDistance(nextPos, e.pos);
+        if (dist.chebyshev > 1) continue;
+        const rawDmg = Math.max(0, e.atk - effectiveDef);
+        const isTwoShotWithCrown = player.holdItem === 'CROWN' && rawDmg >= player.hp * 0.45;
+        const isLethal = rawDmg >= player.hp || isTwoShotWithCrown || ThreatEvaluator.evaluateThreat(player, e) === 'LETHAL';
+
+        if (dist.manhattan === 1) {
+          if (isLethal) {
+            hasLethalOrthogonal = true;
+            break;
+          }
+          enemyPenalty += rawDmg > 0 ? 500 : 50;
+        } else if (dist.chebyshev === 1 && isLethal) {
+          enemyPenalty += 350;
+        }
+      }
+      if (hasLethalOrthogonal) continue;
+
+      let penalty = enemyPenalty;
+      if (player.holdItem === 'CROWN') {
+        penalty += map.getTorusDistance(nextPos, map.realHomePos).manhattan * 3;
+      }
       // 直前マスへの逆戻り（ピンポン）抑止
       const rLen = this.recentPositions.length;
       if (rLen >= 2) {

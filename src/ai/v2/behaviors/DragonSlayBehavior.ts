@@ -43,9 +43,9 @@ export class DragonSlayBehavior {
       }
     }
 
-    // 1. 直角隣接（マンハッタン距離1）に危険な敵（被ダメ大・即死）がいる場合、FREEZEで即時無力化
+    // 1. 直角隣接（マンハッタン距離1）に未凍結・未スタンの危険な敵（被ダメ大・即死）がいる場合、FREEZEで即時無力化
     const adjacentEnemies = enemies.filter(
-      e => e.isAlive && !e.isPermanentlyFrozen && map.getTorusDistance(curPos, e.pos).manhattan === 1
+      e => e.isAlive && !e.isPermanentlyFrozen && e.frozenTimer <= 0 && map.getTorusDistance(curPos, e.pos).manhattan === 1
     );
     const hasDangerousAdjacent = adjacentEnemies.some(e => {
       const threat = ThreatEvaluator.evaluateThreat(player, e);
@@ -113,9 +113,11 @@ export class DragonSlayBehavior {
       }
     }
 
-    // 5. 最後の首で隣接に危険敵がいる場合、FREEZEで無力化
+    // 5. 最後の首で隣接に未凍結・未スタンの危険敵がいる場合、FREEZEで無力化
     if (isLastHead && player.magic > 0 && !player.hasDeath) {
-      const adjEnemies = enemies.filter(e => e.isAlive && !e.isPermanentlyFrozen && map.getTorusDistance(curPos, e.pos).manhattan === 1);
+      const adjEnemies = enemies.filter(
+        e => e.isAlive && !e.isPermanentlyFrozen && e.frozenTimer <= 0 && map.getTorusDistance(curPos, e.pos).manhattan === 1
+      );
       if (adjEnemies.length > 0 && MagicSystem.canCast(player, 'FREEZE').allowed) {
         return {
           action: { type: 'MAGIC', magic: 'FREEZE' },

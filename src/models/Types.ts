@@ -117,11 +117,12 @@ export interface CombatResult {
 }
 
 export type DeathCauseType =
-  | 'MONSTER_ATTACK'   // 敵AI手番での攻撃
-  | 'MONSTER_COUNTER'  // プレイヤー体当たり時の敵反撃
-  | 'DRAGON_HEAD'      // ドラゴンの首への攻撃時の反撃
-  | 'FIREBALL'         // ドラゴンの火炎弾直撃
-  | 'GIVE_UP'          // 自発的リタイア
+  | 'MONSTER_ATTACK'     // 敵AI手番での攻撃
+  | 'MONSTER_COUNTER'    // プレイヤー体当たり時の敵反撃
+  | 'DRAGON_HEAD'        // ドラゴンの首への攻撃時の反撃
+  | 'FIREBALL'           // ドラゴンの火炎弾直撃
+  | 'GIVE_UP'            // 自発的リタイア
+  | 'GIVE_UP_UNSOLVABLE' // 物理的詰み検知によるボット早期ギブアップ
   | 'UNKNOWN';
 
 export interface DeathInfo {

@@ -133,7 +133,7 @@ export class TacticalContext {
     // 滞留防止フィードバック: 防御準備ターンや総ターンがかさんだ場合は早期切り上げ (TIMEOUT_STALL防止)
     const defensePrepTurns = options?.defensePrepTurns ?? 0;
     const totalTurns = options?.totalTurns ?? 0;
-    if (phase === 'RESOURCE_FARM' && (defensePrepTurns > 80 || totalTurns > 2200)) {
+    if (phase === 'RESOURCE_FARM' && (defensePrepTurns > 140 || totalTurns > 2200)) {
       targetDefenseExp = Math.min(targetDefenseExp, Math.max(player.experience, 15000));
     }
 
@@ -160,24 +160,21 @@ export class TacticalContext {
       : (player.magic < 5
         ? Math.round(this.scale.nearRadius * 1.2)
         : (player.magic < 10 ? this.scale.nearRadius : this.scale.immediateRadius));
-    const keySearchDist = player.strength < targetStr
+    const needDefenseExp = player.experience < targetDefenseExp;
+    const keySearchDist = (player.strength < targetStr || needDefenseExp)
       ? this.scale.farRadius
       : this.scale.midRadius;
-    const coinSearchDist = !isClassic && player.experience < 4000
-      ? this.scale.midRadius
-      : (player.experience < 12000 ? this.scale.nearRadius : this.scale.immediateRadius);
+    const coinSearchDist = needDefenseExp
+      ? Math.max(20, this.scale.midRadius)
+      : this.scale.immediateRadius;
 
     // 敵狩り許容距離:
     // 敵を2体倒すごとに出現モンスターのランクが+1される仕様を踏まえ、
-    // STR未達時はキルランク暴走（強敵湧き即死）を防ぐため極近傍（immediateRadius: 2〜3マス）に抑制。
-    // STR達成後の決戦前防御育成期にのみ広域（farRadius）へ拡大する。
+    // キルランク暴走（強敵湧き即死）を防ぐため極近傍（immediateRadius: 2〜3マス）の露払いに抑制。
+    // STR達成後の防御EXP育成も宝箱開錠＆コイン収集を最優先とする。
     let huntDistance = 0;
     if (player.hasSword) {
-      if (player.strength >= targetStr) {
-        huntDistance = this.scale.farRadius; // 決戦前準備期: 防御EXP育成のため広域狩り
-      } else {
-        huntDistance = player.holdItem !== 'KEY' ? this.scale.immediateRadius : 0;
-      }
+      huntDistance = player.holdItem !== 'KEY' ? this.scale.immediateRadius : 0;
     }
 
     // 5. ナビゲーション・BFSコスト

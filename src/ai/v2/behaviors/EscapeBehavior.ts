@@ -54,15 +54,29 @@ export class EscapeBehavior {
         };
       }
 
-      // 1-B. 直角隣接に即死敵（LETHAL）が迫っている場合の緊急回避または王冠ドロップ
+      // 1-B. 直角隣接に未凍結・未スタンの即死敵（defenseThreat === 'LETHAL'）が迫っている場合の緊急対応
       const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
-      const adjacentLethal = cardDirs.some(d => {
-        const np = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
-        const e = enemies.find(enemy => enemy.isAlive && !enemy.isPermanentlyFrozen && enemy.pos.x === np.x && enemy.pos.y === np.y);
-        return e && ThreatEvaluator.evaluateThreat(player, e) === 'LETHAL';
-      });
+      const adjacentLethalList = cardDirs
+        .map(d => {
+          const np = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
+          const e = enemies.find(enemy => this.isActiveEnemy(enemy) && enemy.pos.x === np.x && enemy.pos.y === np.y);
+          return e && ThreatEvaluator.evaluateThreatDetails(player, e).defenseThreat === 'LETHAL'
+            ? { enemy: e, dir: d }
+            : null;
+        })
+        .filter((x): x is { enemy: EnemyInstance; dir: Direction } => x !== null);
 
-      if (adjacentLethal) {
+      if (
+        adjacentLethalList.length === 1 &&
+        ThreatEvaluator.evaluateThreatDetails(player, adjacentLethalList[0].enemy).attackThreat === 'ONE_SHOT'
+      ) {
+        return {
+          action: { type: 'MOVE', dir: adjacentLethalList[0].dir },
+          description: `⚔️ 王冠運搬中・即死級敵を一撃排除 (${adjacentLethalList[0].enemy.name})`,
+        };
+      }
+
+      if (adjacentLethalList.length > 0) {
         const evadeDir = nav.findEvadeDirection(curPos, map, enemies, player, dragon);
         if (evadeDir) {
           return { action: { type: 'MOVE', dir: evadeDir }, description: '👑 王冠運搬中緊急退避' };
@@ -70,6 +84,27 @@ export class EscapeBehavior {
         // 逃げ場がない場合、王冠を一時ドロップして魔法封印を解除し次ターン反撃
         if (map.getItem(curPos) === 'NONE') {
           return { action: { type: 'SPACE' }, description: '👑 魔法封印解除のため王冠一時ドロップ' };
+        }
+      }
+
+      // 1-B2. 直角隣接（manhattan=1）には即死敵がいないが、距離2（manhattan=2）に一撃撃破不能な即死敵が迫っている場合:
+      // このターンにその場で王冠をドロップしても距離2の敵からは絶対に攻撃を受けず、次ターンに隣接してきた所をFREEZEで確実に永久凍結できる
+      const distHomeNow = map.getTorusDistance(curPos, homePos).manhattan;
+      if (player.magic > 0 && !player.hasDeath && map.getItem(curPos) === 'NONE' && distHomeNow > 2) {
+        const approachingLethal = enemies.find(e => {
+          if (!this.isActiveEnemy(e)) return false;
+          const d = map.getTorusDistance(curPos, e.pos);
+          if (d.manhattan !== 2) return false;
+          const details = ThreatEvaluator.evaluateThreatDetails(player, e);
+          const rawDmg = Math.max(0, e.atk - Math.floor(player.experience));
+          const isLethalOrTwoShot = details.defenseThreat === 'LETHAL' || rawDmg >= player.hp * 0.45;
+          return isLethalOrTwoShot && details.attackThreat !== 'ONE_SHOT';
+        });
+        if (approachingLethal) {
+          return {
+            action: { type: 'SPACE' },
+            description: `👑 即死敵接近につき安全距離で王冠一時ドロップ (${approachingLethal.name})`,
+          };
         }
       }
 
@@ -95,20 +130,62 @@ export class EscapeBehavior {
 
     // 2. 手ぶら時 (holdItem === 'NONE')
     if (player.holdItem === 'NONE') {
+      const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
+
       // 2-A. 足元の王冠回収（安全確認＆事前開通チェック）
       if (map.getItem(curPos) === 'CROWN') {
-        // 王冠を持った状態で我が家に帰還できるか事前シミュレーション
-        const testPlayer = { ...player, holdItem: 'CROWN' } as Player;
-        const dirWithCrown = nav.findPath(curPos, homePos, map, testPlayer, enemies, params, {
+        // まず周囲2マス以内に未凍結・未スタンの危険敵（被ダメあり・即死級）がいれば、王冠を拾う前に排除・無力化
+        const adjacentLethalOnCrown = cardDirs
+          .map(d => {
+            const np = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
+            const e = enemies.find(enemy => this.isActiveEnemy(enemy) && enemy.pos.x === np.x && enemy.pos.y === np.y);
+            return e && ThreatEvaluator.evaluateThreatDetails(player, e).defenseThreat !== 'NO_DAMAGE'
+              ? { enemy: e, dir: d }
+              : null;
+          })
+          .filter((x): x is { enemy: EnemyInstance; dir: Direction } => x !== null);
+
+        if (
+          adjacentLethalOnCrown.length === 1 &&
+          ThreatEvaluator.evaluateThreatDetails(player, adjacentLethalOnCrown[0].enemy).attackThreat === 'ONE_SHOT'
+        ) {
+          return {
+            action: { type: 'MOVE', dir: adjacentLethalOnCrown[0].dir },
+            description: `⚔️ 王冠取得前露払い (${adjacentLethalOnCrown[0].enemy.name})`,
+          };
+        }
+
+        const nearbyDangerous = enemies.find(e => {
+          if (!this.isActiveEnemy(e)) return false;
+          const d = map.getTorusDistance(curPos, e.pos).manhattan;
+          if (d > 2) return false;
+          const details = ThreatEvaluator.evaluateThreatDetails(player, e);
+          return details.defenseThreat === 'LETHAL' || details.defenseThreat === 'TAKES_DAMAGE';
+        });
+
+        if (nearbyDangerous && player.magic > 0 && !player.hasDeath) {
+          const canFreezeNearby = map.getTorusDistance(curPos, nearbyDangerous.pos).chebyshev <= 1;
+          if (canFreezeNearby && MagicSystem.canCast(player, 'FREEZE').allowed) {
+            return { action: { type: 'MAGIC', magic: 'FREEZE' }, description: `❄️ 王冠取得前自衛FREEZE (${nearbyDangerous.name})` };
+          }
+          if (this.hasAnyActiveEnemy(enemies) && MagicSystem.canCast(player, 'FLASH').allowed) {
+            return { action: { type: 'MAGIC', magic: 'FLASH' }, description: '⚡ 王冠取得前自衛FLASH' };
+          }
+        }
+
+        // 王冠を持った状態で我が家に帰還できるか事前シミュレーション（Playerプロトタイプを維持して評価）
+        const prevHold = player.holdItem;
+        player.holdItem = 'CROWN';
+        const dirWithCrown = nav.findPath(curPos, homePos, map, player, enemies, params, {
           dragon,
           isEscapePhase: true,
           ghosts,
         });
+        player.holdItem = prevHold;
 
         if (!dirWithCrown) {
           // 王冠を持つと道が塞がれる！手ぶらのうちに道を拓く
           // 直角隣接の ONE_SHOT 敵を攻撃排除
-          const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
           for (const d of cardDirs) {
             const adj = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
             const enemy = enemies.find(e => e.isAlive && e.pos.x === adj.x && e.pos.y === adj.y);
@@ -126,32 +203,28 @@ export class EscapeBehavior {
             }
           }
 
-          // 周囲に敵がいれば FREEZE または FLASH
+          // 周囲に未凍結・未スタンの敵がいれば FREEZE
           if (player.magic > 0 && !player.hasDeath) {
-            if (MagicSystem.canCast(player, 'FREEZE').allowed) {
+            if (this.hasNearbyActiveEnemyForFreeze(curPos, enemies, map) && MagicSystem.canCast(player, 'FREEZE').allowed) {
               return { action: { type: 'MAGIC', magic: 'FREEZE' }, description: '❄️ 王冠開通FREEZE' };
             }
-            if (MagicSystem.canCast(player, 'FLASH').allowed) {
-              return { action: { type: 'MAGIC', magic: 'FLASH' }, description: '⚡ 王冠開通FLASH' };
-            }
           }
-        }
 
-        // 周囲2マス以内に危険敵（LETHAL/DANGER）がいれば、拾う前に FREEZE または FLASH で無力化
-        const nearbyDangerous = enemies.find(e => {
-          if (!e.isAlive || e.isPermanentlyFrozen) return false;
-          const d = map.getTorusDistance(curPos, e.pos).manhattan;
-          if (d > 2) return false;
-          const threat = ThreatEvaluator.evaluateThreat(player, e);
-          return threat === 'LETHAL' || threat === 'DANGER';
-        });
-
-        if (nearbyDangerous && player.magic > 0 && !player.hasDeath) {
-          if (MagicSystem.canCast(player, 'FREEZE').allowed) {
-            return { action: { type: 'MAGIC', magic: 'FREEZE' }, description: `❄️ 王冠取得前自衛FREEZE (${nearbyDangerous.name})` };
+          // 手ぶら状態（BREAK開通あり）で我が家への経路があるなら、まず邪魔な岩・敵を排除しに進む
+          const dirToClearRoad = nav.findPath(curPos, homePos, map, player, enemies, params, {
+            dragon,
+            isEscapePhase: true,
+            ghosts,
+          });
+          if (dirToClearRoad) {
+            return {
+              action: { type: 'MOVE', dir: dirToClearRoad },
+              description: '🔨 王冠運搬路の開拓へ移動',
+            };
           }
-          if (MagicSystem.canCast(player, 'FLASH').allowed) {
-            return { action: { type: 'MAGIC', magic: 'FLASH' }, description: '⚡ 王冠取得前自衛FLASH' };
+
+          if (player.magic > 0 && !player.hasDeath && this.hasAnyActiveEnemy(enemies) && MagicSystem.canCast(player, 'FLASH').allowed) {
+            return { action: { type: 'MAGIC', magic: 'FLASH' }, description: '⚡ 王冠開通FLASH' };
           }
         }
 
@@ -162,24 +235,31 @@ export class EscapeBehavior {
         };
       }
 
-      // 2-B. 近傍の危険敵への自衛対応
-      const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
+      // 2-B. 近傍の未凍結・未スタン危険敵への自衛対応
       const adjacentDangerous = cardDirs.some(d => {
         const np = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
-        const e = enemies.find(enemy => enemy.isAlive && !enemy.isPermanentlyFrozen && enemy.pos.x === np.x && enemy.pos.y === np.y);
-        return e && (ThreatEvaluator.evaluateThreat(player, e) === 'LETHAL' || ThreatEvaluator.evaluateThreat(player, e) === 'DANGER');
+        const e = enemies.find(enemy => this.isActiveEnemy(enemy) && enemy.pos.x === np.x && enemy.pos.y === np.y);
+        if (!e) return false;
+        const details = ThreatEvaluator.evaluateThreatDetails(player, e);
+        return details.defenseThreat === 'LETHAL' || (details.defenseThreat === 'TAKES_DAMAGE' && details.attackThreat !== 'ONE_SHOT');
       });
 
       if (adjacentDangerous && player.magic > 0 && !player.hasDeath) {
-        if (MagicSystem.canCast(player, 'FREEZE').allowed) {
+        if (this.hasNearbyActiveEnemyForFreeze(curPos, enemies, map) && MagicSystem.canCast(player, 'FREEZE').allowed) {
           return { action: { type: 'MAGIC', magic: 'FREEZE' }, description: '❄️ 緊急自衛FREEZE' };
         }
-        if (MagicSystem.canCast(player, 'FLASH').allowed) {
+        if (this.hasAnyActiveEnemy(enemies) && MagicSystem.canCast(player, 'FLASH').allowed) {
           return { action: { type: 'MAGIC', magic: 'FLASH' }, description: '⚡ 緊急自衛FLASH' };
         }
       }
 
-      // 2-C. MP枯渇時のポーション回収 (magic < 2)
+      // 2-C. 足元のポーション即時回収 ＆ MP枯渇時のポーション回収 (magic < 2)
+      if (map.getItem(curPos) === 'POTION') {
+        return {
+          action: { type: 'SPACE' },
+          description: '🧪 脱出用ポーションを取得',
+        };
+      }
       if (player.magic < 2) {
         const potionCandidates = nav.findNearestItemCandidates(curPos, 'POTION', map, enemies, player, 4);
         for (const potionPos of potionCandidates) {
@@ -275,5 +355,32 @@ export class EscapeBehavior {
       return d;
     }
     return null;
+  }
+
+  /**
+   * 未凍結かつ未スタン（行動可能な脅威）の生存敵であるか判定
+   */
+  private static isActiveEnemy(enemy: EnemyInstance): boolean {
+    return enemy.isAlive && !enemy.isPermanentlyFrozen && enemy.frozenTimer <= 0;
+  }
+
+  /**
+   * 画面内に未凍結かつ未スタンの生存敵が1体以上存在するか判定（FLASH空撃ち防止）
+   */
+  private static hasAnyActiveEnemy(enemies: EnemyInstance[]): boolean {
+    return enemies.some(e => this.isActiveEnemy(e));
+  }
+
+  /**
+   * FREEZEの有効範囲（周囲8方向・チェビシェフ距離1以内）に未凍結・未スタンの生存敵がいるか判定
+   */
+  private static hasNearbyActiveEnemyForFreeze(
+    curPos: Position,
+    enemies: EnemyInstance[],
+    map: WorldMap
+  ): boolean {
+    return enemies.some(
+      e => this.isActiveEnemy(e) && map.getTorusDistance(curPos, e.pos).chebyshev <= 1
+    );
   }
 }

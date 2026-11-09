@@ -158,6 +158,8 @@ export class Player {
       message = `ドラゴンの灼熱の火炎弾（${dmg} ダメージ）に焼き尽くされた…`;
     } else if (cause === 'GIVE_UP') {
       message = '過酷な迷宮の前に自ら探索を断念した（GIVE UP）…';
+    } else if (cause === 'GIVE_UP_UNSOLVABLE') {
+      message = '💀 詰み検知: 剣への到達経路が存在しないためギブアップ';
     }
 
     this.deathInfo = {

@@ -52,11 +52,12 @@ export class ResourceFarmBehavior {
     // 0. 8歩周期調整中（チェーン実行中）であれば最優先実行
     const esc = bot?.eightStepController;
     if (esc && esc.eightStepTargetChestPos !== null) {
+      const targetChestPos = { ...esc.eightStepTargetChestPos };
       const eightStepAction = esc.handleEightStepCycle(player, map, enemies, dragon);
       if (eightStepAction) {
         return {
           action: eightStepAction,
-          description: `📦 8歩周期調整 [歩数:${player.stepCountSinceStone}/8] -> 宝箱(${esc.eightStepTargetChestPos.x}, ${esc.eightStepTargetChestPos.y})`,
+          description: `📦 8歩周期調整 [歩数:${player.stepCountSinceStone}/8] -> 宝箱(${targetChestPos.x}, ${targetChestPos.y})`,
         };
       }
     }
@@ -116,8 +117,16 @@ export class ResourceFarmBehavior {
     // スワップ処理中（鍵を置き去りにしてアイテム取得中・戻り中）はコイン換金等で中断しない
     const isSwapping = swapState.itemToPickupPos !== null || swapState.tempDroppedKeyPos !== null;
 
-    // 3. コイン換金: 基本はパワーストーン奉納やHP回復での帰宅時に一括納品
-    // 例外: 我が家が至近（<= 3マス）かつ手持ちコインで即座に重要マイルストーン (2000, 4000, 12000) に到達できる場合のみ徒歩で立ち寄る
+    const needStr = player.strength < params.targetStr;
+    const needExp = player.experience < params.targetDefenseExp;
+    // 8歩周期調整（パワーストーン100%確定排出）はSTR未達時のみ実施。
+    // STR達成後のEXP・MP育成期はピボットせず即座に宝箱を開けてコイン(3/8)・ポーション(2/8)を狙う。
+    const isUnderTarget = needStr;
+
+    // 3-B. コイン換金帰還トリガー:
+    // - 序盤: 我が家が至近（<= 3マス）かつ手持ちコインで即座に重要マイルストーン (2000, 4000, 12000) に到達できる場合
+    // - STR達成後の決戦前EXP育成期 (!needStr && needExp):
+    //   手持ちコインが一定枚数（4枚以上、または近傍なら3枚以上）、または換金すれば targetDefenseExp に到達する場合に我が家へ徒歩帰還して一括換金
     if (!isSwapping && player.gold > 0 && player.holdItem !== 'POWER_STONE') {
       const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
       const nextMilestone = player.experience < 2000
@@ -128,20 +137,21 @@ export class ResourceFarmBehavior {
       const reachedMilestone = nextMilestone !== Infinity && (player.experience + estimatedGainedExp) >= nextMilestone;
       const isJustInFrontOfHome = distToHome <= 3 && reachedMilestone;
 
-      if (isJustInFrontOfHome) {
+      const reachesTargetDefenseExp = !needStr && needExp && (player.experience + estimatedGainedExp) >= params.targetDefenseExp;
+      const hasBatchCoinsForDefense = !needStr && needExp && (player.gold >= 4 || (player.gold >= 3 && distToHome <= 12));
+
+      if (isJustInFrontOfHome || reachesTargetDefenseExp || hasBatchCoinsForDefense) {
         const dirToHome = nav.findPath(curPos, homePos, map, player, enemies, params, { dragon });
         if (dirToHome) {
           return {
             action: { type: 'MOVE', dir: dirToHome },
-            description: `🪙 至近マイルストーン達成のため立ち寄り換金 [所持:${player.gold}G 距離:${distToHome}]`,
+            description: (!needStr && needExp)
+              ? `🪙 決戦前EXP育成: コイン一括換金へ帰還 [所持:${player.gold}G 距離:${distToHome}]`
+              : `🪙 至近マイルストーン達成のため立ち寄り換金 [所持:${player.gold}G 距離:${distToHome}]`,
           };
         }
       }
     }
-
-    const needStr = player.strength < params.targetStr;
-    const needMagic = player.magic < params.maxTargetMagic;
-    const isUnderTarget = needStr || needMagic;
 
     // 4. 宝箱マスにいて鍵所持: 8歩周期に同期して宝箱を開ける
     if (floorObj === 'CHEST' && player.holdItem === 'KEY') {
@@ -219,8 +229,12 @@ export class ResourceFarmBehavior {
         }
       }
 
-      // 5-1. 足元に石やポーションがあれば一時置き退避を開始（青天井備蓄: ポットはMP上限に関わらず回収）
-      const isValuable = floorItem === 'POWER_STONE' || floorItem === 'POTION';
+      // 5-1. 足元に石（STR未達時）・ポーション・コイン（EXP未達時）があれば一時置き退避を開始
+      // コインとポーションは手持ち枠を消費しないため、鍵を一時置きして拾った直後に鍵を再回収して連続開錠を継続できる
+      const isValuable =
+        (floorItem === 'POWER_STONE' && needStr) ||
+        floorItem === 'POTION' ||
+        (floorItem === 'COIN' && needExp);
 
       if (isValuable) {
         swapState.itemToPickupPos = { ...curPos };
@@ -321,12 +335,39 @@ export class ResourceFarmBehavior {
           description: `📦 宝箱へ移動 (${chestPos.x}, ${chestPos.y}) [距離: ${dist}]`,
         };
       }
+
+      // 5-B. マップ上に到達可能な宝箱が残っていない場合:
+      // 手持ちコインがあれば我が家へ換金帰還（帰還時に宝箱補充も発動）、なければ鍵を置いて床のコイン・ポット回収へ
+      if (player.gold > 0) {
+        const dirToHome = nav.findPath(curPos, homePos, map, player, enemies, params, { dragon });
+        if (dirToHome) {
+          return {
+            action: { type: 'MOVE', dir: dirToHome },
+            description: `🪙 宝箱枯渇のためコイン換金＆補充へ帰還 [所持:${player.gold}G]`,
+          };
+        }
+      }
+      const isFireLine = dragon && nav.isDragonFireLine(curPos, dragon, map);
+      if (
+        !isFireLine &&
+        floorItem === 'NONE' &&
+        floorObj === 'NONE' &&
+        map.getBaseTile(curPos) !== 'WALL_STATIC' &&
+        map.getBaseTile(curPos) !== 'WARP' &&
+        map.getBaseTile(curPos) !== 'GRAVE' &&
+        map.getBaseTile(curPos) !== 'HOME'
+      ) {
+        return {
+          action: { type: 'SPACE' },
+          description: '🗝️ 到達可能な宝箱がないため鍵を一時手放し',
+        };
+      }
     }
 
     // 6. 手ぶら時: 優先度順アイテム回収
     if (player.holdItem === 'NONE') {
-      // 6-A. 足元の有益アイテムを取得
-      if (floorItem === 'POWER_STONE' || floorItem === 'KEY' || floorItem === 'POTION' || floorItem === 'COIN') {
+      // 6-A. 足元の有益アイテムを取得（STR達成後の不要なPOWER_STONEは拾わない）
+      if ((floorItem === 'POWER_STONE' && needStr) || floorItem === 'KEY' || floorItem === 'POTION' || floorItem === 'COIN') {
         if (bot) {
           bot.lockedItemPos = null;
           bot.lockedItemType = null;
@@ -432,14 +473,15 @@ export class ResourceFarmBehavior {
         }
       }
 
-      // 6-D. 序盤のコイン回収 (EXP < 12,000 の場合、魔法解禁のため優先)
-      if (player.experience < 12000) {
+      // 6-D. コイン回収 (序盤 EXP < 12,000、または STR達成後の防御EXP育成期に近傍コインを優先回収)
+      if (player.experience < 12000 || (!needStr && needExp)) {
         const coinCandidates = nav.findNearestItemCandidates(
           curPos, 'COIN', map, enemies, player, 8, bot?.lockedItemPos
         );
+        const maxImmediateCoinDist = player.experience < 12000 ? params.coinSearchDist : 8;
         for (const coinPos of coinCandidates) {
           const dist = map.getTorusDistance(curPos, coinPos).manhattan;
-          if (dist > params.coinSearchDist) continue;
+          if (dist > maxImmediateCoinDist) continue;
 
           const dir = nav.findPath(curPos, coinPos, map, player, enemies, params, { dragon });
           if (dir) {
@@ -461,28 +503,60 @@ export class ResourceFarmBehavior {
         }
       }
 
-      // 6-E. 鍵回収（距離に関わらずマップ全体の鍵を優先探索）
-      const keyCandidates = nav.findNearestItemCandidates(
-        curPos, 'KEY', map, enemies, player, 8, bot?.lockedItemPos
-      );
-      for (const keyPos of keyCandidates) {
-        const dist = map.getTorusDistance(curPos, keyPos).manhattan;
+      // 6-E. 鍵回収（距離に関わらずマップ全体の鍵を優先探索し、宝箱の連続開錠を行う）
+      const hasChestsOnMap = nav.findNearestChestCandidates(curPos, map, context, enemies, player, 1).length > 0;
+      if (hasChestsOnMap || needStr) {
+        const keyCandidates = nav.findNearestItemCandidates(
+          curPos, 'KEY', map, enemies, player, 8, bot?.lockedItemPos
+        );
+        for (const keyPos of keyCandidates) {
+          const dist = map.getTorusDistance(curPos, keyPos).manhattan;
 
-        const dir = nav.findPath(curPos, keyPos, map, player, enemies, params, { dragon });
-        if (dir) {
-          if (bot) {
-            bot.lockedItemPos = { ...keyPos };
-            bot.lockedItemType = 'KEY';
+          const dir = nav.findPath(curPos, keyPos, map, player, enemies, params, { dragon });
+          if (dir) {
+            if (bot) {
+              bot.lockedItemPos = { ...keyPos };
+              bot.lockedItemType = 'KEY';
+            }
+            return {
+              action: { type: 'MOVE', dir },
+              description: `🗝️ 鍵回収 (${keyPos.x}, ${keyPos.y}) [距離: ${dist}]`,
+            };
+          } else {
+            nav.markTargetUnreachable(keyPos, 8);
+            if (bot?.lockedItemPos && bot.lockedItemPos.x === keyPos.x && bot.lockedItemPos.y === keyPos.y) {
+              bot.lockedItemPos = null;
+              bot.lockedItemType = null;
+            }
           }
-          return {
-            action: { type: 'MOVE', dir },
-            description: `🗝️ 鍵回収 (${keyPos.x}, ${keyPos.y}) [距離: ${dist}]`,
-          };
-        } else {
-          nav.markTargetUnreachable(keyPos, 8);
-          if (bot?.lockedItemPos && bot.lockedItemPos.x === keyPos.x && bot.lockedItemPos.y === keyPos.y) {
-            bot.lockedItemPos = null;
-            bot.lockedItemType = null;
+        }
+      }
+
+      // 6-E2. 防御EXP未達時の広域床コイン回収
+      if (needExp) {
+        const coinCandidates = nav.findNearestItemCandidates(
+          curPos, 'COIN', map, enemies, player, 8, bot?.lockedItemPos
+        );
+        for (const coinPos of coinCandidates) {
+          const dist = map.getTorusDistance(curPos, coinPos).manhattan;
+          if (dist > params.coinSearchDist) continue;
+
+          const dir = nav.findPath(curPos, coinPos, map, player, enemies, params, { dragon });
+          if (dir) {
+            if (bot) {
+              bot.lockedItemPos = { ...coinPos };
+              bot.lockedItemType = 'COIN';
+            }
+            return {
+              action: { type: 'MOVE', dir },
+              description: `🪙 防御EXP育成コイン回収 (${coinPos.x}, ${coinPos.y}) [距離: ${dist}]`,
+            };
+          } else {
+            nav.markTargetUnreachable(coinPos, 8);
+            if (bot?.lockedItemPos && bot.lockedItemPos.x === coinPos.x && bot.lockedItemPos.y === coinPos.y) {
+              bot.lockedItemPos = null;
+              bot.lockedItemType = null;
+            }
           }
         }
       }
@@ -513,6 +587,17 @@ export class ResourceFarmBehavior {
               bot.lockedItemType = null;
             }
           }
+        }
+      }
+
+      // 6-G. マップ上に回収対象アイテムが残っておらず手持ちコインがある場合は我が家へ換金帰還
+      if (player.gold > 0) {
+        const dirToHome = nav.findPath(curPos, homePos, map, player, enemies, params, { dragon });
+        if (dirToHome) {
+          return {
+            action: { type: 'MOVE', dir: dirToHome },
+            description: `🪙 残存コイン一括換金のため我が家へ帰還 [所持:${player.gold}G]`,
+          };
         }
       }
     }
@@ -548,7 +633,7 @@ export class ResourceFarmBehavior {
 
       // 移動先に隣接する危険敵のチェック
       const dangerousAdj = enemies.some(e => {
-        if (!e.isAlive || e.isPermanentlyFrozen) return false;
+        if (!e.isAlive || e.isPermanentlyFrozen || e.frozenTimer > 0) return false;
         if (map.getTorusDistance(p, e.pos).chebyshev > 1) return false;
         const threat = ThreatEvaluator.evaluateThreat(player, e);
         return threat === 'LETHAL' || threat === 'DANGER';
@@ -573,6 +658,7 @@ export class ResourceFarmBehavior {
 
     // スワップ滞留防止タイムアウト (8ターン)
     if (swapState.itemToPickupPos !== null || swapState.tempDroppedKeyPos !== null) {
+      nav.resetPingPong();
       swapState.swapTurns++;
       if (swapState.swapTurns >= 8) {
         swapState.itemToPickupPos = null;
@@ -611,7 +697,7 @@ export class ResourceFarmBehavior {
       if (dir) return { action: { type: 'MOVE', dir }, description: '🔄 退避アイテムへ戻る' };
 
       // 経路が即死敵等で塞がれている場合: FREEZE自衛または安全待機
-      const nearbyThreat = enemies.find(e => e.isAlive && !e.isPermanentlyFrozen && map.getTorusDistance(curPos, e.pos).manhattan <= 2);
+      const nearbyThreat = enemies.find(e => e.isAlive && !e.isPermanentlyFrozen && e.frozenTimer <= 0 && map.getTorusDistance(curPos, e.pos).manhattan <= 2);
       if (nearbyThreat && player.magic > 0 && MagicSystem.canCast(player, 'FREEZE').allowed) {
         return { action: { type: 'MAGIC', magic: 'FREEZE' }, description: `❄️ 退避アイテム近傍の敵をFREEZE (${nearbyThreat.name})` };
       }
@@ -630,7 +716,7 @@ export class ResourceFarmBehavior {
       if (dir) return { action: { type: 'MOVE', dir }, description: '🔄 一時置き鍵へ戻る' };
 
       // 経路が即死敵等で塞がれている場合: FREEZE自衛または安全待機
-      const nearbyThreat = enemies.find(e => e.isAlive && !e.isPermanentlyFrozen && map.getTorusDistance(curPos, e.pos).manhattan <= 2);
+      const nearbyThreat = enemies.find(e => e.isAlive && !e.isPermanentlyFrozen && e.frozenTimer <= 0 && map.getTorusDistance(curPos, e.pos).manhattan <= 2);
       if (nearbyThreat && player.magic > 0 && MagicSystem.canCast(player, 'FREEZE').allowed) {
         return { action: { type: 'MAGIC', magic: 'FREEZE' }, description: `❄️ 一時置き鍵近傍の敵をFREEZE (${nearbyThreat.name})` };
       }
@@ -665,7 +751,7 @@ export class ResourceFarmBehavior {
         const hasEnemy = enemies.some(e => e.isAlive && e.pos.x === p.x && e.pos.y === p.y);
         if (hasEnemy) continue;
         const hasAdjDanger = enemies.some(e => {
-          if (!e.isAlive || e.isPermanentlyFrozen) return false;
+          if (!e.isAlive || e.isPermanentlyFrozen || e.frozenTimer > 0) return false;
           if (map.getTorusDistance(p, e.pos).chebyshev > 1) return false;
           const threat = ThreatEvaluator.evaluateThreat(player, e);
           return threat === 'LETHAL' || threat === 'DANGER';
