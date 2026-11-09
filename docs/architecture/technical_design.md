@@ -73,7 +73,7 @@ src/
 │   ├── engine/            # 単一責務サブコントローラー群
 │   │   ├── TargetTrackingController.ts  # 交戦・近접敵の追跡管理
 │   │   ├── TurnExecutionController.ts   # 手番実行・戦闘・移動・スポーン調停
-│   │   ├── DemoAndAutoPlayController.ts # デモモード＆AI自走検証・操作引き継ぎ
+│   │   ├── DemoAndAutoPlayController.ts # デモモード＆自動プレイ自走検証・操作引き継ぎ
 │   │   ├── SessionController.ts         # ゲーム開始・プリセット起動・セーブ/ロード
 │   │   └── EngineUIAndInputBinder.ts    # DOM UIイベント＆キーボード入力バインド
 │   ├── GameLoop.ts        # requestAnimationFrame 管理
@@ -97,18 +97,18 @@ src/
 │   ├── MovementSystem.ts  # 移動・指輪押し・衝突判定・ワープ
 │   ├── CombatSystem.ts    # 体当たりダメージ計算・経験値/攻撃力吸収
 │   ├── MagicSystem.ts     # 魔法発動・効果適用
-│   ├── EnemyAISystem.ts   # 敵の移動AI・墓からのスポーン管理
+│   ├── EnemyAISystem.ts   # 敵の移動思考ルーチン・墓からのスポーン管理
 │   ├── GhostAISystem.ts   # ゴースト等速直線飛行・アイテム吸引・強奪
 │   ├── SpawnSystem.ts     # 首討伐後家湧き枠・最遠敵パージ
 │   ├── ThreatEvaluator.ts # 攻防2軸タクティカル脅威度評価
 │   ├── ProceduralMapGenerator.ts # 全域9セクター動的配置・6大トポロジープロシージャル生成
 │   └── ChestSystem.ts     # 宝箱開封・8歩周期パワーストーン判定
-├── ai/                    # 自律攻略AIエージェント
+├── ai/                    # 自律攻略ボット
 │   ├── AutoPlayBot.ts         # 状況適応型攻略ボット本体 (オーケストレータ)
 │   ├── AdaptiveNavigator.ts   # トーラスBFS探索・一元化スタック追跡・訪問ヒートマップ
 │   ├── TacticalContext.ts     # 幾何スケール連動・動的戦術パラメータ導出
 │   ├── EightStepController.ts # 8歩周期確定開錠チェーン制御
-│   ├── BotTypes.ts            # AIフェーズ・動的パラメータ型定義
+│   ├── BotTypes.ts            # ボットフェーズ・動的パラメータ型定義
 │   └── behaviors/             # フェーズ別 Behavior モジュール群
 │       ├── BootstrapBehavior.ts     # 序盤装備回収・物理的詰み早期判定
 │       ├── GraveSealBehavior.ts     # チョークポイント墓封鎖・Sokoban岩押し・氷像
@@ -384,7 +384,7 @@ stateDiagram-v2
 
 ## 7. プロシージャル生成・プリセット共有・バランス機構 (Phase 6〜12)
 
-### 7.1 ゴースト滑空AI (`GhostAISystem`)
+### 7.1 ゴースト滑空ルーチン (`GhostAISystem`)
 - **ベクトル滑空エンジン**:
   - タイル単位のランダムウォークを廃止し、方向ベクトル `(vx, vy)` による等速直線飛行を実装。
   - アイテム運搬スロット `carriedItem` を保持し、通過床アイテムを吸引して壁内（`BLOCK` のマス）や隔離領域を含む座標へランダムドロップ。
@@ -401,13 +401,13 @@ stateDiagram-v2
 
 ---
 
-## 8. 自律攻略AI ＆ ヘッドレスシミュレーション基盤アーキテクチャ (`src/ai/`, `src/simulation/`)
+## 8. 自律攻略ボット ＆ ヘッドレスシミュレーション基盤アーキテクチャ (`src/ai/`, `src/simulation/`)
 
-詳細なアルゴリズム仕様・全パラメータ表・運用知見については、決定版ドキュメントである [自律攻略AI (AutoPlayBot) ＆ ヘッドレスシミュレーション仕様書 (`docs/autoplay_and_simulation_spec.md`)](../autoplay_and_simulation_spec.md) を参照。
+詳細なアルゴリズム仕様・全パラメータ表・運用知見については、決定版ドキュメントである [自律攻略ボット (AutoPlayBot) ＆ ヘッドレスシミュレーション仕様書 (`docs/autoplay_and_simulation_spec.md`)](../autoplay_and_simulation_spec.md) を参照。
 
 ### 8.1 AutoPlayBot のモジュール設計
 
-`AutoPlayBot` は、完全ヘッドレスな自律探索エージェントとして設計されており、ゲームエンジンのインターフェース（`GameEngine`）のみを通じて盤面情報を取得し、手番アクション（`BotAction`）を返却する。
+`AutoPlayBot` は、完全ヘッドレスな自律探索ボットとして設計されており、ゲームエンジンのインターフェース（`GameEngine`）のみを通じて盤面情報を取得し、手番アクション（`BotAction`）を返却する。
 
 ```mermaid
 classDiagram
@@ -522,5 +522,5 @@ stateDiagram-v2
     AUTOPLAY --> TITLE: ESC / 終了ボタン (stopAutoPlayVerifyMode)
 ```
 
-- **シームレス操作権引き継ぎ (Takeover)**: プレイヤーが手動操作中に行き詰まった際や、AIの攻略手順を確認したい際に、その場のマップ・HP・所持品を完全保持したまま自走を開始・解除可能。
+- **シームレス操作権引き継ぎ (Takeover)**: プレイヤーが手動操作中に行き詰まった際や、ボットの攻略手順を確認したい際に、その場のマップ・HP・所持品を完全保持したまま自走を開始・解除可能。
 - **スタック救済 (`handleStuckRescue`)**: 自走検証中に身動き不能（同一座標20フレーム連続）となった場合、目標ロック・ブラックリスト・持ち替え状態をリセットし、強制安全徘徊へ移行して自力脱出する。

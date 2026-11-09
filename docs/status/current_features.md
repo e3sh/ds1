@@ -41,7 +41,7 @@
 | :--- | :---: | :--- | :--- |
 | **交互ターン戦闘調停** | ✅ 実装済み | `CombatSystem.ts` | プレイヤーターン: 体当たり攻撃、与ダメのみ適用、生存時は押し合い。<br>敵ターン: 敵AI反撃、被ダメおよび能力吸収特殊効果の発動。 |
 | **32種モンスターパラメータ** | ✅ 実装済み | `EnemyTable.ts`, `Enemy.ts` | 全32種のHP, ATK, DEFおよび特殊能力（dora/knightのSTR吸収、rich/crownloadのEXP吸収、monstirの壺強奪）。 |
-| **敵AI（逃走 & 豹変追跡）** | ✅ 実装済み | `EnemyAISystem.ts` | 基本逃走（FLEE）。プレイヤーが `HP < EXP` に達すると一斉に好戦的追跡（CHASE）へ豹変するAI挙動。墓地周辺への優先スポーン。 |
+| **敵行動ルーチン（逃走 & 豹変追跡）** | ✅ 実装済み | `EnemyAISystem.ts` | 基本逃走（FLEE）。プレイヤーが `HP < EXP` に達すると一斉に好戦的追跡（CHASE）へ豹変する思考挙動。墓地周辺への優先スポーン。 |
 | **敵相対5段階タクティカルマーカー & 攻防2軸二重マーカー** | ✅ 実装済み | `ThreatEvaluator.ts`, `CanvasRenderer.ts` | **【モダンRPG機能】** プレイヤーの装備・ステータスと敵の攻防を比較し、攻防2軸（3×3マトリクス）による二重マーカー（外枠リング＋中心警告コア）を足元にリアルタイム描画：<br>・外枠リング（攻撃視点）: 🔵 **ONE_SHOT** / 🟢 **SAFE** / 🟡 **STALEMATE** / 🔴 **DANGER** / ⚫ **LETHAL**<br>・中心警告コア（防御視点）: クリア（貰わない）、アンバー（貰う・追走注意 `isRiskyOneShot`）、赤黒脈動点滅（敵先制で即死 `isLethalOneShot`・ガラスの剣）<br>※ヘッドレス評価API `evaluateThreatDetails()` に対応し、シミュレーション・分析環境でも同一判定を利用可能。 |
 | **タクティカルマーカートグル** | ✅ 実装済み | `GameEngine.ts`, `DOMUIManager.ts` | キーボード `[T]` キーおよびHUDボタン（`[🎯 TACTICAL]`）によるマーカー表示の即時ON/OFF。 |
 | **死因トラッキング** | ✅ 実装済み | `Types.ts` (`DeathInfo`), `GameEngine.ts` | `MONSTER_ATTACK`, `MONSTER_COUNTER`, `DRAGON_HEAD`, `FIREBALL`, `GIVE_UP` 等を構造化記録。帰宅時に自動リセット。 |
@@ -61,7 +61,7 @@
 
 ---
 
-## 5. ゴースト（おばけ）AIシステム (`src/models/Ghost.ts`, `src/systems/GhostAISystem.ts`)
+## 5. ゴースト（おばけ）行動ルーチンシステム (`src/models/Ghost.ts`, `src/systems/GhostAISystem.ts`)
 
 | 機能名 | ステータス | 該当コード / モジュール | 説明 |
 | :--- | :---: | :--- | :--- |
@@ -143,7 +143,7 @@
 | 機能名 | ステータス | 該当コード / モジュール | 説明 |
 | :--- | :---: | :--- | :--- |
 | **アトラクションデモモード** | ✅ 実装済み | `GameEngine.ts`, `DOMUIManager.ts` | タイトル画面放置での自動実演開始。デモ中のサウンド自動消音＆復帰、チュートリアル字幕オーバーレイ表示、任意キー入力／クリックによる即時タイトル復帰、500ターン／60フレームスタック終了。 |
-| **自走検証モード (Auto-Play Verify)** | ✅ 実装済み | `GameEngine.ts`, `DOMUIManager.ts` | 任意の生成マップでAI自走を可視化。ターン上限撤廃（無制限自走）、ステータス字幕表示、スタック救済（`handleStuckRescue`）による自力脱出。 |
+| **自走検証モード (Auto-Play Verify)** | ✅ 実装済み | `GameEngine.ts`, `DOMUIManager.ts` | 任意の生成マップでボット自動プレイ（自走）を可視化。ターン上限撤廃（無制限自走）、ステータス字幕表示、スタック救済（`handleStuckRescue`）による自力脱出。 |
 | **可変速自走 & 一時停止** | ✅ 実装済み | `GameEngine.ts`, `DOMUIManager.ts` | オーバーレイUIボタンおよびキー操作による速度変更（1x / 2x / 5x / Pause）。静止しての状況分析が可能。 |
 | **シームレス操作引き継ぎ (Takeover / Toggle)** | ✅ 実装済み | `GameEngine.ts`, `InputManager.ts` | プレイヤー手動操作 ⇔ 自動自走のリアルタイム相互切り替え（`[A]` / `[Tab]` キー）。プレイ途中状態のままその場で自走開始・手動引き継ぎが可能。 |
 

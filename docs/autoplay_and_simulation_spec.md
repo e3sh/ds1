@@ -1,6 +1,9 @@
-# 自律攻略AI (AutoPlayBot) ＆ ヘッドレスシミュレーション仕様書
+# 自律攻略ボット (AutoPlayBot) ＆ ヘッドレスシミュレーション仕様書
 
-本書は、『DS1ish』(Dragon Slayer Level 2.0 Web拡張版) における**自律攻略AIエージェント（`AutoPlayBot`）**、**ヘッドレス・バッチシミュレーション基盤（`SimulationRunner` / `SimulationTelemetry`）**、および**インゲーム連携モード（アトラクトデモ／自走検証モード）**の包括的な仕様・アルゴリズム・パラメータ・運用基準を定義する決定版ドキュメントである。
+> [!NOTE]
+> 本書で扱う `AutoPlayBot` およびシミュレーション基盤は、昨今の生成AIや深層学習モデルではなく、**有限ステートマシン（FSM）・トーラス空間BFS経路探索・タクティカルヒューリスティックに基づく完全オフライン・決定論的（Deterministic）なルールベースアルゴリズム**です。外部API通信や非決定論的推論を行わず、同一シード値において100%同一のゲーム展開をミリ秒単位で高速再現・検証します。
+
+本書は、『DS1ish』(Dragon Slayer Level 2.0 Web拡張版) における**自律攻略ボット（`AutoPlayBot`）**、**ヘッドレス・バッチシミュレーション基盤（`SimulationRunner` / `SimulationTelemetry`）**、および**インゲーム連携モード（アトラクトデモ／自走検証モード）**の包括的な仕様・アルゴリズム・パラメータ・運用基準を定義する決定版ドキュメントである。
 
 ---
 
@@ -8,15 +11,15 @@
 
 ### 1.1 目的と背景
 本作は1984年の古典的アクション・パズルRPG『ドラゴンスレイヤー』のコアメカニクスに、プロシージャルダンジョン生成と多彩なトポロジーを統合した作品である。
-多種多様なランダムダンジョンにおいて「クリア可能性（Solvability）」と「ゲームバランス（適度な緊張感とインフレの爽快感）」を客観的・定量的に保証するため、以下の3つの役割を果たすAI・シミュレーション基盤を構築している。
+多種多様なランダムダンジョンにおいて「クリア可能性（Solvability）」と「ゲームバランス（適度な緊張感とインフレの爽快感）」を客観的・定量的に保証するため、以下の3つの役割を果たすボット・シミュレーション基盤を構築している。
 
 1. **定量バランス評価**: 人間が数十時間プレイすることなく、数千ターンのバッチシミュレーションを数秒〜数十秒で実行し、勝率・死因・成長曲線を分析する。
 2. **アトラクションデモ**: タイトル画面で放置された際に、初心者に向けたゲームルール・攻略セオリーを実演・提示する。
-3. **自走検証（インゲームAuto-Play）**: 任意の生成マップやプレイヤーのプレイ途中状態からAIに自走させ、アルゴリズムの挙動確認や特定シチュエーションの検証、プレイヤー手動操作とのシームレスな相互乗り換えを可能にする。
+3. **自走検証（インゲームAuto-Play）**: 任意の生成マップやプレイヤーのプレイ途中状態からボットに自走させ、アルゴリズムの挙動確認や特定シチュエーションの検証、プレイヤー手動操作とのシームレスな相互乗り換えを可能にする。
 
 ### 1.2 レイヤー分離とモジュラー設計
 
-AIおよびシミュレーション基盤は、描画（DOM / Canvas）や音声（Web Audio API）から完全に疎結合された純粋なTypeScriptロジックとして設計されている。
+ボットおよびシミュレーション基盤は、描画（DOM / Canvas）や音声（Web Audio API）から完全に疎結合された純粋なTypeScriptロジックとして設計されている。
 最新の v2 アーキテクチャでは、肥大化を防ぎ状況適応力を最大化するため、**単一の巨大モノリスから責務ごとに独立した Behavior クラス群、幾何連動型戦術コンテキスト、および一元化ナビゲータへ完全分割**されている。
 
 ```mermaid
@@ -28,7 +31,7 @@ graph TD
         VERIFY["インゲーム 自走検証モード<br>(DemoAndAutoPlayController)"]
     end
 
-    subgraph AI_Core ["自律攻略AI (AutoPlayBot)"]
+    subgraph Bot_Core ["自律攻略ボット (AutoPlayBot)"]
         Bot["AutoPlayBot<br>(フェーズ駆動・全体調停)"]
         Context["TacticalContext<br>(幾何スケール & 動的パラメータ導出)"]
         Nav["AdaptiveNavigator<br>(BFS探索・スタック追跡・ヒートマップ)"]
@@ -224,10 +227,10 @@ sequenceDiagram
 
 | モジュールパス | 主な責務・実装内容 |
 | :--- | :--- |
-| `src/ai/AutoPlayBot.ts` | 自律攻略AIエージェント本体（オーケストレータ）。フェーズ調停、ステートマシン、インゲーム連携。 |
+| `src/ai/AutoPlayBot.ts` | 自律攻略ボット本体（オーケストレータ）。フェーズ調停、ステートマシン、インゲーム連携。 |
 | `src/ai/AdaptiveNavigator.ts` | トーラス空間BFS経路探索、一元化スタック・ピンポン追跡、訪問ヒートマップ、安全徘徊。 |
 | `src/ai/TacticalContext.ts` | 動的戦術コンテキスト。マップ幾何スケール連動、動的パラメータ導出。 |
-| `src/ai/BotTypes.ts` | AI関連の型定義（`BotPhase`, `BotAction`, `DynamicBotParameters`, `TacticalScale` 等）。 |
+| `src/ai/BotTypes.ts` | ボット関連の型定義（`BotPhase`, `BotAction`, `DynamicBotParameters`, `TacticalScale` 等）。 |
 | `src/ai/EightStepController.ts` | 8歩周期パワーストーン確定排出の歩数調整および近傍宝箱連続開錠チェーン制御。 |
 | `src/ai/behaviors/BootstrapBehavior.ts` | 序盤装備（剣・鍵・壺）回収および物理的詰み早期判定。 |
 | `src/ai/behaviors/GraveSealBehavior.ts` | チョークポイント墓封鎖、Sokoban岩押し、FREEZE氷像化、十字架設置。 |
@@ -239,4 +242,4 @@ sequenceDiagram
 | `src/simulation/SimulationRunner.ts` | ヘッドレスバッチシミュレータ。高速バッチ実行調停。 |
 | `src/simulation/SimulationTelemetry.ts` | イベント駆動型テレメトリ集計器。マイルストーン・KPIレポート生成。 |
 | `src/core/engine/DemoAndAutoPlayController.ts` | デモモードおよび自走検証モード・リアルタイム操作権引き継ぎコントローラー。 |
-| `test/test-autoplay-integration.ts` | 自律攻略AIの包括的統合テストスイート（12ケース網羅）。 |
+| `test/test-autoplay-integration.ts` | 自律攻略ボットの包括的統合テストスイート（12ケース網羅）。 |

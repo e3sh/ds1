@@ -70,7 +70,7 @@ flowchart TD
 - **主な実装内容**:
   - Mulberry32 アルゴリズムによる決定論的擬似乱数生成器（`SeedRandom`）の全システム DI と、同一シードでの100%動作再現性の確立。
   - 型安全 Pub/Sub ドメインイベントバス（`GameEventBus`）およびストレージ抽象化（`SaveStorageDriver`）の実装。
-  - 自律攻略AIエージェント（`AutoPlayBot`）とヘッドレスバッチ実行基盤（`SimulationRunner` / `SimulationTelemetry` / `scripts/simulate.ts` / `scripts/evaluate-params.ts`）の構築。
+  - 自律攻略ボット（`AutoPlayBot`）とヘッドレスバッチ実行基盤（`SimulationRunner` / `SimulationTelemetry` / `scripts/simulate.ts` / `scripts/evaluate-params.ts`）の構築。
   - タイトル放置時の「アトラクションデモモード」およびインゲームでの「可変速自走検証モード ＆ 手動操作とのシームレス相互引き継ぎ（`[A]` / `[Tab]`）」の統合。
 
 ---
