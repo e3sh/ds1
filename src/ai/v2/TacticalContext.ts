@@ -12,6 +12,14 @@ import {
   TacticalScale,
 } from './BotTypesV2.js';
 
+export interface MapResourceCounts {
+  crossCount: number;
+  ringCount: number;
+  potionCount: number;
+  chestCount: number;
+  graveCount: number;
+}
+
 /**
  * TacticalContext (動的戦術コンテキストプロバイダ)
  *
@@ -25,6 +33,7 @@ export class TacticalContext {
   public readonly metrics?: GeometricMetrics;
   public readonly tuning?: ResolvedDungeonTuningParams;
   public readonly profile: BotSkillProfile;
+  public readonly resourceCounts: MapResourceCounts;
 
   constructor(
     map: WorldMap,
@@ -33,6 +42,7 @@ export class TacticalContext {
       metrics?: GeometricMetrics;
       tuning?: ResolvedDungeonTuningParams;
       profile?: BotSkillProfile;
+      resourceCounts?: MapResourceCounts;
     }
   ) {
     const w = map.width;
@@ -53,40 +63,103 @@ export class TacticalContext {
     this.metrics = options?.metrics;
     this.tuning = options?.tuning;
     this.profile = options?.profile ?? 'STANDARD';
+    this.resourceCounts = options?.resourceCounts ?? this.countMapResources(map);
+  }
+
+  private countMapResources(map: WorldMap): MapResourceCounts {
+    let crossCount = 0;
+    let ringCount = 0;
+    let potionCount = 0;
+    let chestCount = 0;
+    let graveCount = 0;
+
+    for (let y = 0; y < map.height; y++) {
+      for (let x = 0; x < map.width; x++) {
+        const p = { x, y };
+        const item = map.getItem(p);
+        const obj = map.getObject(p);
+        const base = map.getBaseTile(p);
+
+        if (item === 'CROSS') crossCount++;
+        else if (item === 'RING') ringCount++;
+        else if (item === 'POTION') potionCount++;
+
+        if (obj === 'CHEST') chestCount++;
+        if (base === 'GRAVE') graveCount++;
+      }
+    }
+
+    return { crossCount, ringCount, potionCount, chestCount, graveCount };
   }
 
   /**
-   * 現在のフェーズ、プレイヤー状態、ドラゴン状態に応じた動的パラメータを算出
+   * 現在のフェーズ、プレイヤー状態、ドラゴン状態、敵配置、経過ターンに応じた動的パラメータを算出
    */
   public resolveParameters(
-    _phase: BotPhaseV2,
+    phase: BotPhaseV2,
     player: Player,
     dragon?: Dragon,
-    _enemies?: EnemyInstance[]
+    enemies?: EnemyInstance[],
+    options?: { totalTurns?: number; defensePrepTurns?: number }
   ): DynamicBotParameters {
     const isClassic = this.tuning?.progressionConfig?.ruleMode === 'CLASSIC';
     const mazeIndex = this.metrics?.mazeIndex ?? 0.3;
 
-    // 1. 戦闘・ステータス目標の算出
+    // 1. 周囲の生存敵の最大攻撃力 (ATK) の計測
+    let maxNearEnemyAtk = 0;
+    if (enemies && enemies.length > 0) {
+      for (const e of enemies) {
+        if (!e.isAlive || e.isPermanentlyFrozen) continue;
+        const dx = Math.abs(player.pos.x - e.pos.x);
+        const dy = Math.abs(player.pos.y - e.pos.y);
+        const dist = Math.min(dx, this.scale.width - dx) + Math.min(dy, this.scale.height - dy);
+        if (dist <= 12) {
+          if (e.atk > maxNearEnemyAtk) {
+            maxNearEnemyAtk = e.atk;
+          }
+        }
+      }
+    }
+
+    // 2. 戦闘・ステータス目標の算出（敵の最大ATKおよび経過ターンを反映）
     const targetStr = this.calculateTargetStr(dragon, isClassic);
-    const targetDefenseExp = this.calculateTargetDefenseExp(isClassic);
+    let targetDefenseExp = this.calculateTargetDefenseExp(isClassic);
+
+    // 強敵がいる場合: 最大ATKに耐えられるよう目標防御EXPを動的引き上げ
+    if (maxNearEnemyAtk > targetDefenseExp) {
+      targetDefenseExp = Math.max(targetDefenseExp, maxNearEnemyAtk + 2000);
+    }
+
+    // 滞留防止フィードバック: 防御準備ターンや総ターンがかさんだ場合は早期切り上げ (TIMEOUT_STALL防止)
+    const defensePrepTurns = options?.defensePrepTurns ?? 0;
+    const totalTurns = options?.totalTurns ?? 0;
+    if (phase === 'RESOURCE_FARM' && (defensePrepTurns > 80 || totalTurns > 2200)) {
+      targetDefenseExp = Math.min(targetDefenseExp, Math.max(player.experience, 15000));
+    }
+
     const graveSealEarlyStr = isClassic ? 2500 : 30000;
     const maxTargetMagic = this.profile === 'NOVICE' ? 4 : 5;
     const minDragonMagic = this.profile === 'NOVICE' ? 2 : 3;
 
-    // 2. リスク・安全許容度
-    // 迷路度が高いほど逃げ場が少ないため、緊急HP閾値を引き上げて早めに回復へ向かう
-    const emergencyHpRatio = mazeIndex > 0.6 ? 0.50 : 0.40;
+    // 3. リスク・安全許容度
+    // 迷路度が高いほど逃げ場が少ないため、緊急HP閾値を引き上げ。さらに強敵が周囲にいれば早めに回復へ
+    let emergencyHpRatio = mazeIndex > 0.6 ? 0.50 : 0.40;
+    if (maxNearEnemyAtk > player.experience) {
+      emergencyHpRatio = Math.min(0.65, emergencyHpRatio + 0.10);
+    }
     const dangerHpRatio = 0.30;
     const magicReserveThreshold = player.experience >= 4000 ? 1 : 0;
 
-    // 3. 索敵・探索半径（幾何スケール連動）
+    // 4. 索敵・探索半径（幾何スケール連動）
     const stoneSearchDist = player.strength < targetStr
       ? Math.max(20, this.scale.midRadius)
       : Math.max(8, this.scale.nearRadius);
+    // ポット探索半径（青天井備蓄対応）: MP枯渇時は広域探索、潤沢なら近傍のついで拾いに伸縮
     const potionSearchDist = player.magic <= 1
-      ? this.scale.midRadius
-      : this.scale.nearRadius;
+      ? Math.max(16, this.scale.midRadius)
+      : (player.magic < 5
+        ? Math.round(this.scale.nearRadius * 1.2)
+        : (player.magic < 10 ? this.scale.nearRadius : this.scale.immediateRadius));
     const keySearchDist = player.strength < targetStr
       ? this.scale.farRadius
       : this.scale.midRadius;
@@ -94,41 +167,46 @@ export class TacticalContext {
       ? this.scale.midRadius
       : (player.experience < 12000 ? this.scale.nearRadius : this.scale.immediateRadius);
 
-    // 敵狩り許容距離: 序盤の重要魔法・特技解禁期、および終盤防御育成期に拡大
+    // 敵狩り許容距離:
+    // 敵を2体倒すごとに出現モンスターのランクが+1される仕様を踏まえ、
+    // STR未達時はキルランク暴走（強敵湧き即死）を防ぐため極近傍（immediateRadius: 2〜3マス）に抑制。
+    // STR達成後の決戦前防御育成期にのみ広域（farRadius）へ拡大する。
     let huntDistance = 0;
     if (player.hasSword) {
       if (player.strength >= targetStr) {
         huntDistance = this.scale.farRadius; // 決戦前準備期: 防御EXP育成のため広域狩り
-      } else if (!isClassic && (player.experience < 4000 || player.experience < 12000)) {
-        // 序盤EXPマイルストーン育成: BREAK (4,000) / 斜め移動 (12,000) 早期解禁のため nearRadius まで狩りを拡大
-        huntDistance = player.holdItem !== 'KEY' ? this.scale.nearRadius : 0;
-      } else if (!isClassic) {
-        huntDistance = player.holdItem !== 'KEY' ? this.scale.immediateRadius : 0;
       } else {
-        // クラシックモード: STRに応じた段階的拡大
-        if (player.strength < 3000) huntDistance = this.scale.immediateRadius;
-        else if (player.strength < 6000) huntDistance = Math.round(this.scale.nearRadius * 0.6);
-        else huntDistance = this.scale.nearRadius;
+        huntDistance = player.holdItem !== 'KEY' ? this.scale.immediateRadius : 0;
       }
     }
 
-    // 4. ナビゲーション・BFSコスト
+    // 5. ナビゲーション・BFSコスト
     // 迷路度が高い場合は壁破壊（BREAK）をより積極的に幹線道路として活用
     const allowBreakAsRoad = player.experience >= 4000;
-    const breakCostMultiplier = mazeIndex > 0.5 ? 1.2 : 1.6;
+    const breakCostMultiplier = mazeIndex > 0.5 ? 1.1 : 1.6;
     const warpAvoidanceCost = this.scale.nearRadius * 2;
     // マップ面積に比例したBFSステップ上限
     const maxBfsSteps = Math.min(6000, Math.max(3000, this.scale.width * this.scale.height * 2));
 
-    // 5. 戦術ポリシー
+    // 6. 戦術ポリシー
     const enableHomeRelocation = this.profile !== 'NOVICE';
     const homeRelocateDistMin = Math.max(4, Math.round(this.scale.nearRadius * 0.5));
     const homeRelocateDistMax = Math.max(7, Math.round(this.scale.nearRadius * 0.8));
 
-    // 墓封鎖ポリシーの推奨値判定
+    // 墓封鎖ポリシーの推奨値判定（マップ幾何メトリクス＆資源数連動）
     let graveSealPolicy: 'AUTO' | 'NONE' | 'NEAR_HOME' | 'ALL' = 'NEAR_HOME';
     if (this.metadata?.recommendedBotTuning?.graveSealPolicy) {
       graveSealPolicy = this.metadata.recommendedBotTuning.graveSealPolicy;
+    } else {
+      const nearGraves = this.metrics?.nearHomeGraves ?? 1;
+      const hasTools = this.resourceCounts.crossCount > 0 || this.resourceCounts.ringCount > 0;
+      if (!hasTools || nearGraves === 0) {
+        graveSealPolicy = 'NONE';
+      } else if (nearGraves > 0) {
+        graveSealPolicy = 'NEAR_HOME';
+      } else if (this.resourceCounts.crossCount >= 3 && mazeIndex > 0.4) {
+        graveSealPolicy = 'ALL';
+      }
     }
 
     return {

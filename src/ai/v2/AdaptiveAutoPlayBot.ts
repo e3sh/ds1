@@ -8,6 +8,7 @@ import { Ghost } from '../../models/Ghost.js';
 import { MagicSystem } from '../../systems/MagicSystem.js';
 import { MovementSystem } from '../../systems/MovementSystem.js';
 import { ThreatEvaluator } from '../../systems/ThreatEvaluator.js';
+import { MapProfiler } from '../../systems/generator/MapProfiler.js';
 
 import {
   AdaptiveBotOptions,
@@ -19,6 +20,7 @@ import {
 } from './BotTypesV2.js';
 import { TacticalContext } from './TacticalContext.js';
 import { AdaptiveNavigator } from './AdaptiveNavigator.js';
+import { EightStepController } from '../EightStepController.js';
 import { BootstrapBehavior } from './behaviors/BootstrapBehavior.js';
 import { GraveSealBehavior } from './behaviors/GraveSealBehavior.js';
 import { ResourceFarmBehavior, SwapState } from './behaviors/ResourceFarmBehavior.js';
@@ -44,6 +46,7 @@ export class AdaptiveAutoPlayBot {
   public totalTurns: number = 0;
 
   public readonly nav: AdaptiveNavigator;
+  public readonly eightStepController: EightStepController;
   public context?: TacticalContext;
   public params?: DynamicBotParameters;
 
@@ -56,6 +59,7 @@ export class AdaptiveAutoPlayBot {
   private lockedRelocateAnchor: Position | null = null;
   private relocationDone: boolean = false;
   private graveSealDone: boolean = false;
+  private totalGraveSealTurns: number = 0;
   public defenseReady: boolean = false;
   private defensePrepTurns: number = 0;
   private unlockedBreakNotified: boolean = false;
@@ -72,12 +76,14 @@ export class AdaptiveAutoPlayBot {
   constructor(opts: AdaptiveBotOptions = {}) {
     this.profile = opts.profile ?? 'STANDARD';
     this.nav = new AdaptiveNavigator();
+    this.eightStepController = new EightStepController(this.nav);
   }
 
   public setPhase(newPhase: BotPhaseV2): void {
     if (this.currentPhase !== newPhase) {
       this.currentPhase = newPhase;
       this.turnsInPhase = 0;
+      this.eightStepController.clearEightStepState();
       this.nav.clearUnreachableTargets();
     }
   }
@@ -95,11 +101,15 @@ export class AdaptiveAutoPlayBot {
 
     // 0. コンテキストと動的パラメータの更新
     if (!this.context || (map as any) !== (this as any)._lastMapRef) {
-      this.context = new TacticalContext(map, { tuning, profile: this.profile });
+      const metrics = MapProfiler.measureGeometricMetrics(map);
+      this.context = new TacticalContext(map, { tuning, profile: this.profile, metrics });
       (this as any)._lastMapRef = map;
     }
 
-    this.params = this.context.resolveParameters(this.currentPhase, player, dragon, enemies);
+    this.params = this.context.resolveParameters(this.currentPhase, player, dragon, enemies, {
+      totalTurns: this.totalTurns,
+      defensePrepTurns: this.defensePrepTurns,
+    });
     MagicSystem.updatePassiveSkills(player);
 
     // BREAK 解禁検知: 経験値4,000到達時にブラックリストを一括クリア
@@ -120,9 +130,10 @@ export class AdaptiveAutoPlayBot {
       return (dx === 1 || dx === map.width - 1) && (dy === 1 || dy === map.height - 1);
     }) ?? false;
 
-    // 鍵を持って宝箱の近くにいる場合は8歩周期調整中のためピンポンレスキューを抑止
+    // 鍵を持って宝箱の近くにいる場合、または8歩周期チェーン実行中はピンポンレスキューを抑止
     const isNearChestWithKey = player.holdItem === 'KEY' && (
       map.getObject(player.pos) === 'CHEST' ||
+      this.eightStepController.eightStepTargetChestPos !== null ||
       (this.lockedChestPos !== null && map.getTorusDistance(player.pos, this.lockedChestPos).manhattan <= 2)
     );
 
@@ -131,8 +142,32 @@ export class AdaptiveAutoPlayBot {
       this.currentTargetDesc = `⚠️ 安全離脱徘徊中 [残り ${this.nav.forceWanderTurns}T]`;
       decidedAction = this.nav.wanderSafe(player, map, enemies, dragon);
     } else if ((this.nav.pingPongCount >= 2 || this.nav.oscillationCount >= 3) && !isAdjacentToDragonHead && !isNearChestWithKey) {
-      this.nav.triggerRescue(4);
-      this.currentTargetDesc = '⚠️ ピンポン往復検知: 安全徘徊へ緊急移行';
+      // ピンポン往復検知時: ロック対象をブラックリスト登録して即解除し、再ロックによるループを遮断
+      if (this.lockedItemPos) {
+        this.nav.markTargetUnreachable(this.lockedItemPos, 20);
+        this.lockedItemPos = null;
+        this.lockedItemType = null;
+      }
+      if (this.lockedChestPos) {
+        this.nav.markTargetUnreachable(this.lockedChestPos, 20);
+        this.lockedChestPos = null;
+      }
+      this.eightStepController.clearEightStepState();
+
+      // 狭い通路・迷路環境では脱出に歩数を要するため徘徊ターン数を延長 (8〜10T)
+      let wallCount = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const p = map.wrapPosition({ x: player.pos.x + dx, y: player.pos.y + dy });
+          if (map.getBaseTile(p) === 'WALL_STATIC' || map.getObject(p) === 'BLOCK') wallCount++;
+        }
+      }
+      const isNarrowMaze = wallCount >= 3 || (this.context?.metrics?.mazeIndex ?? 0) > 0.4;
+      const rescueTurns = isNarrowMaze ? 10 : 5;
+
+      this.nav.triggerRescue(rescueTurns);
+      this.currentTargetDesc = `⚠️ ピンポン往復検知: 安全徘徊へ緊急移行 [${rescueTurns}T]`;
       decidedAction = this.nav.wanderSafe(player, map, enemies, dragon);
     } else {
       // 3. フェーズ自動遷移
@@ -143,8 +178,16 @@ export class AdaptiveAutoPlayBot {
       if (emergencyAction) {
         decidedAction = emergencyAction;
       } else {
-        // 5. 各フェーズの主戦略行動 (Behavior Execution)
-        let behaviorResult: BehaviorResult | null = null;
+        // 4-B. 訪問ヒートマップによる障害物周回ループ（カルーセル膠着）の能動打開
+        const circlingResult = CombatBehavior.tryBreakCirclingLoop(
+          player, map, enemies, dragon, this.nav, this.params
+        );
+        if (circlingResult) {
+          this.currentTargetDesc = circlingResult.description;
+          decidedAction = circlingResult.action;
+        } else {
+          // 5. 各フェーズの主戦略行動 (Behavior Execution)
+          let behaviorResult: BehaviorResult | null = null;
 
         switch (this.currentPhase) {
           case 'BOOTSTRAP':
@@ -152,12 +195,20 @@ export class AdaptiveAutoPlayBot {
             break;
 
           case 'GRAVE_SEAL':
-            behaviorResult = GraveSealBehavior.execute(player, map, enemies, dragon, this.nav, this.context, this.params);
-            if (!behaviorResult) {
+            this.totalGraveSealTurns++;
+            if (this.turnsInPhase >= 40 || this.totalGraveSealTurns >= 60) {
               this.graveSealDone = true;
               behaviorResult = ResourceFarmBehavior.execute(
                 player, map, enemies, dragon, this.nav, this.context, this.params, this.swapState, this
               );
+            } else {
+              behaviorResult = GraveSealBehavior.execute(player, map, enemies, dragon, this.nav, this.context, this.params);
+              if (!behaviorResult) {
+                this.graveSealDone = true;
+                behaviorResult = ResourceFarmBehavior.execute(
+                  player, map, enemies, dragon, this.nav, this.context, this.params, this.swapState, this
+                );
+              }
             }
             break;
 
@@ -168,11 +219,17 @@ export class AdaptiveAutoPlayBot {
             break;
 
           case 'RELOCATE_HOME':
+            if (!this.lockedRelocateAnchor) {
+              this.lockedRelocateAnchor = RelocateBehavior.findAnchor(
+                map, dragon, enemies, player, this.context, this.params
+              );
+            }
             behaviorResult = RelocateBehavior.execute(
               player, map, enemies, dragon, this.nav, this.context, this.params, this.lockedRelocateAnchor
             );
             if (!behaviorResult) {
               this.relocationDone = true;
+              this.lockedRelocateAnchor = null;
             }
             break;
 
@@ -206,8 +263,9 @@ export class AdaptiveAutoPlayBot {
         }
       }
     }
+  }
 
-    return this.resolveMoveOrBreak(decidedAction, player, map);
+  return this.resolveMoveOrBreak(decidedAction, player, map);
   }
 
   /**
@@ -363,6 +421,32 @@ export class AdaptiveAutoPlayBot {
   }
 
   /**
+   * MPリザーブ保護判定:
+   * BREAK習得後 (EXP >= 4000) はコスト0の壁掘り維持のため MP=1 を死守する。
+   * MP > 1 なら常に消費許可。MP === 1 の時は、王冠脱出時や逃げ場のない即死危機時のみ許可。
+   */
+  public canSpendMagicReserve(
+    player: Player,
+    options?: { isLethalEmergency?: boolean; hasEvadeRoute?: boolean }
+  ): boolean {
+    if (player.magic > 1) return true;
+    if (player.magic <= 0) return false;
+
+    // BREAK未習得 (EXP < 4000) であればリザーブする BREAK がないので使用可
+    if (player.experience < 4000) return true;
+
+    // 王冠脱出フェーズなら全力を尽くすため許可
+    if (this.currentPhase === 'CROWN_ESCAPE') return true;
+
+    // 即死級の緊急事態かつ逃げ場がない場合のみ許可
+    if (options?.isLethalEmergency && !options?.hasEvadeRoute) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * 緊急危機介入 (即死敵隣接、HPピンチ、死神憑依など)
    */
   private checkEmergency(player: Player, map: WorldMap, enemies: EnemyInstance[], dragon: Dragon): BotActionV2 | null {
@@ -393,15 +477,23 @@ export class AdaptiveAutoPlayBot {
 
     // 3. 直角隣接に即死敵（LETHAL）がいる場合の迎撃・退避
     if (hasLethalAdjacent && !player.hasDeath) {
-      // 3-A. 岩があれば KICK スナイプで即死反撃
-      const kickAction = CombatBehavior.tryKickSnipe(player, map, enemies, dragon);
-      if (kickAction) {
-        this.currentTargetDesc = kickAction.description;
-        return kickAction.action;
+      const evadeDir = this.nav.findEvadeDirection(curPos, map, enemies, player, dragon);
+      const canSpendReserve = this.canSpendMagicReserve(player, {
+        isLethalEmergency: true,
+        hasEvadeRoute: !!evadeDir,
+      });
+
+      // 3-A. 岩があれば KICK スナイプで即死反撃（MPリザーブ保護下では敵中命中によるMP-1を防止）
+      if (canSpendReserve) {
+        const kickAction = CombatBehavior.tryKickSnipe(player, map, enemies, dragon);
+        if (kickAction) {
+          this.currentTargetDesc = kickAction.description;
+          return kickAction.action;
+        }
       }
 
       // 3-B. FREEZE 詠唱で永久凍結無力化
-      if (player.magic > 0 && MagicSystem.canCast(player, 'FREEZE').allowed) {
+      if (canSpendReserve && MagicSystem.canCast(player, 'FREEZE').allowed) {
         const unfrozenLethal = adjacentEnemies.find(
           ({ enemy }) => ThreatEvaluator.evaluateThreat(player, enemy) === 'LETHAL' && !enemy.isPermanentlyFrozen
         );
@@ -412,13 +504,12 @@ export class AdaptiveAutoPlayBot {
       }
 
       // 3-C. FLASH 詠唱で足止め
-      if (player.magic > 0 && MagicSystem.canCast(player, 'FLASH').allowed) {
+      if (canSpendReserve && MagicSystem.canCast(player, 'FLASH').allowed) {
         this.currentTargetDesc = '🚨 緊急足止め: FLASH詠唱';
         return { type: 'MAGIC', magic: 'FLASH' };
       }
 
       // 3-D. 安全な空床へ回避移動
-      const evadeDir = this.nav.findEvadeDirection(curPos, map, enemies, player, dragon);
       if (evadeDir) {
         this.currentTargetDesc = '🚨 緊急退避: 安全マスへ回避移動';
         return { type: 'MOVE', dir: evadeDir };
@@ -427,13 +518,17 @@ export class AdaptiveAutoPlayBot {
 
     // 4. HPピンチまたは死神憑依時の帰還・退避
     if (isPinch || player.hasDeath) {
-      // RETURNで我が家へ瞬時帰還
-      if (MagicSystem.canCast(player, 'RETURN').allowed && !player.isFlying) {
-        const homeDist = map.getTorusDistance(curPos, map.realHomePos).manhattan;
-        if (homeDist > 2) {
-          this.currentTargetDesc = '🚨 緊急退避: RETURN全回復帰還';
-          return { type: 'MAGIC', magic: 'RETURN' };
-        }
+      const homeDist = map.getTorusDistance(curPos, map.realHomePos).manhattan;
+      const canCastReturn = MagicSystem.canCast(player, 'RETURN').allowed && !player.isFlying;
+      const canSpendReserve = this.canSpendMagicReserve(player);
+      const dirToHome = this.nav.findPath(curPos, map.realHomePos, map, player, enemies, this.params, { dragon });
+
+      // RETURNで我が家へ瞬時帰還:
+      // MPが潤沢(MP>=2)、または徒歩ルートが完全に塞がれている(!dirToHome)、またはHP極限危機(<=20%)・死神時は即座にRETURN
+      const isExtremeDanger = player.hasDeath || player.hp <= player.maxHp * 0.20 || !dirToHome;
+      if (canCastReturn && homeDist > 2 && (canSpendReserve || isExtremeDanger)) {
+        this.currentTargetDesc = '🚨 緊急退避: RETURN全回復帰還';
+        return { type: 'MAGIC', magic: 'RETURN' };
       }
 
       // 死神憑依時: 近傍の十字架があれば踏みに行く
@@ -452,7 +547,6 @@ export class AdaptiveAutoPlayBot {
       }
 
       // 徒歩で我が家へ
-      const dirToHome = this.nav.findPath(curPos, map.realHomePos, map, player, enemies, this.params, { dragon });
       if (dirToHome) {
         this.currentTargetDesc = '🚨 緊急退避: 我が家へ避難移動';
         return { type: 'MOVE', dir: dirToHome };

@@ -21,7 +21,7 @@ export class DragonSlayBehavior {
     enemies: EnemyInstance[],
     dragon: Dragon,
     nav: AdaptiveNavigator,
-    _context: TacticalContext,
+    context: TacticalContext,
     params: DynamicBotParameters
   ): BehaviorResult | null {
     const curPos = player.pos;
@@ -59,7 +59,45 @@ export class DragonSlayBehavior {
       };
     }
 
-    // 2. 首の斜め隣接マスにいる場合: 首攻撃を実行！（最優先）
+    // 2. HP危機時 (HP < 35% かつ < 20,000): 首への突撃より前に前線基地（我が家）へ帰還して回復
+    const isDamaged = player.hp < player.maxHp * 0.35 && player.hp < 20000;
+    if (isDamaged) {
+      const dirToHome = nav.findPath(curPos, homePos, map, player, enemies, params, { dragon });
+      if (dirToHome) {
+        return {
+          action: { type: 'MOVE', dir: dirToHome },
+          description: '🏠 決戦中HP回復のため我が家へ帰還',
+        };
+      }
+    }
+
+    // 3. 最後の首撃破前の MP 万全化 (MP < 2 なら CROWN_ESCAPE での FLASH/RETURN が使えないため補充)
+    if (isLastHead && player.magic < 2) {
+      // 3-A. 近傍のポット回収
+      const potionCandidates = nav.findNearestItemCandidates(curPos, 'POTION', map, enemies, player, 4);
+      for (const potPos of potionCandidates) {
+        const dist = map.getTorusDistance(curPos, potPos).manhattan;
+        if (dist <= context.scale.nearRadius) {
+          const dir = nav.findPath(curPos, potPos, map, player, enemies, params, { dragon });
+          if (dir) {
+            return {
+              action: { type: 'MOVE', dir },
+              description: `🧪 最終首決戦前のMP補給 (${potPos.x}, ${potPos.y}) [距離: ${dist}]`,
+            };
+          }
+        }
+      }
+      // 3-B. 前線基地へ帰還して回復
+      const dirToHome = nav.findPath(curPos, homePos, map, player, enemies, params, { dragon });
+      if (dirToHome) {
+        return {
+          action: { type: 'MOVE', dir: dirToHome },
+          description: '🏠 最終首撃破前のMP/HP補給のため我が家へ帰還',
+        };
+      }
+    }
+
+    // 4. 首の斜め隣接マスにいる場合: 首攻撃を実行！（HP・MP万全時のみ）
     for (const head of livingHeads) {
       const dx = Math.abs(curPos.x - head.pos.x);
       const dy = Math.abs(curPos.y - head.pos.y);
@@ -75,19 +113,7 @@ export class DragonSlayBehavior {
       }
     }
 
-    // 3. HP危機時 (HP < 35% かつ < 20,000) は前線基地（我が家）へ帰還して全回復
-    const isDamaged = player.hp < player.maxHp * 0.35 && player.hp < 20000;
-    if (isDamaged) {
-      const dirToHome = nav.findPath(curPos, homePos, map, player, enemies, params, { dragon });
-      if (dirToHome) {
-        return {
-          action: { type: 'MOVE', dir: dirToHome },
-          description: '🏠 決戦中HP回復のため我が家へ帰還',
-        };
-      }
-    }
-
-    // 2. 最後の首で隣接に危険敵がいる場合、FREEZEで無力化
+    // 5. 最後の首で隣接に危険敵がいる場合、FREEZEで無力化
     if (isLastHead && player.magic > 0 && !player.hasDeath) {
       const adjEnemies = enemies.filter(e => e.isAlive && !e.isPermanentlyFrozen && map.getTorusDistance(curPos, e.pos).manhattan === 1);
       if (adjEnemies.length > 0 && MagicSystem.canCast(player, 'FREEZE').allowed) {

@@ -13,7 +13,7 @@ export class DemoAndAutoPlayController {
   private autoPlaySpeed: number = 1;
   private isAutoPlayPaused: boolean = false;
   private demoBot: AutoPlayBot | AdaptiveAutoPlayBot | null = null;
-  private useV2Bot: boolean = false;
+  private useV2Bot: boolean = true;
   private demoIntervalId: number | null = null;
   private demoEndDelayFrames: number = 0;
   private demoTurns: number = 0;

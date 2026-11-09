@@ -6,7 +6,13 @@ import { Dragon } from '../models/Dragon.js';
 import { ThreatEvaluator } from '../systems/ThreatEvaluator.js';
 import { MovementSystem } from '../systems/MovementSystem.js';
 import { BotAction } from './BotTypes.js';
-import { BotNavigator } from './BotNavigator.js';
+
+export interface EightStepNavigator {
+  isDragonFireLine(pos: Position, dragon: Dragon, map: WorldMap): boolean;
+  getAdjacentEnemies(pos: Position, enemies: EnemyInstance[], map: WorldMap): { enemy: EnemyInstance; dir: Direction }[];
+  clearPositionHistory(): void;
+  getAdjacentDirection(from: Position, to: Position, map: WorldMap): Direction | null;
+}
 
 export class EightStepController {
   public eightStepTargetChestPos: Position | null = null;
@@ -15,7 +21,7 @@ export class EightStepController {
   public eightStepWaitPos: Position | null = null;
   public eightStepPathToPivot: Position[] = [];
 
-  constructor(private botNav: BotNavigator) {}
+  constructor(private botNav: EightStepNavigator) {}
 
   public clearEightStepState(): void {
     this.eightStepTargetChestPos = null;

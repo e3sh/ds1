@@ -1,8 +1,9 @@
-import { Position } from '../../../models/Types.js';
+import { Direction, Position } from '../../../models/Types.js';
 import { WorldMap } from '../../../models/WorldMap.js';
 import { Player } from '../../../models/Player.js';
 import { EnemyInstance } from '../../../models/Enemy.js';
 import { Dragon } from '../../../models/Dragon.js';
+import { MagicSystem } from '../../../systems/MagicSystem.js';
 import { BehaviorResult, DynamicBotParameters } from '../BotTypesV2.js';
 import { AdaptiveNavigator } from '../AdaptiveNavigator.js';
 import { TacticalContext } from '../TacticalContext.js';
@@ -29,6 +30,22 @@ export class GraveSealBehavior {
     const openTargets = this.getTargetSealSpots(map, enemies, context, params);
     if (openTargets.length === 0) return null;
 
+    // 0. 墓付近にいる敵を FREEZE で永久氷像バリケード化
+    if (MagicSystem.canCast(player, 'FREEZE').allowed && player.magic > params.magicReserveThreshold && !player.hasDeath) {
+      const nearGraves = openTargets.some(t => map.getTorusDistance(curPos, t).manhattan <= 2);
+      if (nearGraves) {
+        const unfrozenAdjacent = enemies.find(
+          e => e.isAlive && !e.isPermanentlyFrozen && map.getTorusDistance(curPos, e.pos).chebyshev <= 1
+        );
+        if (unfrozenAdjacent) {
+          return {
+            action: { type: 'MAGIC', magic: 'FREEZE' },
+            description: `❄️ 墓付近の敵をFREEZE永久凍結バリケード化 (${unfrozenAdjacent.name})`,
+          };
+        }
+      }
+    }
+
     // 2. 十字架所持時: 最寄りの封鎖ターゲットへ移動して設置
     if (player.holdItem === 'CROSS') {
       const nearestTarget = this.findNearestPos(curPos, openTargets, map, nav);
@@ -49,9 +66,25 @@ export class GraveSealBehavior {
       }
     }
 
-    // 3. 手ぶら時: 床の未使用十字架があれば回収に向かう
+    // 3. RING所持時: 岩押しで墓を封鎖
+    if (player.holdItem === 'RING') {
+      const pushAction = this.planBlockPush(curPos, openTargets, map, enemies, player, dragon, nav, context, params);
+      if (pushAction) return pushAction;
+
+      // 押せる岩がない場合、安全な床にRINGを手放す
+      const isFireLine = dragon && nav.isDragonFireLine(curPos, dragon, map);
+      if (!isFireLine && map.getItem(curPos) === 'NONE' && map.getObject(curPos) === 'NONE') {
+        return {
+          action: { type: 'SPACE' },
+          description: '💍 押せる岩がないためRINGを手放す',
+        };
+      }
+    }
+
+    // 4. 手ぶら時: 未使用十字架またはRINGの回収に向かう
     if (player.holdItem === 'NONE') {
-      const unusedCross = this.findNearestUnusedCross(curPos, map, openTargets, nav);
+      // 4-A. 未使用十字架の回収
+      const unusedCross = this.findNearestUnusedCross(curPos, map, context, nav);
       if (unusedCross) {
         const dist = map.getTorusDistance(curPos, unusedCross).manhattan;
         if (dist <= params.keySearchDist) {
@@ -66,6 +99,27 @@ export class GraveSealBehavior {
             return {
               action: { type: 'MOVE', dir },
               description: `✝️ 十字架回収へ移動 (${unusedCross.x}, ${unusedCross.y})`,
+            };
+          }
+        }
+      }
+
+      // 4-B. 十字架が近くにない場合、RINGで岩押し封鎖が可能かチェック
+      const ringPos = this.findNearestItem(curPos, 'RING', map, nav);
+      if (ringPos) {
+        const dist = map.getTorusDistance(curPos, ringPos).manhattan;
+        if (dist <= context.scale.nearRadius) {
+          if (curPos.x === ringPos.x && curPos.y === ringPos.y) {
+            return {
+              action: { type: 'SPACE' },
+              description: '💍 岩押し封鎖のためRINGを取得',
+            };
+          }
+          const dir = nav.findPath(curPos, ringPos, map, player, enemies, params, { dragon });
+          if (dir) {
+            return {
+              action: { type: 'MOVE', dir },
+              description: `💍 RING回収へ移動 (${ringPos.x}, ${ringPos.y})`,
             };
           }
         }
@@ -161,7 +215,40 @@ export class GraveSealBehavior {
     return nearest;
   }
 
-  private static findNearestUnusedCross(from: Position, map: WorldMap, sealTargets: Position[], nav: AdaptiveNavigator): Position | null {
+  /**
+   * 十字架がすでにいずれかの墓を封鎖している（使用済み）か判定
+   * 墓周囲8マス、またはテーマブロックヒントの封鎖ターゲット座標上にある場合は封鎖中とみなす
+   */
+  public static isCrossSealing(pos: Position, map: WorldMap, context?: TacticalContext): boolean {
+    // A. 墓の周囲8マスに隣接しているか
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const testGrave = map.wrapPosition({ x: pos.x + dx, y: pos.y + dy });
+        if (map.getBaseTile(testGrave) === 'GRAVE') {
+          return true;
+        }
+      }
+    }
+
+    // B. テーマブロックメタデータの gravePuzzleHints に含まれる sealTargetPositions 上にあるか
+    if (context?.metadata?.gravePuzzleHints) {
+      for (const hint of context.metadata.gravePuzzleHints) {
+        if (hint.sealTargetPositions?.some(t => t.x === pos.x && t.y === pos.y)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  private static findNearestUnusedCross(
+    from: Position,
+    map: WorldMap,
+    context: TacticalContext,
+    nav: AdaptiveNavigator
+  ): Position | null {
     let nearest: Position | null = null;
     let minDist = Infinity;
     for (let y = 0; y < map.height; y++) {
@@ -169,8 +256,109 @@ export class GraveSealBehavior {
         const p = { x, y };
         if (nav.isTargetUnreachable(p)) continue;
         if (map.getItem(p) === 'CROSS') {
-          // すでに封鎖ターゲット上にある十字架は「使用済み」として除外
-          if (sealTargets.some(t => t.x === p.x && t.y === p.y)) continue;
+          // すでに墓封鎖に使用されている十字架は絶対に拾わない
+          if (this.isCrossSealing(p, map, context)) continue;
+          const dist = map.getTorusDistance(from, p).manhattan;
+          if (dist < minDist) {
+            minDist = dist;
+            nearest = p;
+          }
+        }
+      }
+    }
+    return nearest;
+  }
+
+  private static planBlockPush(
+    curPos: Position,
+    openTargets: Position[],
+    map: WorldMap,
+    enemies: EnemyInstance[],
+    player: Player,
+    dragon: Dragon,
+    nav: AdaptiveNavigator,
+    context: TacticalContext,
+    params: DynamicBotParameters
+  ): BehaviorResult | null {
+    // 1. recommendedPushes の評価
+    if (context.metadata?.gravePuzzleHints) {
+      for (const hint of context.metadata.gravePuzzleHints) {
+        if (!hint.recommendedPushes || hint.recommendedPushes.length === 0) continue;
+        for (const push of hint.recommendedPushes) {
+          const blockPos = map.wrapPosition(push.blockPos);
+          const destPos = map.wrapPosition(push.destinationPos);
+          if (map.getObject(blockPos) !== 'BLOCK') continue;
+          if (!map.isPushDestinationValid(destPos, enemies)) continue;
+
+          const offsets: Record<string, { dx: number; dy: number }> = {
+            UP: { dx: 0, dy: -1 },
+            DOWN: { dx: 0, dy: 1 },
+            LEFT: { dx: -1, dy: 0 },
+            RIGHT: { dx: 1, dy: 0 },
+          };
+          const d = offsets[push.dir];
+          if (!d) continue;
+          const standPos = map.wrapPosition({ x: blockPos.x - d.dx, y: blockPos.y - d.dy });
+          if (map.getBaseTile(standPos) === 'WALL_STATIC' || map.getObject(standPos) !== 'NONE') continue;
+
+          if (curPos.x === standPos.x && curPos.y === standPos.y) {
+            return {
+              action: { type: 'MOVE', dir: push.dir },
+              description: `🧱 推奨岩押しで墓出口封鎖 [-> ${push.dir}]`,
+            };
+          }
+          const dir = nav.findPath(curPos, standPos, map, player, enemies, params, { dragon, extraBlocked: [blockPos] });
+          if (dir) {
+            return {
+              action: { type: 'MOVE', dir },
+              description: `🚶 推奨岩押し位置へ移動 (${standPos.x}, ${standPos.y})`,
+            };
+          }
+        }
+      }
+    }
+
+    // 2. 一般オープンターゲットへの岩押し
+    const cardDirs: { dir: Direction; dx: number; dy: number }[] = [
+      { dir: 'UP', dx: 0, dy: -1 },
+      { dir: 'DOWN', dx: 0, dy: 1 },
+      { dir: 'LEFT', dx: -1, dy: 0 },
+      { dir: 'RIGHT', dx: 1, dy: 0 },
+    ];
+    for (const spot of openTargets) {
+      if (!map.isPushDestinationValid(spot, enemies)) continue;
+      for (const d of cardDirs) {
+        const blockPos = map.wrapPosition({ x: spot.x - d.dx, y: spot.y - d.dy });
+        if (map.getObject(blockPos) !== 'BLOCK') continue;
+        const standPos = map.wrapPosition({ x: blockPos.x - d.dx, y: blockPos.y - d.dy });
+        if (map.getBaseTile(standPos) === 'WALL_STATIC' || map.getObject(standPos) !== 'NONE') continue;
+
+        if (curPos.x === standPos.x && curPos.y === standPos.y) {
+          return {
+            action: { type: 'MOVE', dir: d.dir },
+            description: `🧱 岩押しで墓封鎖 [-> ${d.dir}]`,
+          };
+        }
+        const dir = nav.findPath(curPos, standPos, map, player, enemies, params, { dragon, extraBlocked: [blockPos] });
+        if (dir) {
+          return {
+            action: { type: 'MOVE', dir },
+            description: `🚶 岩押し封鎖位置へ移動 (${standPos.x}, ${standPos.y})`,
+          };
+        }
+      }
+    }
+    return null;
+  }
+
+  private static findNearestItem(from: Position, type: string, map: WorldMap, nav: AdaptiveNavigator): Position | null {
+    let nearest: Position | null = null;
+    let minDist = Infinity;
+    for (let y = 0; y < map.height; y++) {
+      for (let x = 0; x < map.width; x++) {
+        const p = { x, y };
+        if (nav.isTargetUnreachable(p)) continue;
+        if (map.getItem(p) === type) {
           const dist = map.getTorusDistance(from, p).manhattan;
           if (dist < minDist) {
             minDist = dist;

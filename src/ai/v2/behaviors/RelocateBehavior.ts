@@ -3,6 +3,7 @@ import { WorldMap } from '../../../models/WorldMap.js';
 import { Player } from '../../../models/Player.js';
 import { EnemyInstance } from '../../../models/Enemy.js';
 import { Dragon } from '../../../models/Dragon.js';
+import { MagicSystem } from '../../../systems/MagicSystem.js';
 import { BehaviorResult, DynamicBotParameters } from '../BotTypesV2.js';
 import { AdaptiveNavigator } from '../AdaptiveNavigator.js';
 import { TacticalContext } from '../TacticalContext.js';
@@ -32,6 +33,15 @@ export class RelocateBehavior {
 
     // 2. 移転完了判定（家がアンカーに到達）
     if (homePos.x === anchor.x && homePos.y === anchor.y) {
+      if (player.holdItem === 'RING') {
+        const isFireLine = dragon && nav.isDragonFireLine(curPos, dragon, map);
+        if (!isFireLine && map.getItem(curPos) === 'NONE' && map.getObject(curPos) === 'NONE') {
+          return {
+            action: { type: 'SPACE' },
+            description: '💍 移転完了: RINGを手放す',
+          };
+        }
+      }
       return null; // 移転完了
     }
 
@@ -73,6 +83,10 @@ export class RelocateBehavior {
         };
       }
     }
+
+    // 5. 家が押せない場合: 障害ブロックを BREAK で破壊して開拓
+    const breakAction = this.tryBreakObstacle(homePos, anchor, map, player, enemies, dragon, nav, params);
+    if (breakAction) return breakAction;
 
     return null;
   }
@@ -167,5 +181,96 @@ export class RelocateBehavior {
       }
     }
     return nearest;
+  }
+
+  /**
+   * 家を押す進路または立ち位置を塞いでいる BLOCK を BREAK で破壊
+   */
+  private static tryBreakObstacle(
+    home: Position,
+    _anchor: Position,
+    map: WorldMap,
+    player: Player,
+    enemies: EnemyInstance[],
+    dragon: Dragon,
+    nav: AdaptiveNavigator,
+    params: DynamicBotParameters
+  ): BehaviorResult | null {
+    if (!MagicSystem.canCast(player, 'BREAK').allowed) return null;
+
+    const cardDirs: { dir: Direction; dx: number; dy: number }[] = [
+      { dir: 'UP', dx: 0, dy: -1 },
+      { dir: 'DOWN', dx: 0, dy: 1 },
+      { dir: 'LEFT', dx: -1, dy: 0 },
+      { dir: 'RIGHT', dx: 1, dy: 0 },
+    ];
+
+    // 家からアンカーへ近づく方向の候補を評価
+    for (const { dx, dy } of cardDirs) {
+      const destPos = map.wrapPosition({ x: home.x + dx, y: home.y + dy });
+      const standPos = map.wrapPosition({ x: home.x - dx, y: home.y - dy });
+
+      // 進行先 destPos が BLOCK で塞がれている場合
+      if (map.getObject(destPos) === 'BLOCK') {
+        const breakDest = this.breakBlockAt(destPos, player, map, enemies, dragon, nav, params, [home]);
+        if (breakDest) return breakDest;
+      }
+
+      // 立ち位置 standPos が BLOCK で塞がれている場合
+      if (map.getObject(standPos) === 'BLOCK') {
+        const breakStand = this.breakBlockAt(standPos, player, map, enemies, dragon, nav, params, [home]);
+        if (breakStand) return breakStand;
+      }
+    }
+
+    return null;
+  }
+
+  private static breakBlockAt(
+    targetBlockPos: Position,
+    player: Player,
+    map: WorldMap,
+    enemies: EnemyInstance[],
+    dragon: Dragon,
+    nav: AdaptiveNavigator,
+    params: DynamicBotParameters,
+    extraBlocked?: Position[]
+  ): BehaviorResult | null {
+    const curPos = player.pos;
+    const cardDirs: { dir: Direction; dx: number; dy: number }[] = [
+      { dir: 'UP', dx: 0, dy: -1 },
+      { dir: 'DOWN', dx: 0, dy: 1 },
+      { dir: 'LEFT', dx: -1, dy: 0 },
+      { dir: 'RIGHT', dx: 1, dy: 0 },
+    ];
+
+    // 隣接していれば即座に BREAK 詠唱
+    for (const d of cardDirs) {
+      const neighbor = map.wrapPosition({ x: player.pos.x + d.dx, y: player.pos.y + d.dy });
+      if (neighbor.x === targetBlockPos.x && neighbor.y === targetBlockPos.y) {
+        player.dir = d.dir;
+        return {
+          action: { type: 'MAGIC', magic: 'BREAK' },
+          description: `🔨 移転ルート開拓のため岩を破壊 (${targetBlockPos.x}, ${targetBlockPos.y})`,
+        };
+      }
+    }
+
+    // 隣接マスへ移動
+    for (const d of cardDirs) {
+      const standPos = map.wrapPosition({ x: targetBlockPos.x + d.dx, y: targetBlockPos.y + d.dy });
+      if (extraBlocked && extraBlocked.some(p => p.x === standPos.x && p.y === standPos.y)) continue;
+      if (map.getBaseTile(standPos) === 'WALL_STATIC' || map.getObject(standPos) !== 'NONE') continue;
+
+      const dir = nav.findPath(curPos, standPos, map, player, enemies, params, { dragon, extraBlocked });
+      if (dir) {
+        return {
+          action: { type: 'MOVE', dir },
+          description: `🚶 岩破壊位置へ移動 (${standPos.x}, ${standPos.y})`,
+        };
+      }
+    }
+
+    return null;
   }
 }

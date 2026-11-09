@@ -64,7 +64,7 @@ export class SimulationRunner {
         ruleMode: config.ruleMode,
       });
 
-      const botVersion = config.botVersion ?? 'v1';
+      const botVersion = config.botVersion ?? 'v2';
       const bot = botVersion === 'v2'
         ? new AdaptiveAutoPlayBot({ profile: botProfile, maxTurnsLimit })
         : new AutoPlayBot({

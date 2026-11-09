@@ -10,6 +10,7 @@ import { BehaviorResult, DynamicBotParameters } from '../BotTypesV2.js';
 import { AdaptiveNavigator } from '../AdaptiveNavigator.js';
 import { TacticalContext } from '../TacticalContext.js';
 import { CombatBehavior } from './CombatBehavior.js';
+import { EightStepController } from '../../EightStepController.js';
 
 export interface SwapState {
   itemToPickupPos: Position | null;
@@ -21,6 +22,7 @@ export interface BotTargetLockContext {
   lockedItemPos: Position | null;
   lockedItemType: string | null;
   lockedChestPos: Position | null;
+  eightStepController?: EightStepController;
 }
 
 /**
@@ -29,6 +31,8 @@ export interface BotTargetLockContext {
  * 宝箱開錠、8歩周期同期、パワーストーン回収＆奉納帰還、コイン換金帰還、MP備蓄を管理。
  */
 export class ResourceFarmBehavior {
+  private static pivotTurns: number = 0;
+
   public static execute(
     player: Player,
     map: WorldMap,
@@ -45,19 +49,25 @@ export class ResourceFarmBehavior {
     const floorObj = map.getObject(curPos);
     const homePos = map.realHomePos;
 
-    // 1. パワーストーン所持中: 我が家へ最速帰還＆奉納
+    // 0. 8歩周期調整中（チェーン実行中）であれば最優先実行
+    const esc = bot?.eightStepController;
+    if (esc && esc.eightStepTargetChestPos !== null) {
+      const eightStepAction = esc.handleEightStepCycle(player, map, enemies, dragon);
+      if (eightStepAction) {
+        return {
+          action: eightStepAction,
+          description: `📦 8歩周期調整 [歩数:${player.stepCountSinceStone}/8] -> 宝箱(${esc.eightStepTargetChestPos.x}, ${esc.eightStepTargetChestPos.y})`,
+        };
+      }
+    }
+
+    // 1. パワーストーン所持中: 我が家へ最速帰還＆奉納（平時は徒歩＋BREAK開削、RETURNは緊急・孤立時のみ）
     if (player.holdItem === 'POWER_STONE') {
+      bot?.eightStepController?.clearEightStepState();
       const distToHome = map.getTorusDistance(curPos, homePos).manhattan;
       const canCastReturn = MagicSystem.canCast(player, 'RETURN').allowed && !player.isFlying;
 
-      // 我が家まで遠距離（> nearRadius）かつMP>=2ならRETURNで即時帰還
-      if (canCastReturn && distToHome > context.scale.nearRadius && player.magic >= 2) {
-        return {
-          action: { type: 'MAGIC', magic: 'RETURN' },
-          description: `💎 RETURN奉納帰還 [距離: ${distToHome}]`,
-        };
-      }
-
+      // 徒歩帰還を最優先（allowBreakAsRoadにより岩があればBREAKでコスト0開削）
       const dirToHome = nav.findPath(curPos, homePos, map, player, enemies, params, { dragon });
       if (dirToHome) {
         return {
@@ -65,6 +75,8 @@ export class ResourceFarmBehavior {
           description: `💎 パワーストーン奉納へ徒歩帰還 [距離: ${distToHome}]`,
         };
       }
+
+      // 徒歩経路が完全に塞がれている場合のみ緊急RETURN
       if (canCastReturn) {
         return {
           action: { type: 'MAGIC', magic: 'RETURN' },
@@ -104,35 +116,24 @@ export class ResourceFarmBehavior {
     // スワップ処理中（鍵を置き去りにしてアイテム取得中・戻り中）はコイン換金等で中断しない
     const isSwapping = swapState.itemToPickupPos !== null || swapState.tempDroppedKeyPos !== null;
 
-    // 3. コイン早期換金帰還 (EXPマイルストーン早期到達 or 蓄積換金)
+    // 3. コイン換金: 基本はパワーストーン奉納やHP回復での帰宅時に一括納品
+    // 例外: 我が家が至近（<= 3マス）かつ手持ちコインで即座に重要マイルストーン (2000, 4000, 12000) に到達できる場合のみ徒歩で立ち寄る
     if (!isSwapping && player.gold > 0 && player.holdItem !== 'POWER_STONE') {
       const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
       const nextMilestone = player.experience < 2000
         ? 2000
-        : (player.experience < 4000 ? 4000 : (player.experience < 12000 ? 12000 : params.targetDefenseExp));
+        : (player.experience < 4000 ? 4000 : (player.experience < 12000 ? 12000 : Infinity));
       const distToHome = map.getTorusDistance(curPos, homePos).manhattan;
-      const canCastReturn = MagicSystem.canCast(player, 'RETURN').allowed && !player.isFlying;
-      const minReturnMagic = player.experience < 4000 ? 3 : 2;
 
-      const reachedMilestone = (player.experience + estimatedGainedExp) >= nextMilestone;
-      const shouldReturnHomeForCoin = reachedMilestone ||
-                                      (player.experience < 4000 && (distToHome <= 25 || player.gold >= 1)) ||
-                                      distToHome <= 15 || player.gold >= 2;
+      const reachedMilestone = nextMilestone !== Infinity && (player.experience + estimatedGainedExp) >= nextMilestone;
+      const isJustInFrontOfHome = distToHome <= 3 && reachedMilestone;
 
-      if (shouldReturnHomeForCoin) {
-        // 遠距離かつMP潤沢ならRETURN
-        if (canCastReturn && distToHome > 12 && player.magic >= minReturnMagic) {
-          return {
-            action: { type: 'MAGIC', magic: 'RETURN' },
-            description: `🪙 コイン早期換金RETURN帰還 [所持:${player.gold}G] -> HOME`,
-          };
-        }
-        // 徒歩帰還
+      if (isJustInFrontOfHome) {
         const dirToHome = nav.findPath(curPos, homePos, map, player, enemies, params, { dragon });
         if (dirToHome) {
           return {
             action: { type: 'MOVE', dir: dirToHome },
-            description: `🪙 コイン早期換金へ徒歩帰還 [所持:${player.gold}G 距離:${distToHome}]`,
+            description: `🪙 至近マイルストーン達成のため立ち寄り換金 [所持:${player.gold}G 距離:${distToHome}]`,
           };
         }
       }
@@ -147,6 +148,7 @@ export class ResourceFarmBehavior {
       if (isUnderTarget) {
         const S = player.stepCountSinceStone;
         if (S === 8) {
+          this.pivotTurns = 0;
           if (bot) {
             bot.lockedChestPos = null;
           }
@@ -157,19 +159,33 @@ export class ResourceFarmBehavior {
         }
 
         if (S < 8) {
+          // ピボット安全弁: 敵の接近や往復でピボットが長引いた場合はタイムアウトして即座に開錠
+          if (this.pivotTurns >= 8) {
+            this.pivotTurns = 0;
+            if (bot) {
+              bot.lockedChestPos = null;
+            }
+            return {
+              action: { type: 'SPACE' },
+              description: `🔓 8歩周期ピボットタイムアウト即座開錠 (${curPos.x}, ${curPos.y})`,
+            };
+          }
+
           // S < 8 の場合: 安全な隣接空きマス（ピボット）があれば往復して歩数を稼ぐ
           const safePivotDir = this.findAdjacentSafePivot(curPos, map, enemies, dragon, player, nav);
           if (safePivotDir) {
+            this.pivotTurns++;
             nav.resetPingPong();
             return {
               action: { type: 'MOVE', dir: safePivotDir },
-              description: `🚶 8歩周期ピボット移動 [歩数:${S}/8]`,
+              description: `🚶 8歩周期ピボット移動 [歩数:${S}/8, 試行:${this.pivotTurns}/8]`,
             };
           }
         }
       }
 
       // フォールバック: 即座に開錠
+      this.pivotTurns = 0;
       if (bot) {
         bot.lockedChestPos = null;
       }
@@ -179,10 +195,32 @@ export class ResourceFarmBehavior {
       };
     }
 
-    // 5. 鍵所持中: 足元に石やポーションがあれば一時置き退避を開始
+    // 5. 鍵所持中
     if (player.holdItem === 'KEY') {
-      const isValuable = floorItem === 'POWER_STONE' ||
-        (floorItem === 'POTION' && player.magic < params.maxTargetMagic);
+      // 5-0. 8歩周期パワーストーン・チェーン・ファーミング:
+      // STR未達時、足元にパワーストーンが出現した直後 (stepCountSinceStone === 0) であれば、
+      // 足元の石回収（スワップ）をあえて保留し、周辺の未開封宝箱への8歩周期チェーンを起動！
+      if (floorItem === 'POWER_STONE' && player.stepCountSinceStone === 0 && bot?.eightStepController && needStr) {
+        const target = bot.eightStepController.findNearbyChestForEightStepCycle(curPos, map, enemies, dragon, player);
+        if (target) {
+          bot.eightStepController.eightStepTargetChestPos = target.chestPos;
+          bot.eightStepController.eightStepOriginPos = { ...curPos };
+          bot.eightStepController.eightStepPivotPos = target.pivotPos;
+          bot.eightStepController.eightStepWaitPos = target.waitPos;
+          bot.eightStepController.eightStepPathToPivot = target.pathToPivot;
+          const firstStep = target.pathToPivot[0] ?? target.pivotPos;
+          const dir = nav.getAdjacentDirection(curPos, firstStep, map);
+          if (dir) {
+            return {
+              action: { type: 'MOVE', dir },
+              description: `💎 8歩周期チェーン開始！周辺宝箱へ移動 -> (${target.chestPos.x}, ${target.chestPos.y})`,
+            };
+          }
+        }
+      }
+
+      // 5-1. 足元に石やポーションがあれば一時置き退避を開始（青天井備蓄: ポットはMP上限に関わらず回収）
+      const isValuable = floorItem === 'POWER_STONE' || floorItem === 'POTION';
 
       if (isValuable) {
         swapState.itemToPickupPos = { ...curPos };
@@ -449,8 +487,8 @@ export class ResourceFarmBehavior {
         }
       }
 
-      // 6-F. MP補充ポーション回収
-      if (player.magic < params.maxTargetMagic) {
+      // 6-F. ポーション回収（青天井備蓄: potionSearchDistの範囲にあるポットを上限なく回収）
+      if (params.potionSearchDist > 0) {
         const potionCandidates = nav.findNearestItemCandidates(
           curPos, 'POTION', map, enemies, player, 8, bot?.lockedItemPos
         );

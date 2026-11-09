@@ -16,6 +16,12 @@ export interface PathResult {
   steps: number;
 }
 
+export interface CirclingContext {
+  enemy: EnemyInstance;
+  obstacleType: 'BLOCK' | 'GRAVE' | 'WALL';
+  obstaclePos: Position;
+}
+
 /**
  * AdaptiveNavigator
  *
@@ -27,6 +33,11 @@ export class AdaptiveNavigator {
   // 1. 直近訪問座標履歴 (ピンポン・周回検知用)
   private recentPositions: Position[] = [];
   private readonly MAX_HISTORY_LEN: number = 16;
+
+  // 1-B. 訪問ヒートマップ (時間減衰型熱量マップ: 座標キー "x,y" => 熱量)
+  public heatMap: Map<string, number> = new Map();
+  private readonly HEAT_ADD: number = 10.0;
+  private readonly HEAT_DECAY: number = 0.85;
 
   // 2. 統合振動・停滞カウンタ
   public oscillationCount: number = 0;
@@ -58,6 +69,18 @@ export class AdaptiveNavigator {
     if (this.recentPositions.length > this.MAX_HISTORY_LEN) {
       this.recentPositions.shift();
     }
+
+    // A-2. 訪問ヒートマップの減衰と現在地への熱量加算
+    for (const [key, heat] of this.heatMap.entries()) {
+      const decayed = heat * this.HEAT_DECAY;
+      if (decayed < 0.2) {
+        this.heatMap.delete(key);
+      } else {
+        this.heatMap.set(key, decayed);
+      }
+    }
+    const curKey = `${playerPos.x},${playerPos.y}`;
+    this.heatMap.set(curKey, (this.heatMap.get(curKey) ?? 0) + this.HEAT_ADD);
 
     // B. ピンポン往復 (A -> B -> A) および狭小ループの厳格検知
     const rLen = this.recentPositions.length;
@@ -158,6 +181,83 @@ export class AdaptiveNavigator {
   public resetPingPong(): void {
     this.oscillationCount = 0;
     this.pingPongCount = 0;
+  }
+
+  // ==========================================================================
+  // 訪問ヒートマップ操作 & 周回カルーセル検知
+  // ==========================================================================
+
+  /**
+   * 指定座標の訪問熱量を取得
+   */
+  public getHeat(pos: Position): number {
+    return this.heatMap.get(`${pos.x},${pos.y}`) ?? 0;
+  }
+
+  /**
+   * 指定座標の周囲（radius）の総熱量を取得
+   */
+  public getNeighborhoodHeat(pos: Position, map: WorldMap, radius: number = 1): number {
+    let total = 0;
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        const p = map.wrapPosition({ x: pos.x + dx, y: pos.y + dy });
+        total += this.getHeat(p);
+      }
+    }
+    return total;
+  }
+
+  /**
+   * 訪問ヒートマップと敵・障害物配置に基づくカルーセル（周回ループ）状態の検知
+   *
+   * 条件:
+   * 1. プレイヤー現在地の熱量 >= 12 かつ 周辺8マスの総熱量 >= 35 (同一局所エリアの連続周回)
+   * 2. プレイヤーの直角隣接（距離1）に障害物（BLOCK または GRAVE）が存在する
+   * 3. その障害物の周囲（距離1〜2以内、かつプレイヤーから距離1〜3）に未凍結の生存敵が存在する
+   */
+  public detectObstacleCircling(
+    player: Player,
+    map: WorldMap,
+    enemies: EnemyInstance[]
+  ): CirclingContext | null {
+    const curPos = player.pos;
+    const curHeat = this.getHeat(curPos);
+    const neighborhoodHeat = this.getNeighborhoodHeat(curPos, map, 1);
+
+    // 熱量閾値チェック
+    if (curHeat < 12 || neighborhoodHeat < 35) {
+      return null;
+    }
+
+    const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
+
+    // 直角隣接する障害物（BLOCK または GRAVE）を探す
+    for (const dir of cardDirs) {
+      const obsPos = map.wrapPosition(MovementSystem.getNextPosition(curPos, dir));
+      const obj = map.getObject(obsPos);
+      const isBlock = obj === 'BLOCK';
+      const isGrave = obj === 'GRAVE';
+
+      if (!isBlock && !isGrave) continue;
+
+      // その障害物の周囲にいる未凍結の生存敵を探す
+      for (const enemy of enemies) {
+        if (!enemy.isAlive || enemy.isPermanentlyFrozen) continue;
+        const distFromObs = map.getTorusDistance(obsPos, enemy.pos).manhattan;
+        const distFromPlayer = map.getTorusDistance(curPos, enemy.pos).manhattan;
+
+        if (distFromObs <= 2 && distFromPlayer >= 1 && distFromPlayer <= 3) {
+          return {
+            enemy,
+            obstacleType: isBlock ? 'BLOCK' : 'GRAVE',
+            obstaclePos: obsPos,
+          };
+        }
+      }
+    }
+
+    return null;
   }
 
   // ==========================================================================
@@ -336,7 +436,15 @@ export class AdaptiveNavigator {
         if (dragon) {
           if (dragon.getPartAt(nextPos)) continue;
           if (dragon.heads.some(h => h.isAlive && map.getTorusDistance(nextPos, h.pos).manhattan === 1)) continue;
-          if (dragon.fireballs && dragon.fireballs.some(fb => fb.isAlive && (fb.pos.x === nextPos.x && fb.pos.y === nextPos.y))) continue;
+          if (dragon.fireballs && dragon.fireballs.length > 0) {
+            const willHitFireball = dragon.fireballs.some(fb => {
+              if (!fb.isAlive) return false;
+              if (fb.pos.x === nextPos.x && fb.pos.y === nextPos.y) return true;
+              const nextFb = map.wrapPosition(MovementSystem.getNextPosition(fb.pos, fb.dir));
+              return nextFb.x === nextPos.x && nextFb.y === nextPos.y;
+            });
+            if (willHitFireball) continue;
+          }
           if (this.isDragonFireLine(nextPos, dragon, map)) continue;
         }
 
@@ -382,11 +490,30 @@ export class AdaptiveNavigator {
           if (isNearGhost) stepCost += 5000;
         }
 
-        // 直前マスへの逆戻り抑制
-        if (!(nextPos.x === to.x && nextPos.y === to.y) && current.firstDir === null && this.recentPositions.length > 0) {
-          const lastPos = this.recentPositions[this.recentPositions.length - 1];
-          if (nextPos.x === lastPos.x && nextPos.y === lastPos.y) {
-            stepCost += 100;
+        // 直前マスへの逆戻り抑制:
+        // this.recentPositions の末尾 (rLen - 1) は現在地 player.pos
+        // 1手前の座標 (rLen - 2) への逆戻りには +100、2手前の座標 (rLen - 3) には +50 のペナルティ
+        if (!(nextPos.x === to.x && nextPos.y === to.y) && current.firstDir === null) {
+          const rLen = this.recentPositions.length;
+          if (rLen >= 2) {
+            const prev1 = this.recentPositions[rLen - 2];
+            if (nextPos.x === prev1.x && nextPos.y === prev1.y) {
+              stepCost += 100;
+            }
+          }
+          if (rLen >= 3) {
+            const prev2 = this.recentPositions[rLen - 3];
+            if (nextPos.x === prev2.x && nextPos.y === prev2.y) {
+              stepCost += 50;
+            }
+          }
+        }
+
+        // 訪問ヒートマップによる反発コスト（頻繁に踏んでいる高熱マスへの再進入を抑制）
+        if (!(nextPos.x === to.x && nextPos.y === to.y)) {
+          const heat = this.getHeat(nextPos);
+          if (heat > 0) {
+            stepCost += Math.min(80, Math.floor(heat * 2.5));
           }
         }
 
@@ -588,6 +715,7 @@ export class AdaptiveNavigator {
   }
 
   public isDragonFireLine(pos: Position, dragon: Dragon, map: WorldMap): boolean {
+    if (!dragon || !dragon.heads) return false;
     for (const head of dragon.heads) {
       if (!head.isAlive) continue;
       if (dragon.canHeadSeePlayer(head, pos, map)) {
@@ -633,7 +761,7 @@ export class AdaptiveNavigator {
           const dist = map.getTorusDistance(from, p).manhattan;
           let score = dist;
           if (lockedPos && lockedPos.x === x && lockedPos.y === y) {
-            score = Math.max(0, dist - 3); // ヒステリシスボーナス
+            score = Math.max(0, dist - 20); // 強力なヒステリシスボーナス（渦巻き通路での浮気・ループ防止）
           }
           candidates.push({ pos: p, score });
         }
@@ -674,7 +802,7 @@ export class AdaptiveNavigator {
             score = Math.max(0, score - 6);
           }
           if (lockedPos && lockedPos.x === x && lockedPos.y === y) {
-            score = Math.max(0, score - 3); // ヒステリシスボーナス
+            score = Math.max(0, score - 20); // 強力なヒステリシスボーナス（渦巻き通路での浮気・ループ防止）
           }
           candidates.push({ pos: p, score });
         }
@@ -682,5 +810,38 @@ export class AdaptiveNavigator {
     }
     candidates.sort((a, b) => a.score - b.score);
     return candidates.slice(0, limit).map(c => c.pos);
+  }
+
+  public clearPositionHistory(): void {
+    this.recentPositions = [];
+    this.heatMap.clear();
+  }
+
+  public getAdjacentDirection(from: Position, to: Position, map: WorldMap): Direction | null {
+    const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
+    for (const dir of cardDirs) {
+      const nextPos = map.wrapPosition(MovementSystem.getNextPosition(from, dir));
+      if (nextPos.x === to.x && nextPos.y === to.y) {
+        return dir;
+      }
+    }
+    return null;
+  }
+
+  public getAdjacentEnemies(
+    pos: Position,
+    enemies: EnemyInstance[],
+    map: WorldMap
+  ): { enemy: EnemyInstance; dir: Direction }[] {
+    const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
+    const results: { enemy: EnemyInstance; dir: Direction }[] = [];
+    for (const d of cardDirs) {
+      const nextP = map.wrapPosition(MovementSystem.getNextPosition(pos, d));
+      const e = enemies.find(enemy => enemy.isAlive && enemy.pos.x === nextP.x && enemy.pos.y === nextP.y);
+      if (e) {
+        results.push({ enemy: e, dir: d });
+      }
+    }
+    return results;
   }
 }
