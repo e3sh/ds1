@@ -1,16 +1,16 @@
-import { Position, ResolvedDungeonTuningParams } from '../../models/Types.js';
-import { WorldMap } from '../../models/WorldMap.js';
-import { Player } from '../../models/Player.js';
-import { Dragon } from '../../models/Dragon.js';
-import { EnemyInstance } from '../../models/Enemy.js';
-import { MapTacticalMetadata } from '../../systems/generator/ThemeBlockTypes.js';
-import { GeometricMetrics } from '../../systems/generator/MapProfiler.js';
+import { Position, ResolvedDungeonTuningParams } from '../models/Types.js';
+import { WorldMap } from '../models/WorldMap.js';
+import { Player } from '../models/Player.js';
+import { Dragon } from '../models/Dragon.js';
+import { EnemyInstance } from '../models/Enemy.js';
+import { MapTacticalMetadata } from '../systems/generator/ThemeBlockTypes.js';
+import { GeometricMetrics } from '../systems/generator/MapProfiler.js';
 import {
-  BotPhaseV2,
+  BotPhase,
   BotSkillProfile,
   DynamicBotParameters,
   TacticalScale,
-} from './BotTypesV2.js';
+} from './BotTypes.js';
 
 export interface MapResourceCounts {
   crossCount: number;
@@ -96,7 +96,7 @@ export class TacticalContext {
    * 現在のフェーズ、プレイヤー状態、ドラゴン状態、敵配置、経過ターンに応じた動的パラメータを算出
    */
   public resolveParameters(
-    phase: BotPhaseV2,
+    phase: BotPhase,
     player: Player,
     dragon?: Dragon,
     enemies?: EnemyInstance[],

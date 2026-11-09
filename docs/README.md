@@ -46,7 +46,7 @@ docs/
 - [プロシージャルダンジョン生成・攻略バランス設計仕様書 (`procedural_generation_spec.md`)](./procedural_generation_spec.md)
   - 全域9セクター動的分割、我が家＆ドラゴン要塞の動的アンカー配置・コンパクトプレハブ（`COMPACT_5x5` / `COMPACT_3x3`）、アンチ・ブロック押し込みバリア、4大アーキタイプ、54通りチューニングプリセット、ソルバビリティ検証ロジック、おすすめプリセット＆1行共有コード（`DS1MAP:`）仕様を網羅。
 - [自律攻略AI ＆ ヘッドレスシミュレーション仕様書 (`autoplay_and_simulation_spec.md`)](./autoplay_and_simulation_spec.md)
-  - `AutoPlayBot`（フェーズステートマシン、8歩周期開錠チェーン、アイテム持ち替え、墓封鎖戦術 `GraveSealTactics`、家をドラゴン近傍へ押し運ぶ拠点引越し戦術 `HomeRelocationTactics`、到達不能ブラックリスト、ワープタブー）、ヘッドレス・バッチシミュレーション基盤、およびインゲーム連携モード（アトラクトデモ、可変速自走検証、シームレス操作引き継ぎ）の決定版仕様書。
+  - `AutoPlayBot`（Behaviorモジュール分割、幾何スケール連動動的パラメータ `TacticalContext`、訪問ヒートマップ周回打開、MP=1温存、8歩周期開錠チェーン、アイテム持ち替え、チョークポイント墓封鎖 `GraveSealBehavior`、家をドラゴン近傍へ押し運ぶ拠点引越し戦術 `RelocateBehavior`、スタン時王冠脱出 `EscapeBehavior`）、ヘッドレス・バッチシミュレーション基盤、およびインゲーム連携モード（アトラクトデモ、可変速自走検証、シームレス操作引き継ぎ）の決定版仕様書。
 - [基本ルール・ベースメカニクス仕様書 (`specs/game_specification.md`)](./specs/game_specification.md)
   - 『DS1ish』のコアメカニクスおよび基本パラメータ定義リファレンス。
 - [システム設計書 (`architecture/technical_design.md`)](./architecture/technical_design.md)

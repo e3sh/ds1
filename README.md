@@ -111,13 +111,13 @@ npm run evaluate
   - `core/` : ゲームエンジン、イベントバス、決定論的乱数（`SeedRandom`）、サブコントローラー群（`engine/`）
   - `models/` : プレイヤー、敵、3首ドラゴン、ゴースト、64×64多層ワールドマップモデル
   - `systems/` : 戦闘、移動、敵AI、ゴーストAI、魔法、宝箱、脅威度評価、プロシージャルマップ生成器
-  - `ai/` : 自律攻略AI（`AutoPlayBot`、経路探索 `BotNavigator`、8歩制御、墓封鎖・拠点引越し戦術 `tactics/`）
+  - `ai/` : 自律攻略AI（`AutoPlayBot`、経路探索 `AdaptiveNavigator`、幾何連動コンテキスト `TacticalContext`、8歩制御、各Behavior戦術群 `behaviors/`）
   - `simulation/` : ヘッドレスバッチ実行ランナー＆テレメトリ集計基盤
   - `services/` : セーブ管理、ストレージドライバ、マッププリセット＆共有コード管理（`MapPresetManager`）
   - `view/` : Canvasレンダラー、DOM UIマネージャー、インスペクタモーダル、ドット絵描画コード
   - `audio/` : Web Audio API による PSG風シンセサイザー
 - `scripts/` : ヘッドレスシミュレーションCLI（`simulate.ts`）および戦略比較評価スクリプト（`evaluate-params.ts`）
-- `test/` : ゲームロジック・マップ生成・AI・アーキテクチャ境界の検証用テストスイート（全35スイート）
+- `test/` : ゲームロジック・マップ生成・AI・アーキテクチャ境界の検証用テストスイート（全36スイート）
 - `docs/` : 仕様書・設計書・ロードマップ等の技術資料（詳細は [docs/README.md](./docs/README.md) を参照）
 
 ---

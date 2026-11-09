@@ -1,6 +1,6 @@
 import { SimulationRunner, SimulationConfig } from '../src/simulation/SimulationRunner.js';
 import { DungeonTopology, MapDifficulty, PlayPacingMode, RuleMode } from '../src/models/Types.js';
-import { BotSkillProfile, GraveSealPolicy, GraveSealTiming } from '../src/ai/AutoPlayBot.js';
+import { BotSkillProfile, GraveSealPolicy, GraveSealTiming } from '../src/ai/BotTypes.js';
 
 function parseArgs(): SimulationConfig {
   const rawArgs = process.argv.slice(2).filter(a => a !== '--');

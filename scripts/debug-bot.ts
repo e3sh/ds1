@@ -1,7 +1,6 @@
 import { GameEngine } from '../src/core/GameEngine.js';
 import { SeedRandom } from '../src/core/SeedRandom.js';
-import { GameEventBus } from '../core/GameEventBus.js';
-import { AdaptiveAutoPlayBot } from '../src/ai/v2/AdaptiveAutoPlayBot.js';
+import { AutoPlayBot } from '../src/ai/AutoPlayBot.js';
 
 const runSeed = 10000;
 const rng = new SeedRandom(runSeed);
@@ -13,7 +12,7 @@ engine.startProceduralGame({
   pacing: 'STANDARD',
 });
 
-const bot = new AdaptiveAutoPlayBot({ profile: 'STANDARD', maxTurnsLimit: 8000 });
+const bot = new AutoPlayBot({ profile: 'STANDARD', maxTurnsLimit: 8000 });
 
 console.log('Turn | Phase | Player Pos | HP | STR | EXP | Sword | TargetDesc | LastAction');
 for (let turn = 1; turn <= 8000; turn++) {

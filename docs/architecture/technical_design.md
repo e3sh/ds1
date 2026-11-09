@@ -104,13 +104,19 @@ src/
 │   ├── ProceduralMapGenerator.ts # 全域9セクター動的配置・6大トポロジープロシージャル生成
 │   └── ChestSystem.ts     # 宝箱開封・8歩周期パワーストーン判定
 ├── ai/                    # 自律攻略AIエージェント
-│   ├── AutoPlayBot.ts     # フェーズ駆動型攻略ボット (オーケストレータ)
-│   ├── BotNavigator.ts    # トーラスBFS経路探索・連続ワープ・危険回避
+│   ├── AutoPlayBot.ts         # 状況適応型攻略ボット本体 (オーケストレータ)
+│   ├── AdaptiveNavigator.ts   # トーラスBFS探索・一元化スタック追跡・訪問ヒートマップ
+│   ├── TacticalContext.ts     # 幾何スケール連動・動的戦術パラメータ導出
 │   ├── EightStepController.ts # 8歩周期確定開錠チェーン制御
-│   ├── BotTypes.ts        # AIフェーズ・戦略チューニング型定義
-│   └── tactics/           # 高度戦術モジュール
-│       ├── GraveSealTactics.ts      # 十字架・岩・氷像による墓封鎖戦術
-│       └── HomeRelocationTactics.ts # ドラゴン近傍への我が家プッシュ引越し戦術
+│   ├── BotTypes.ts            # AIフェーズ・動的パラメータ型定義
+│   └── behaviors/             # フェーズ別 Behavior モジュール群
+│       ├── BootstrapBehavior.ts     # 序盤装備回収・物理的詰み早期判定
+│       ├── GraveSealBehavior.ts     # チョークポイント墓封鎖・Sokoban岩押し・氷像
+│       ├── ResourceFarmBehavior.ts  # 8歩周期開錠・石奉納・コイン換金スワップ
+│       ├── RelocateBehavior.ts      # ドラゴン要塞外縁への我が家前線基地移転
+│       ├── CombatBehavior.ts        # 安全迎撃・ヒートマップ周回ループ打開
+│       ├── DragonSlayBehavior.ts    # 首ブレス射線回避・斜め安全マス討伐
+│       └── EscapeBehavior.ts        # 魔法封印下王冠運搬・スタン時露払い脱出
 ├── simulation/            # ヘッドレスシミュレーション基盤
 │   ├── SimulationRunner.ts    # 高速バッチ実行オーケストレータ
 │   └── SimulationTelemetry.ts # イベント駆動型定量KPI集約・レポート生成
@@ -407,56 +413,67 @@ stateDiagram-v2
 classDiagram
     class AutoPlayBot {
         +BotSkillProfile profile
-        +BotStrategyTuning tuning
         +BotPhase currentPhase
-        +assessMap(map, player) MapAssessment
+        +AdaptiveNavigator nav
+        +EightStepController eightStepController
+        +TacticalContext context
         +decideAction(engine) BotAction
         +step(engine) BotAction
         +handleStuckRescue() void
         +getTutorialMessage() string
-        -findPath(from, to, ...) Direction
-        -executeBfs(...) Direction
-        -handleEightStepCycle(...) BotAction
-        -wanderSafe(...) BotAction
     }
 
-    class BotStrategyTuning {
-        +GraveSealPolicy graveSealPolicy
-        +GraveSealTiming graveSealTiming
-        +number nearHomeRadius
-        +number maxTargetMagic
-        +number graveSealEarlyStr
+    class TacticalContext {
+        +TacticalScale scale
+        +resolveParameters(phase, player, ...) DynamicBotParameters
     }
 
-    class SimulationRunner {
-        +runBatch(config) SimulationSummaryReport
+    class AdaptiveNavigator {
+        +findPath(from, to, ...) Direction
+        +wanderSafe(...) BotAction
+        +updateTurn(pos) void
+        +triggerRescue(turns) void
     }
 
-    class SimulationTelemetry {
-        +bindToEventBus(eventBus) void
-        +startNewRun(runIndex, seed) void
-        +recordTurnSnapshot(...) void
-        +finalizeCurrentRun(...) void
+    class EightStepController {
+        +handleEightStepCycle(...) BotAction
+        +clearEightStepState() void
     }
 
-    AutoPlayBot --> BotStrategyTuning
+    class Behaviors {
+        <<module>>
+        BootstrapBehavior
+        GraveSealBehavior
+        ResourceFarmBehavior
+        RelocateBehavior
+        CombatBehavior
+        DragonSlayBehavior
+        EscapeBehavior
+    }
+
+    AutoPlayBot --> TacticalContext
+    AutoPlayBot --> AdaptiveNavigator
+    AutoPlayBot --> EightStepController
+    AutoPlayBot --> Behaviors
+    Behaviors --> AdaptiveNavigator
+    Behaviors --> TacticalContext
     SimulationRunner --> AutoPlayBot
     SimulationRunner --> SimulationTelemetry
 ```
 
 #### コアアルゴリズム
-1. **フェーズ駆動型ステートマシン**:
-   `BOOTSTRAP`（剣・鍵初期確保） → `GRAVE_SEAL`（墓完全密閉） → `POWER_RUSH`（8歩開錠・石奉納） → `DRAGON_SLAY`（首斜め討伐） → `CROWN_ESCAPE`（王冠4個歩行脱出）。
-2. **8歩周期宝箱開錠チェーン**:
-   `findNearbyChestForEightStepCycle()` により、石排出直後に近傍（距離2〜6）の未開封宝箱を全探索。パリティ調整可能なピボット／待機マス間を往復して正確に8歩目で踏み込み、100%石確定排出を連続チェーン化。
-3. **アイテム持ち替え制御 (Hands-Free Rule)**:
-   鍵一時ドロップ（`tempDroppedKeyPos`）→ 石回収（`itemToPickupPos`）→ 帰還奉納 → 鍵再回収の遷移と、10ターン安全弁タイムアウト（`MAX_ITEM_SWAP_TURNS`）。
-4. **多層スタック・逡巡防止機構**:
-   - 宝箱用／アイテム用の目標分離ロック＆ヒステリシス（`-3` 距離ボーナス）。
-   - 孤立目標の即時ブラックリスト化（`unreachableTargets`）と上位5候補走査（BFS Early Exit）。
-   - ワープタブーリスト（`recentWarpTiles`）による逆戻りピンポン遮断（コスト `+500`）。
-   - 危険ゾーン境界での進退ループ解消（`recentEvadedTile` ペナルティ ＋ `FREEZE`/`FLASH` 能動突破）。
-   - 振動検知（`oscillationCount >= 3`）と安全徘徊（直進慣性ボーナス `-2`、袋小路緊急脱出魔法）。
+1. **状況適応型フェーズステートマシン**:
+   `BOOTSTRAP`（初期装備確保・詰み検知） → `GRAVE_SEAL`（チョークポイント墓封鎖） → `RESOURCE_FARM`（8歩開錠・石奉納・コイン換金） → `RELOCATE_HOME`（前線基地化） → `DRAGON_SLAY`（首斜め討伐） → `CROWN_ESCAPE`（王冠4個歩行脱出）。
+2. **幾何スケール連動と動的パラメータ導出 (`TacticalContext`)**:
+   マップ解像度（32x32〜64x64）、トポロジー、進行度から `TacticalScale`（近傍・中距離・遠征半径）と `DynamicBotParameters` を動的算出。
+3. **訪問ヒートマップによる周回ループ打開 (`CombatBehavior`)**:
+   時間減衰型ヒートマップにより敵との周回鬼ごっこを検知し、障害物越し `KICK` スナイプまたは近傍 `FREEZE` 氷像バリケード化で能動打開。
+4. **MP=1 セーフティリザーブ保護**:
+   `BREAK` 習得後、MP=1の壁破壊能力（消費コスト0）を死守するため、他の魔法によるMP枯渇を拒否。
+5. **8歩周期宝箱開錠チェーン (`EightStepController`)**:
+   石排出直後に近傍（距離2〜6）の未開封宝箱を全探索。パリティ調整可能なピボット／待機マス間を往復して正確に8歩目で踏み込み、100%石確定排出を連続チェーン化。
+6. **多層スタック・逡巡防止機構 (`AdaptiveNavigator`)**:
+   一元化された直近訪問履歴、ピンポンカウンタ、孤立目標ブラックリスト（BFS Early Exit）、ワープタブーリストによりループを強固に遮断。
 
 ---
 

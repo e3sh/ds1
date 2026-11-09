@@ -172,13 +172,13 @@ console.log('Testing 4: AutoPlayBot state machine, phase transition & decision m
   assert.strictEqual(botStandard.currentPhase, 'BOOTSTRAP', 'Initial phase must be BOOTSTRAP');
   assert.ok(action1.type === 'MOVE' || action1.type === 'SPACE' || action1.type === 'WAIT');
 
-  // 4-B. 剣・鍵を入手したら POWER_RUSH (FARMING) フェーズへ遷移
+  // 4-B. 剣・鍵を入手したら RESOURCE_FARM (旧 POWER_RUSH) フェーズへ遷移
   player.hasSword = true;
   player.holdItem = 'KEY';
   const action2 = botStandard.decideAction(engine);
   assert.ok(
-    botStandard.currentPhase === 'POWER_RUSH' || botStandard.currentPhase === 'FARMING',
-    'Phase must transition to POWER_RUSH / FARMING when sword and key held'
+    botStandard.currentPhase === 'RESOURCE_FARM' || (botStandard.currentPhase as any) === 'POWER_RUSH',
+    'Phase must transition to RESOURCE_FARM when sword and key held'
   );
 
   // 4-C. HPピンチ時 (HP < 35%) の緊急行動: 我が家への帰還を最優先
@@ -190,11 +190,11 @@ console.log('Testing 4: AutoPlayBot state machine, phase transition & decision m
   // 4-D. ドラゴン討伐条件 (STR >= 350,000 & 防御力EXP育成 & MP備蓄完了) 達成時のフェーズ遷移
   player.hp = 1000;
   player.strength = 450000;
-  player.experience = 15000; // 防御力育成前（新基準 targetDefense 40,000 未達）: 周囲に狩れる敵がいれば POWER_RUSH 継続
+  player.experience = 15000; // 防御力育成前: 周囲に狩れる敵がいれば RESOURCE_FARM 継続
   player.magic = 5;
-  botStandard.graveSealAborted = true; // 墓封鎖完了状態として移転/決戦進軍を検証
+  (botStandard as any).graveSealAborted = true; // 墓封鎖完了状態として移転/決戦進軍を検証
   const actionFarmExp = botStandard.decideAction(engine);
-  assert.strictEqual(botStandard.currentPhase, 'POWER_RUSH', 'Should continue POWER_RUSH to build defense EXP');
+  assert.ok(botStandard.currentPhase === 'RESOURCE_FARM' || (botStandard.currentPhase as any) === 'POWER_RUSH', 'Should continue RESOURCE_FARM to build defense EXP');
 
   // 防御力育成完了（EXP >= 415,000）: 決戦・家移転フェーズへ遷移
   player.experience = 420000;
@@ -284,8 +284,8 @@ console.log('Testing 6: Death emergency priority & Potion pickup/swap with magic
     }
 
     const action = bot.decideAction(engine);
-    // パニック帰宅でなく POWER_RUSH フェーズで宝箱開錠や探索を行う
-    assert.strictEqual(bot.currentPhase, 'POWER_RUSH', 'Should continue POWER_RUSH when magic is 0 even with death');
+    // パニック帰宅でなく RESOURCE_FARM フェーズで宝箱開錠や探索を行う
+    assert.ok(bot.currentPhase === 'RESOURCE_FARM' || (bot.currentPhase as any) === 'POWER_RUSH', 'Should continue RESOURCE_FARM when magic is 0 even with death');
     assert.ok(action.type === 'MOVE' || action.type === 'SPACE', 'Should continue normal action rather than panic-freeze');
   }
 
@@ -479,7 +479,8 @@ console.log('Testing 6: Death emergency priority & Potion pickup/swap with magic
     assert.strictEqual(act10.type, 'MOVE', 'Step 10: Should move to adjacent floor to drop key');
 
     // 振動検知が誤作動していないこと（oscillationCount が 3 以上になって強制 wander していないこと）
-    assert.strictEqual((bot as any).oscillationCount, 0, 'oscillationCount should be 0 during 8-step mode');
+    const oscCount = (bot as any).oscillationCount ?? bot.nav.oscillationCount;
+    assert.strictEqual(oscCount, 0, 'oscillationCount should be 0 during 8-step mode');
 
     console.log('✓ 7. 8-Step diagonal chest cycle in POWER_RUSH verified successfully.');
   }
@@ -515,7 +516,8 @@ console.log('Testing 6: Death emergency priority & Potion pickup/swap with magic
 
     // 危険な敵がいるため、8歩調整モード (eightStepTargetChestPos) はセットされず、即時回収/安全退避へ
     const act = bot.step(engine);
-    assert.strictEqual((bot as any).eightStepTargetChestPos, null, 'Should not start 8-step cycle when lethal enemy is adjacent');
+    const eightTarget = (bot as any).eightStepTargetChestPos ?? bot.eightStepController.eightStepTargetChestPos;
+    assert.strictEqual(eightTarget, null, 'Should not start 8-step cycle when lethal enemy is adjacent');
   }
 }
 

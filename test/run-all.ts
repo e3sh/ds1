@@ -26,22 +26,12 @@ import './test-phase11.js';
 import './test-phase12.js';
 import './test-demo-mode.js';
 import './test-autoplay-verify.js';
-import './test-map-assessment-and-potion.js';
-import './test-pingpong-and-demo-sound.js';
-import './test-autoplay-continuous-warp.js';
-import './test-autoplay-isolated-target.js';
 import './test-home-relocation-and-respawn.js';
-import './test-autoplay-home-relocation.js';
-import './test-autoplay-combat-control.js';
-import './test-autoplay-pingpong-telemetry.js';
-import './test-autoplay-threat-and-potion.js';
 import './test-theme-block-allocator.js';
 import './test-theme-block-catalog.js';
 import './test-hierarchical-generator.js';
-import './test-autoplay-tactical-metadata.js';
-import './test-autoplay-sticky-target.js';
-import './test-autoplay-magic-and-chest.js';
-import './test-autoplay-v2-integration.js';
+import './test-autoplay-integration.js';
 import './systems/MapProfiler.test.js';
+
 
 

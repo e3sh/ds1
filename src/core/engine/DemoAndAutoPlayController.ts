@@ -2,7 +2,6 @@ import { Position } from '../../models/Types.js';
 import { ProceduralMapOptions } from '../../systems/ProceduralMapGenerator.js';
 import { MapPresetData } from '../../services/MapPresetManager.js';
 import { AutoPlayBot } from '../../ai/AutoPlayBot.js';
-import { AdaptiveAutoPlayBot } from '../../ai/v2/AdaptiveAutoPlayBot.js';
 import type { GameEngine } from '../GameEngine.js';
 
 export class DemoAndAutoPlayController {
@@ -12,7 +11,7 @@ export class DemoAndAutoPlayController {
   private isAutoPlayVerify: boolean = false;
   private autoPlaySpeed: number = 1;
   private isAutoPlayPaused: boolean = false;
-  private demoBot: AutoPlayBot | AdaptiveAutoPlayBot | null = null;
+  private demoBot: AutoPlayBot | null = null;
   private useV2Bot: boolean = true;
   private demoIntervalId: number | null = null;
   private demoEndDelayFrames: number = 0;
@@ -105,18 +104,15 @@ export class DemoAndAutoPlayController {
     return this.useV2Bot;
   }
 
-  private createBotInstance(profile: 'NOVICE' | 'STANDARD' | 'EXPERT' = 'STANDARD'): AutoPlayBot | AdaptiveAutoPlayBot {
-    if (this.useV2Bot) {
-      return new AdaptiveAutoPlayBot({ profile });
-    }
+  private createBotInstance(profile: 'NOVICE' | 'STANDARD' | 'EXPERT' = 'STANDARD'): AutoPlayBot {
     return new AutoPlayBot({ profile });
   }
 
-  public getDemoBot(): AutoPlayBot | AdaptiveAutoPlayBot | null {
+  public getDemoBot(): AutoPlayBot | null {
     return this.demoBot;
   }
 
-  public setDemoBot(bot: AutoPlayBot | AdaptiveAutoPlayBot | null): void {
+  public setDemoBot(bot: AutoPlayBot | null): void {
     this.demoBot = bot;
   }
 

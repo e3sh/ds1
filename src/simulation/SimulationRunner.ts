@@ -2,7 +2,6 @@ import { GameEngine } from '../core/GameEngine.js';
 import { SeedRandom } from '../core/SeedRandom.js';
 import { GameEventBus } from '../core/GameEventBus.js';
 import { AutoPlayBot, BotSkillProfile, BotStrategyTuning } from '../ai/AutoPlayBot.js';
-import { AdaptiveAutoPlayBot } from '../ai/v2/AdaptiveAutoPlayBot.js';
 import { SimulationTelemetry, SimulationSummaryReport } from './SimulationTelemetry.js';
 import {
   DungeonTopology,
@@ -64,14 +63,11 @@ export class SimulationRunner {
         ruleMode: config.ruleMode,
       });
 
-      const botVersion = config.botVersion ?? 'v2';
-      const bot = botVersion === 'v2'
-        ? new AdaptiveAutoPlayBot({ profile: botProfile, maxTurnsLimit })
-        : new AutoPlayBot({
-            profile: botProfile,
-            maxTurnsLimit,
-            strategyTuning: config.strategyTuning,
-          });
+      const bot = new AutoPlayBot({
+        profile: botProfile,
+        maxTurnsLimit,
+        strategyTuning: config.strategyTuning,
+      });
 
       let turns = 0;
       while (turns < maxTurnsLimit && engine.getState() === 'PLAYING') {

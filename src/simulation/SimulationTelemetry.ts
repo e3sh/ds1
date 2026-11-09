@@ -8,7 +8,7 @@ import {
   PlayPacingMode,
   ResolvedDungeonTuningParams,
 } from '../models/Types.js';
-import { BotSkillProfile } from '../ai/AutoPlayBot.js';
+import { BotSkillProfile } from '../ai/BotTypes.js';
 
 export interface SingleRunRecord {
   runIndex: number;

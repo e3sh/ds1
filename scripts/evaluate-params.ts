@@ -1,5 +1,5 @@
 import { SimulationRunner, SimulationConfig } from '../src/simulation/SimulationRunner.js';
-import { BotStrategyTuning } from '../src/ai/AutoPlayBot.js';
+import { BotStrategyTuning } from '../src/ai/BotTypes.js';
 
 interface ExperimentCase {
   name: string;

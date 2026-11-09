@@ -1,6 +1,5 @@
 import { DeathInfo, Direction, GameState, Position, TargetEnemyInfo, ResolvedDungeonTuningParams } from '../models/Types.js';
 import { AutoPlayBot } from '../ai/AutoPlayBot.js';
-import { AdaptiveAutoPlayBot } from '../ai/v2/AdaptiveAutoPlayBot.js';
 import { Player } from '../models/Player.js';
 import { WorldMap } from '../models/WorldMap.js';
 import { EnemyInstance } from '../models/Enemy.js';
@@ -359,11 +358,11 @@ export class GameEngine {
     this.demoController.setDemoStuckFrames(val);
   }
 
-  public get demoBot(): AutoPlayBot | AdaptiveAutoPlayBot | null {
+  public get demoBot(): AutoPlayBot | null {
     return this.demoController.getDemoBot();
   }
 
-  public set demoBot(bot: AutoPlayBot | AdaptiveAutoPlayBot | null) {
+  public set demoBot(bot: AutoPlayBot | null) {
     this.demoController.setDemoBot(bot);
   }
 

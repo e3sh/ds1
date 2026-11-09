@@ -1,13 +1,13 @@
-import { Direction, Position } from '../../../models/Types.js';
-import { WorldMap } from '../../../models/WorldMap.js';
-import { Player } from '../../../models/Player.js';
-import { EnemyInstance } from '../../../models/Enemy.js';
-import { Dragon } from '../../../models/Dragon.js';
-import { ThreatEvaluator } from '../../../systems/ThreatEvaluator.js';
-import { MagicSystem } from '../../../systems/MagicSystem.js';
-import { MovementSystem } from '../../../systems/MovementSystem.js';
-import { KICK_MAX_RANGE } from '../../../config/Constants.js';
-import { BehaviorResult, DynamicBotParameters } from '../BotTypesV2.js';
+import { Direction, Position } from '../../models/Types.js';
+import { WorldMap } from '../../models/WorldMap.js';
+import { Player } from '../../models/Player.js';
+import { EnemyInstance } from '../../models/Enemy.js';
+import { Dragon } from '../../models/Dragon.js';
+import { ThreatEvaluator } from '../../systems/ThreatEvaluator.js';
+import { MagicSystem } from '../../systems/MagicSystem.js';
+import { MovementSystem } from '../../systems/MovementSystem.js';
+import { KICK_MAX_RANGE } from '../../config/Constants.js';
+import { BehaviorResult, DynamicBotParameters } from '../BotTypes.js';
 import { AdaptiveNavigator } from '../AdaptiveNavigator.js';
 import { TacticalContext } from '../TacticalContext.js';
 

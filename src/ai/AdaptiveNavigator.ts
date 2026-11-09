@@ -1,13 +1,13 @@
-import { Direction, Position } from '../../models/Types.js';
-import { WorldMap } from '../../models/WorldMap.js';
-import { Player } from '../../models/Player.js';
-import { EnemyInstance } from '../../models/Enemy.js';
-import { Dragon } from '../../models/Dragon.js';
-import { Ghost } from '../../models/Ghost.js';
-import { ThreatEvaluator } from '../../systems/ThreatEvaluator.js';
-import { MagicSystem } from '../../systems/MagicSystem.js';
-import { MovementSystem } from '../../systems/MovementSystem.js';
-import { BotActionV2, DynamicBotParameters } from './BotTypesV2.js';
+import { Direction, Position } from '../models/Types.js';
+import { WorldMap } from '../models/WorldMap.js';
+import { Player } from '../models/Player.js';
+import { EnemyInstance } from '../models/Enemy.js';
+import { Dragon } from '../models/Dragon.js';
+import { Ghost } from '../models/Ghost.js';
+import { ThreatEvaluator } from '../systems/ThreatEvaluator.js';
+import { MagicSystem } from '../systems/MagicSystem.js';
+import { MovementSystem } from '../systems/MovementSystem.js';
+import { BotAction, DynamicBotParameters } from './BotTypes.js';
 import type { TacticalContext } from './TacticalContext.js';
 
 export interface PathResult {
@@ -674,7 +674,7 @@ export class AdaptiveNavigator {
     map: WorldMap,
     enemies: EnemyInstance[],
     dragon?: Dragon
-  ): BotActionV2 {
+  ): BotAction {
     const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
     const diagDirs: Direction[] = ['UP_LEFT', 'UP_RIGHT', 'DOWN_LEFT', 'DOWN_RIGHT'];
     const dirs = (player.canDiagonal || player.experience >= 12000) ? [...cardDirs, ...diagDirs] : cardDirs;
