@@ -52,6 +52,15 @@ export class Dragon {
       facingDir: 'DOWN',
     };
 
+    const wrap = (x: number, y: number): Position => ({
+      x: ((x % 64) + 64) % 64,
+      y: ((y % 64) + 64) % 64,
+    });
+    this.centerPos = wrap(centerPos.x, centerPos.y);
+
+    // 胴体 (BODY: 戦闘不可・通過不可: HP 655,340, DEF 655,350)
+    this.body.pos = wrap(this.centerPos.x, this.centerPos.y);
+
     // 3つの首 (標準パラメータ)
     // LEFT: HP 650,000 / ATK 600,000 / DEF 300,000 (* dragonDefRatio)
     // CENTER: HP 650,000 / ATK 500,000 / DEF 400,000 (* dragonDefRatio)
@@ -59,7 +68,7 @@ export class Dragon {
     this.heads = [
       {
         type: 'LEFT_HEAD',
-        pos: { x: centerPos.x - 1, y: centerPos.y },
+        pos: wrap(this.centerPos.x - 1, this.centerPos.y),
         hp: Math.floor(650000 * dragonDefRatio),
         maxHp: Math.floor(650000 * dragonDefRatio),
         atk: Math.floor(600000 * dragonDefRatio),
@@ -69,7 +78,7 @@ export class Dragon {
       },
       {
         type: 'CENTER_HEAD',
-        pos: { x: centerPos.x, y: centerPos.y - 1 },
+        pos: wrap(this.centerPos.x, this.centerPos.y - 1),
         hp: Math.floor(650000 * dragonDefRatio),
         maxHp: Math.floor(650000 * dragonDefRatio),
         atk: Math.floor(500000 * dragonDefRatio),
@@ -79,7 +88,7 @@ export class Dragon {
       },
       {
         type: 'RIGHT_HEAD',
-        pos: { x: centerPos.x + 1, y: centerPos.y },
+        pos: wrap(this.centerPos.x + 1, this.centerPos.y),
         hp: Math.floor(650000 * dragonDefRatio),
         maxHp: Math.floor(650000 * dragonDefRatio),
         atk: Math.floor(500000 * dragonDefRatio),
@@ -92,7 +101,7 @@ export class Dragon {
     // 尻尾 (TAIL: 下側, 接触で初期地点へ弾き飛ばす)
     this.tail = {
       type: 'TAIL',
-      pos: { x: centerPos.x, y: centerPos.y + 1 },
+      pos: wrap(this.centerPos.x, this.centerPos.y + 1),
       hp: 655340,
       maxHp: 655340,
       atk: 0,
@@ -106,14 +115,16 @@ export class Dragon {
    * 指定座標にある部位を取得（なければnull）
    */
   public getPartAt(pos: Position): DragonPart | null {
-    if (this.body.pos.x === pos.x && this.body.pos.y === pos.y) {
+    const px = ((pos.x % 64) + 64) % 64;
+    const py = ((pos.y % 64) + 64) % 64;
+    if (this.body.pos.x === px && this.body.pos.y === py) {
       return this.body;
     }
-    if (this.tail.pos.x === pos.x && this.tail.pos.y === pos.y) {
+    if (this.tail.pos.x === px && this.tail.pos.y === py) {
       return this.tail;
     }
     for (const head of this.heads) {
-      if (head.isAlive && head.pos.x === pos.x && head.pos.y === pos.y) {
+      if (head.isAlive && head.pos.x === px && head.pos.y === py) {
         return head;
       }
     }

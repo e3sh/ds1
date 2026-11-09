@@ -131,6 +131,32 @@ export class AutoPlayBot {
       }
     }
 
+    // 1-C. 序盤 RESOURCE_FARM 資源遮断・攻撃力不足ハマり（物理的詰み）検知 -> GiveUP
+    if (player.hasSword && this.currentPhase === 'RESOURCE_FARM') {
+      if (this.nav.detectEarlyResourceFarmTrap(player, map, enemies, this.params, dragon)) {
+        this.isGivenUp = true;
+        this.currentTargetDesc = '💀 詰み検知: 序盤の攻撃力不足・進行遮断によりギブアップ';
+        return { type: 'GIVE_UP' };
+      }
+    }
+
+    // 1-D. 袋小路・敵封鎖による完全拘束・孤立ハマり（物理的詰み）検知 -> 脱出魔法詠唱 or GiveUP
+    if (this.nav.detectIncarcerationTrap(player, map, enemies)) {
+      if (MagicSystem.canCast(player, 'RETURN').allowed && !player.isFlying) {
+        this.currentTargetDesc = '🌀 袋小路拘束打開: RETURN詠唱で脱出';
+        this.nav.clearPositionHistory();
+        return { type: 'MAGIC', magic: 'RETURN' };
+      }
+      if (MagicSystem.canCast(player, 'JUMP').allowed) {
+        this.currentTargetDesc = '🌀 袋小路拘束打開: JUMP詠唱で脱出';
+        this.nav.clearPositionHistory();
+        return { type: 'MAGIC', magic: 'JUMP' };
+      }
+      this.isGivenUp = true;
+      this.currentTargetDesc = '💀 詰み検知: 袋小路・敵封鎖により脱出不能のためギブアップ';
+      return { type: 'GIVE_UP' };
+    }
+
     let decidedAction: BotAction | null = null;
 
     const isAdjacentToDragonHead = dragon?.heads.some(h => {
@@ -194,9 +220,16 @@ export class AutoPlayBot {
         const circlingResult = (this.currentPhase !== 'CROWN_ESCAPE' && this.currentPhase !== 'DRAGON_SLAY' && !isSwappingItem)
           ? CombatBehavior.tryBreakCirclingLoop(player, map, enemies, dragon, this.nav, this.params)
           : null;
+        const breakthroughResult = (!circlingResult && this.currentPhase !== 'CROWN_ESCAPE' && this.currentPhase !== 'DRAGON_SLAY' && !isSwappingItem)
+          ? CombatBehavior.tryBreakthroughCombat(player, map, enemies, dragon, this.nav, this.params)
+          : null;
+
         if (circlingResult) {
           this.currentTargetDesc = circlingResult.description;
           decidedAction = circlingResult.action;
+        } else if (breakthroughResult) {
+          this.currentTargetDesc = breakthroughResult.description;
+          decidedAction = breakthroughResult.action;
         } else {
           // 5. 各フェーズの主戦略行動 (Behavior Execution)
           let behaviorResult: BehaviorResult | null = null;
@@ -339,7 +372,7 @@ export class AutoPlayBot {
         this.isGivenUp = true;
         engine.handleGameOver({
           cause: 'GIVE_UP_UNSOLVABLE',
-          message: '💀 詰み検知: 剣への到達経路が存在しないためギブアップ',
+          message: this.currentTargetDesc || '💀 詰み検知: 進行経路が存在しないためギブアップ',
           damage: 0,
           turn: engine.getTotalTurns(),
         });

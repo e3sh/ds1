@@ -33,9 +33,10 @@ export class DragonSlayBehavior {
 
     // 0. 不要な手持ちアイテム（KEY, RING, CROSS等）があれば即座に手放して身軽にする
     if (player.holdItem !== 'NONE') {
+      const isHome = map.getBaseTile(curPos) === 'HOME';
       const floorItem = map.getItem(curPos);
       const floorObj = map.getObject(curPos);
-      if (floorItem === 'NONE' && floorObj === 'NONE') {
+      if (!isHome && floorItem === 'NONE' && floorObj === 'NONE') {
         return {
           action: { type: 'SPACE' },
           description: `🗑️ 決戦前不要アイテム手放し [${player.holdItem}]`,
@@ -99,15 +100,16 @@ export class DragonSlayBehavior {
 
     // 4. 首の斜め隣接マスにいる場合: 首攻撃を実行！（HP・MP万全時のみ）
     for (const head of livingHeads) {
-      const dx = Math.abs(curPos.x - head.pos.x);
-      const dy = Math.abs(curPos.y - head.pos.y);
+      const headPos = map.wrapPosition(head.pos);
+      const dx = Math.abs(curPos.x - headPos.x);
+      const dy = Math.abs(curPos.y - headPos.y);
       const isDiagonal = (dx === 1 || dx === map.width - 1) && (dy === 1 || dy === map.height - 1);
       if (isDiagonal) {
-        const dir = this.getDirectionToward(curPos, head.pos, map);
+        const dir = this.getDirectionToward(curPos, headPos, map);
         if (dir) {
           return {
             action: { type: 'MOVE', dir },
-            description: `🐉 ドラゴンの首攻撃実行！ (${head.pos.x}, ${head.pos.y})`,
+            description: `🐉 ドラゴンの首攻撃実行！ (${headPos.x}, ${headPos.y})`,
           };
         }
       }

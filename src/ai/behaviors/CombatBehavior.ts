@@ -270,6 +270,67 @@ export class CombatBehavior {
   }
 
   /**
+   * 停滞（ヒートマップ飽和・往復・未踏停滞）検知時の安全敵撃破突破（Breakthrough Combat）
+   */
+  public static tryBreakthroughCombat(
+    player: Player,
+    map: WorldMap,
+    enemies: EnemyInstance[],
+    dragon: Dragon,
+    nav: AdaptiveNavigator,
+    params: DynamicBotParameters
+  ): BehaviorResult | null {
+    if (!player.hasSword) return null;
+    if (player.holdItem === 'CROSS') return null;
+
+    // 停滞していない場合は通常行動に任せる
+    if (!nav.isStagnated(player, map)) return null;
+
+    const curPos = player.pos;
+    const adjacentTargets = this.getAdjacentEnemies(curPos, enemies, map);
+
+    // 1. 直角隣接の安全な敵（被ダメ0 かつ turnsToKill <= 8）を直接攻撃
+    for (const { enemy, dir } of adjacentTargets) {
+      if (dragon && dragon.getPartAt(enemy.pos)) continue;
+      const details = ThreatEvaluator.evaluateThreatDetails(player, enemy);
+      if (details.defenseThreat === 'NO_DAMAGE' && details.turnsToKill <= 8) {
+        return {
+          action: { type: 'MOVE', dir },
+          description: `⚔️ 停滞打破: 安全な敵を攻撃突破 (${enemy.name}) [撃破まで:${details.turnsToKill}T]`,
+        };
+      }
+    }
+
+    // 2. 直角隣接にいない場合でも、近傍（マンハッタン距離4以内）の安全撃破可能敵へアプローチ
+    let nearestSafe: EnemyInstance | null = null;
+    let minDist = Infinity;
+    for (const e of enemies) {
+      if (!e.isAlive || e.isPermanentlyFrozen) continue;
+      if (dragon && dragon.getPartAt(e.pos)) continue;
+      const dist = map.getTorusDistance(curPos, e.pos).manhattan;
+      if (dist <= 4 && dist < minDist) {
+        const details = ThreatEvaluator.evaluateThreatDetails(player, e);
+        if (details.defenseThreat === 'NO_DAMAGE' && details.turnsToKill <= 8) {
+          minDist = dist;
+          nearestSafe = e;
+        }
+      }
+    }
+
+    if (nearestSafe) {
+      const dir = nav.findPath(curPos, nearestSafe.pos, map, player, enemies, params, { dragon });
+      if (dir) {
+        return {
+          action: { type: 'MOVE', dir },
+          description: `⚔️ 停滞打破: 障害敵撃破へ接近 (${nearestSafe.name}) [距離:${minDist}]`,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * 訪問ヒートマップにより検知された障害物（墓・岩）周回カルーセル無限ループの打開
    */
   public static tryBreakCirclingLoop(

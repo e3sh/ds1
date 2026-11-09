@@ -32,7 +32,7 @@ export interface CirclingContext {
 export class AdaptiveNavigator {
   // 1. 直近訪問座標履歴 (ピンポン・周回検知用)
   private recentPositions: Position[] = [];
-  private readonly MAX_HISTORY_LEN: number = 16;
+  private readonly MAX_HISTORY_LEN: number = 32;
 
   // 1-B. 訪問ヒートマップ (時間減衰型熱量マップ: 座標キー "x,y" => 熱量)
   public heatMap: Map<string, number> = new Map();
@@ -43,6 +43,7 @@ export class AdaptiveNavigator {
   private visitedTilesEver: Set<string> = new Set();
   public turnsSinceNewTile: number = 0;
   public consecutiveSwordBlockedTurns: number = 0;
+  public consecutiveFarmBlockedTurns: number = 0;
 
   // 2. 統合振動・停滞カウンタ
   public oscillationCount: number = 0;
@@ -374,6 +375,215 @@ export class AdaptiveNavigator {
 
     return false;
   }
+  /**
+   * 訪問ヒートマップ・往復履歴に基づく総合停滞判定
+   */
+  public isStagnated(player: Player, map: WorldMap): boolean {
+    const curHeat = this.getHeat(player.pos);
+    const neighborhoodHeat = this.getNeighborhoodHeat(player.pos, map, 1);
+    const isHeatHigh = curHeat >= 11 || neighborhoodHeat >= 35;
+    const isStuckWithoutNewTile = this.turnsSinceNewTile >= 12;
+    const isPingPong = this.pingPongCount >= 2 || this.oscillationCount >= 2;
+    return (isHeatHigh && isStuckWithoutNewTile) || isPingPong || neighborhoodHeat >= 45;
+  }
+
+  /**
+   * 袋小路・敵封鎖による完全拘束・孤立ハマり（Incarceration Trap）の検知
+   *
+   * 1マスの完全静止だけでなく、2〜3マスを往復・循環して袋小路から出られない閉域ループも確実に検知。
+   *
+   * 条件:
+   * 1. 周辺総熱量が極限飽和 (neighborhoodHeat >= 52.0、2〜3マス往復でも合計は約66.7に収束)
+   * 2. 新規マス開拓なしターン数が 18 ターン以上継続
+   * 3. 直近 18 ターンの訪問マスが「高々 3 種類以下」（小閉域ループ）
+   * 4. 閉域から外部へ抜ける脱出路が、壁または安全に倒せない敵（turnsToKill > 8）で完全に塞がれている
+   */
+  public detectIncarcerationTrap(
+    player: Player,
+    map: WorldMap,
+    enemies: EnemyInstance[]
+  ): boolean {
+    const curPos = player.pos;
+
+    // 1. 周辺総熱量（半径2）の飽和チェック (1〜3マス往復でも20ターン前後で55〜66に収束)
+    const neighborhoodHeat = this.getNeighborhoodHeat(curPos, map, 2);
+    if (neighborhoodHeat < 52.0) {
+      return false;
+    }
+
+    // 2. 新規未踏マスの開拓停滞チェック (最低18ターン以上同一局所エリアに滞留)
+    if (this.turnsSinceNewTile < 18) {
+      return false;
+    }
+
+    // 3. 直近の移動履歴が「高々 3 種類以下」の閉域ループかチェック
+    const rLen = this.recentPositions.length;
+    if (rLen < 18) {
+      return false;
+    }
+    const recentSlice = this.recentPositions.slice(-18);
+    const uniquePositions = new Set(recentSlice.map(p => `${p.x},${p.y}`));
+    if (uniquePositions.size > 3) {
+      return false;
+    }
+
+    // 4. 閉域内の各マスから、外部へ安全に脱出できる出口が存在するか検査
+    const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
+    const effectiveDef = Math.floor(player.experience * 1.0);
+
+    for (const posKey of uniquePositions) {
+      const [px, py] = posKey.split(',').map(Number);
+      const cellPos = { x: px, y: py };
+
+      for (const d of cardDirs) {
+        const nextPos = map.wrapPosition(MovementSystem.getNextPosition(cellPos, d));
+        const nextKey = `${nextPos.x},${nextPos.y}`;
+
+        // すでに閉域内部のマスであれば、内部移動なので外部脱出路ではない
+        if (uniquePositions.has(nextKey)) continue;
+
+        const baseTile = map.getBaseTile(nextPos);
+        const objTile = map.getObject(nextPos);
+
+        // 壁や墓（オブジェクトなし）は進入不能
+        if (baseTile === 'WALL_STATIC') continue;
+        if (baseTile === 'GRAVE' && objTile === 'NONE') continue;
+
+        // 岩（BLOCK）がある場合、BREAK可能なら脱出経路になり得るので除外
+        if (objTile === 'BLOCK') {
+          if (MagicSystem.canCast(player, 'BREAK').allowed) return false;
+          if (player.holdItem === 'RING') {
+            const pushDest = map.wrapPosition(MovementSystem.getNextPosition(nextPos, d));
+            if (map.isPushDestinationValid(pushDest, enemies)) return false;
+          }
+          continue;
+        }
+
+        // 敵がいるマス
+        const enemy = enemies.find(e => e.isAlive && e.pos.x === nextPos.x && e.pos.y === nextPos.y);
+        if (enemy) {
+          if (player.holdItem === 'CROSS') continue;
+          const details = ThreatEvaluator.evaluateThreatDetails(player, enemy);
+          // 安全に短手数（8ターン以内）で倒せる敵なら、殴り倒して脱出できるため除外
+          if (details.defenseThreat === 'NO_DAMAGE' && details.turnsToKill <= 8) {
+            return false;
+          }
+          continue;
+        }
+
+        // 敵も障害物もない空き床が存在する場合：
+        // ただし、そのマスが即死敵の直角隣接（進入した瞬間に即死するマス）でないか確認
+        const isLethalDeathTrap = enemies.some(e => {
+          if (!e.isAlive || e.isPermanentlyFrozen || e.frozenTimer > 0) return false;
+          if (map.getTorusDistance(nextPos, e.pos).manhattan !== 1) return false;
+          return Math.max(0, e.atk - effectiveDef) >= player.hp;
+        });
+
+        // 即死デストラップではない安全な空き床が1つでもあれば、外部へ脱出可能
+        if (!isLethalDeathTrap) {
+          return false;
+        }
+      }
+    }
+
+    // 閉域内の全マスから外部への脱出路が完全に遮断されている
+    return true;
+  }
+
+  /**
+   * 序盤 RESOURCE_FARM 時の資源遮断・攻撃力不足ハマり（物理的詰み）の検知
+   *
+   * 条件:
+   * 1. 剣所持直後 (player.hasSword && player.strength <= 10)
+   * 2. 魔法（BREAK/JUMP/FLY）および指輪（RING）が未所持・使用不能
+   * 3. マップ上の全有効資源（宝箱、石、鍵、コイン、指輪）への経路がすべて到達不能 (findPath === null)
+   * 4. 安全に撃破可能な敵（被ダメ0 かつ turnsToKill <= 8）がマップ上に存在しない
+   * 5. 局所熱量飽和または長期停滞
+   */
+  public detectEarlyResourceFarmTrap(
+    player: Player,
+    map: WorldMap,
+    enemies: EnemyInstance[],
+    params: DynamicBotParameters,
+    dragon?: Dragon
+  ): boolean {
+    if (!player.hasSword || player.strength > 10) {
+      this.consecutiveFarmBlockedTurns = 0;
+      return false;
+    }
+    if (MagicSystem.canCast(player, 'BREAK').allowed) return false;
+    if (MagicSystem.canCast(player, 'JUMP').allowed) return false;
+    if (MagicSystem.canCast(player, 'FLY').allowed) return false;
+    if (player.holdItem === 'RING') return false;
+
+    const curPos = player.pos;
+
+    // 1. 訪問ヒートマップの局所飽和チェック
+    const curHeat = this.getHeat(curPos);
+    const neighborhoodHeat = this.getNeighborhoodHeat(curPos, map, 2);
+    const isHeatSaturated = curHeat >= 11 && neighborhoodHeat >= 45 && this.turnsSinceNewTile >= 10;
+    const isLongStagnant = this.turnsSinceNewTile >= 35 && neighborhoodHeat >= 40;
+
+    if (!isHeatSaturated && !isLongStagnant) {
+      return false;
+    }
+
+    // 2. マップ上の全主要育成資源（宝箱、パワーストーン、鍵、コイン、指輪）を列挙
+    const resourcePositions: Position[] = [];
+    for (let y = 0; y < map.height; y++) {
+      for (let x = 0; x < map.width; x++) {
+        const p = { x, y };
+        if (p.x === curPos.x && p.y === curPos.y) continue;
+        if (map.getObject(p) === 'CHEST') {
+          resourcePositions.push(p);
+          continue;
+        }
+        const item = map.getItem(p);
+        if (item === 'POWER_STONE' || item === 'KEY' || item === 'COIN' || item === 'RING') {
+          resourcePositions.push(p);
+        }
+      }
+    }
+
+    // 資源が1つでも到達可能なら詰みではない
+    for (const resPos of resourcePositions) {
+      const dir = this.findPath(curPos, resPos, map, player, enemies, params, { dragon });
+      if (dir !== null) {
+        this.consecutiveFarmBlockedTurns = 0;
+        return false;
+      }
+    }
+
+    // 安全に撃破可能な敵（被ダメ0 かつ turnsToKill <= 8）が生存していれば、排除して道が開ける可能性があるため除外
+    const hasSafeKillableEnemy = enemies.some(e => {
+      if (!e.isAlive || e.isPermanentlyFrozen) return false;
+      const details = ThreatEvaluator.evaluateThreatDetails(player, e);
+      return details.defenseThreat === 'NO_DAMAGE' && details.turnsToKill <= 8;
+    });
+    if (hasSafeKillableEnemy) {
+      this.consecutiveFarmBlockedTurns = 0;
+      return false;
+    }
+
+    this.consecutiveFarmBlockedTurns++;
+
+    // 静的地形で全資源が完全に封鎖されている場合は即時確定
+    const isStaticallySealed = resourcePositions.every(
+      rp => this.findPath(curPos, rp, map, player, [], params, { dragon }) === null
+    );
+
+    if (isStaticallySealed && isHeatSaturated) {
+      return true;
+    }
+
+    // 敵による封鎖も含め、12ターン以上連続で全資源が遮断されている場合は詰み確定
+    if (isLongStagnant && this.consecutiveFarmBlockedTurns >= 12) {
+      return true;
+    }
+
+    return false;
+  }
+
 
   // ==========================================================================
   // トポロジー適応型 BFS 経路探索
@@ -571,7 +781,8 @@ export class AdaptiveNavigator {
         const enemyOnTile = enemyTileMap.get(key);
         if (enemyOnTile) {
           if (player.holdItem === 'CROSS' || d.dir.includes('_')) continue;
-          const threat = ThreatEvaluator.evaluateThreat(player, enemyOnTile);
+          const threatDetails = ThreatEvaluator.evaluateThreatDetails(player, enemyOnTile);
+          const threat = threatDetails.overallThreat;
           if (player.holdItem === 'CROWN' && threat !== 'ONE_SHOT') continue;
           // 初手で敵を撃破する場合、プレイヤーはその場に留まるため他に即死敵が隣接していたら攻撃不可
           if (current.firstDir === null) {
@@ -585,10 +796,18 @@ export class AdaptiveNavigator {
           if (player.hp < player.maxHp * params.emergencyHpRatio && threat !== 'ONE_SHOT' && !(nextPos.x === to.x && nextPos.y === to.y)) {
             continue;
           }
+
+          // 安全撃破可能敵（被ダメ0 かつ 短手数で撃破可能）の突破判定
+          const canBreakthrough = threatDetails.defenseThreat === 'NO_DAMAGE' && threatDetails.turnsToKill <= 8;
+
           if (nextPos.x === to.x && nextPos.y === to.y) {
-            if (threat !== 'ONE_SHOT' && threat !== 'SAFE') continue;
+            if (threat !== 'ONE_SHOT' && threat !== 'SAFE' && !canBreakthrough) continue;
           } else {
-            if (threat !== 'ONE_SHOT') continue;
+            if (threat !== 'ONE_SHOT' && !canBreakthrough) continue;
+          }
+
+          if (canBreakthrough && threat !== 'ONE_SHOT') {
+            stepCost += threatDetails.turnsToKill * 5;
           }
         }
 
@@ -599,7 +818,7 @@ export class AdaptiveNavigator {
         }
 
         if (lethalChebyshevZones.has(key) && !enemyTileMap.has(key) && !isTargetHome) {
-          stepCost += 2000;
+          stepCost += (player.holdItem === 'CROWN' || isEscapePhase) ? 10000 : 2000;
         }
 
         if (threatDangerZones.has(key) && !enemyTileMap.has(key) && !(nextPos.x === to.x && nextPos.y === to.y)) {
@@ -769,6 +988,9 @@ export class AdaptiveNavigator {
     if (validMoves.length === 0) {
       if (MagicSystem.canCast(player, 'RETURN').allowed && !player.isFlying) {
         return { type: 'MAGIC', magic: 'RETURN' };
+      }
+      if (MagicSystem.canCast(player, 'JUMP').allowed) {
+        return { type: 'MAGIC', magic: 'JUMP' };
       }
       if (MagicSystem.canCast(player, 'FREEZE').allowed) {
         return { type: 'MAGIC', magic: 'FREEZE' };
@@ -964,6 +1186,10 @@ export class AdaptiveNavigator {
   public clearPositionHistory(): void {
     this.recentPositions = [];
     this.heatMap.clear();
+    this.turnsSinceNewTile = 0;
+    this.oscillationCount = 0;
+    this.pingPongCount = 0;
+    this.forceWanderTurns = 0;
   }
 
   public getAdjacentDirection(from: Position, to: Position, map: WorldMap): Direction | null {

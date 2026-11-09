@@ -33,7 +33,8 @@ export class EscapeBehavior {
 
     // 0. 不要アイテムの手放し (CROSS, KEY, RING等)
     if (player.holdItem !== 'NONE' && player.holdItem !== 'CROWN') {
-      if (map.getItem(curPos) === 'NONE' && map.getObject(curPos) === 'NONE' &&
+      const isHome = map.getBaseTile(curPos) === 'HOME';
+      if (!isHome && map.getItem(curPos) === 'NONE' && map.getObject(curPos) === 'NONE' &&
           map.getBaseTile(curPos) !== 'WALL_STATIC' && map.getBaseTile(curPos) !== 'WARP') {
         return { action: { type: 'SPACE' }, description: '👑 王冠回収のため不要アイテム手放し' };
       }
@@ -41,7 +42,9 @@ export class EscapeBehavior {
       if (dropDir) {
         return { action: { type: 'MOVE', dir: dropDir }, description: '👑 アイテム手放し空床へ移動' };
       }
-      return { action: { type: 'SPACE' }, description: '👑 不要アイテム強制手放し' };
+      if (!isHome) {
+        return { action: { type: 'SPACE' }, description: '👑 不要アイテム強制手放し' };
+      }
     }
 
     // 1. 王冠所持中 (holdItem === 'CROWN')
@@ -77,27 +80,47 @@ export class EscapeBehavior {
       }
 
       if (adjacentLethalList.length > 0) {
+        // 1. 直角隣接の即死敵の中に一撃撃破（ONE_SHOT）可能な敵がいれば直接攻撃で排除
+        const oneShotTarget = adjacentLethalList.find(
+          item => ThreatEvaluator.evaluateThreatDetails(player, item.enemy).attackThreat === 'ONE_SHOT'
+        );
+        if (oneShotTarget) {
+          return {
+            action: { type: 'MOVE', dir: oneShotTarget.dir },
+            description: `⚔️ 王冠運搬中・隣接即死敵を一撃撃破突破 (${oneShotTarget.enemy.name})`,
+          };
+        }
+
+        // 2. 安全な方向への退避移動
         const evadeDir = nav.findEvadeDirection(curPos, map, enemies, player, dragon);
         if (evadeDir) {
           return { action: { type: 'MOVE', dir: evadeDir }, description: '👑 王冠運搬中緊急退避' };
         }
-        // 逃げ場がない場合、王冠を一時ドロップして魔法封印を解除し次ターン反撃
-        if (map.getItem(curPos) === 'NONE') {
-          return { action: { type: 'SPACE' }, description: '👑 魔法封印解除のため王冠一時ドロップ' };
+
+        // 3. 【自殺ドロップの絶対禁止】
+        // 距離1に即死敵が隣接している状態で SPACE を押すと、ドロップ直後の敵手番で100%確実に殴られて即死する。
+        // そのため SPACE は絶対に押さず、非即死マスへの強行移動または隣接敵への迎撃を選択する。
+        const desperateDir = this.findDesperateEscapeDir(curPos, map, enemies, player, dragon);
+        if (desperateDir) {
+          return {
+            action: { type: 'MOVE', dir: desperateDir.dir },
+            description: `🚨 王冠運搬中・強行突破移動 (${desperateDir.reason})`,
+          };
         }
       }
 
-      // 1-B2. 直角隣接（manhattan=1）には即死敵がいないが、距離2（manhattan=2）に一撃撃破不能な即死敵が迫っている場合:
-      // このターンにその場で王冠をドロップしても距離2の敵からは絶対に攻撃を受けず、次ターンに隣接してきた所をFREEZEで確実に永久凍結できる
+      // 1-B2. 直角隣接（manhattan=1）には即死敵がいないが、近傍（chebyshev <= 2 かつ manhattan <= 3）に危険な敵が迫っている場合:
+      // このターンにその場で王冠をドロップしても直角隣接敵はいないため攻撃を受けず、次ターン手ぶら（魔法詠唱可能）状態で安全にFREEZE/FLASH無力化できる
       const distHomeNow = map.getTorusDistance(curPos, homePos).manhattan;
-      if (player.magic > 0 && !player.hasDeath && map.getItem(curPos) === 'NONE' && distHomeNow > 2) {
+      const isHomeTile = map.getBaseTile(curPos) === 'HOME';
+      if (!isHomeTile && player.magic > 0 && !player.hasDeath && map.getItem(curPos) === 'NONE' && distHomeNow > 2) {
         const approachingLethal = enemies.find(e => {
           if (!this.isActiveEnemy(e)) return false;
           const d = map.getTorusDistance(curPos, e.pos);
-          if (d.manhattan !== 2) return false;
+          if (d.chebyshev > 2 || d.manhattan > 3 || d.manhattan < 2) return false;
           const details = ThreatEvaluator.evaluateThreatDetails(player, e);
           const rawDmg = Math.max(0, e.atk - Math.floor(player.experience));
-          const isLethalOrTwoShot = details.defenseThreat === 'LETHAL' || rawDmg >= player.hp * 0.45;
+          const isLethalOrTwoShot = details.defenseThreat === 'LETHAL' || rawDmg >= player.hp * 0.40;
           return isLethalOrTwoShot && details.attackThreat !== 'ONE_SHOT';
         });
         if (approachingLethal) {
@@ -155,22 +178,47 @@ export class EscapeBehavior {
           };
         }
 
+        // 1. 近傍（チェビシェフ距離1）に危険な敵がいる場合、FREEZEで永久凍結無力化を最優先
         const nearbyDangerous = enemies.find(e => {
           if (!this.isActiveEnemy(e)) return false;
-          const d = map.getTorusDistance(curPos, e.pos).manhattan;
-          if (d > 2) return false;
+          const dist = map.getTorusDistance(curPos, e.pos);
+          if (dist.chebyshev > 1) return false;
           const details = ThreatEvaluator.evaluateThreatDetails(player, e);
           return details.defenseThreat === 'LETHAL' || details.defenseThreat === 'TAKES_DAMAGE';
         });
 
-        if (nearbyDangerous && player.magic > 0 && !player.hasDeath) {
-          const canFreezeNearby = map.getTorusDistance(curPos, nearbyDangerous.pos).chebyshev <= 1;
-          if (canFreezeNearby && MagicSystem.canCast(player, 'FREEZE').allowed) {
-            return { action: { type: 'MAGIC', magic: 'FREEZE' }, description: `❄️ 王冠取得前自衛FREEZE (${nearbyDangerous.name})` };
+        if (nearbyDangerous && player.magic > 0 && !player.hasDeath && MagicSystem.canCast(player, 'FREEZE').allowed) {
+          return { action: { type: 'MAGIC', magic: 'FREEZE' }, description: `❄️ 王冠取得前自衛FREEZE (${nearbyDangerous.name})` };
+        }
+
+        // 2. MP不足時、近傍（距離15以内）にPOTIONがあれば王冠を拾う前に補給へ
+        if (player.magic < 2) {
+          const potionCandidates = nav.findNearestItemCandidates(curPos, 'POTION', map, enemies, player, 4);
+          for (const potionPos of potionCandidates) {
+            const dist = map.getTorusDistance(curPos, potionPos).manhattan;
+            if (dist <= 15) {
+              const dir = nav.findPath(curPos, potionPos, map, player, enemies, params, { dragon, isEscapePhase: true, ghosts });
+              if (dir) {
+                return {
+                  action: { type: 'MOVE', dir },
+                  description: `🧪 王冠取得前MP補充 (${potionPos.x}, ${potionPos.y}) [距離: ${dist}]`,
+                };
+              }
+            }
           }
-          if (this.hasAnyActiveEnemy(enemies) && MagicSystem.canCast(player, 'FLASH').allowed) {
-            return { action: { type: 'MAGIC', magic: 'FLASH' }, description: '⚡ 王冠取得前自衛FLASH' };
-          }
+        }
+
+        // 3. 王冠を持つと一切の魔法が封印されるため、フロア内に未凍結・未スタンの即死・危険敵が存在する場合、
+        // 拾う直前に FLASH（全敵スタン）を詠唱して安全な運搬時間を確保する！
+        const hasActiveDangerousEnemies = enemies.some(e => {
+          if (!this.isActiveEnemy(e)) return false;
+          const threat = ThreatEvaluator.evaluateThreat(player, e);
+          const rawDmg = Math.max(0, e.atk - Math.floor(player.experience));
+          return threat === 'LETHAL' || threat === 'DANGER' || rawDmg >= player.hp * 0.35;
+        });
+
+        if (hasActiveDangerousEnemies && player.magic > 0 && !player.hasDeath && MagicSystem.canCast(player, 'FLASH').allowed) {
+          return { action: { type: 'MAGIC', magic: 'FLASH' }, description: '⚡ 王冠取得前・安全確保の全フロアFLASHスタン' };
         }
 
         // 王冠を持った状態で我が家に帰還できるか事前シミュレーション（Playerプロトタイプを維持して評価）
@@ -383,4 +431,54 @@ export class EscapeBehavior {
       e => this.isActiveEnemy(e) && map.getTorusDistance(curPos, e.pos).chebyshev <= 1
     );
   }
+  /**
+   * 逃げ場がない（全周囲が危険）場合の強行突破・悪あがき移動方向を探索
+   * SPACE でその場待機して確実に即死するのを防止する。
+   */
+  private static findDesperateEscapeDir(
+    curPos: Position,
+    map: WorldMap,
+    enemies: EnemyInstance[],
+    player: Player,
+    dragon?: Dragon
+  ): { dir: Direction; reason: string } | null {
+    const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
+    const diagDirs: Direction[] = ['UP_LEFT', 'UP_RIGHT', 'DOWN_LEFT', 'DOWN_RIGHT'];
+    const dirs = (player.canDiagonal || player.experience >= 12000) ? [...cardDirs, ...diagDirs] : cardDirs;
+
+    const candidates: { dir: Direction; damage: number; reason: string }[] = [];
+    const effectiveDef = Math.floor(player.experience * 1.0);
+
+    for (const d of dirs) {
+      const nextPos = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
+      if (map.getBaseTile(nextPos) === 'WALL_STATIC') continue;
+      if (map.getObject(nextPos) !== 'NONE') continue;
+      if (map.getBaseTile(nextPos) === 'GRAVE') continue;
+      if (dragon && dragon.getPartAt(nextPos)) continue;
+
+      const enemyOnTile = enemies.find(e => e.isAlive && e.pos.x === nextPos.x && e.pos.y === nextPos.y);
+      if (enemyOnTile) {
+        // 斜め方向の敵マス進入は不可
+        if (d.includes('_')) continue;
+        const rawDmg = Math.max(0, enemyOnTile.atk - effectiveDef);
+        candidates.push({ dir: d, damage: rawDmg, reason: `敵マス突破 (${enemyOnTile.name})` });
+        continue;
+      }
+
+      // 空きマスの場合、そのマスで受ける被ダメージを推定
+      let totalDmg = 0;
+      for (const e of enemies) {
+        if (!e.isAlive || e.isPermanentlyFrozen || e.frozenTimer > 0) continue;
+        if (map.getTorusDistance(nextPos, e.pos).manhattan === 1) {
+          totalDmg += Math.max(0, e.atk - effectiveDef);
+        }
+      }
+      candidates.push({ dir: d, damage: totalDmg, reason: `被ダメ最小マスへ移動` });
+    }
+
+    if (candidates.length === 0) return null;
+    candidates.sort((a, b) => a.damage - b.damage);
+    return { dir: candidates[0].dir, reason: candidates[0].reason };
+  }
+
 }
