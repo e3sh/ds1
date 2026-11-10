@@ -17,10 +17,64 @@
 2. **アトラクションデモ**: タイトル画面で放置された際に、初心者に向けたゲームルール・攻略セオリーを実演・提示する。
 3. **自走検証（インゲームAuto-Play）**: 任意の生成マップやプレイヤーのプレイ途中状態からボットに自走させ、アルゴリズムの挙動確認や特定シチュエーションの検証、プレイヤー手動操作とのシームレスな相互乗り換えを可能にする。
 
-### 1.2 レイヤー分離とモジュラー設計
+### 1.2 レイヤー分離とモジュラー設計 (PST 3層アーキテクチャ)
 
 ボットおよびシミュレーション基盤は、描画（DOM / Canvas）や音声（Web Audio API）から完全に疎結合された純粋なTypeScriptロジックとして設計されている。
-最新の v2 アーキテクチャでは、肥大化を防ぎ状況適応力を最大化するため、**単一の巨大モノリスから責務ごとに独立した Behavior クラス群、幾何連動型戦術コンテキスト、および一元化ナビゲータへ完全分割**されている。
+最新アーキテクチャでは、肥大化・層間癒着を防ぎ適応力を最大化するため、**PST（認知 Perception / 判断・戦略 Strategy / 行動・戦術 Tactics）の3層構造**を採用し、**指示側（Strategy）と動作側（Tactics / Behavior）の厳格な主従関係**を確立している。
+
+```mermaid
+flowchart TD
+    subgraph Execution_Contexts ["実行コンテキスト"]
+        CLI["CLI バッチシミュレーション (scripts/debug-seeds.ts)"]
+        DEMO["インゲーム アトラクトデモ (DemoAndAutoPlayController)"]
+        VERIFY["インゲーム 自走検証モード (DemoAndAutoPlayController)"]
+    end
+
+    subgraph Perception_Layer ["【認知層 Perception】生データ観察・状況要約"]
+        SK["SpatialKnowledge<br>(トポロジー・宝物庫ゾーン解析)"]
+        SP["SituationalPerception<br>(脅威度・マイルストーン判定)"]
+        EM["EpisodicMemory<br>(進入不能・ターゲット履歴)"]
+        TS["TacticalSnapshot<br>(不変スナップショット)"]
+        SK --> TS
+        SP --> TS
+        EM --> TS
+    end
+
+    subgraph Strategy_Layer ["【指示側：戦略層 Strategy】大局目標・動的パラメータ制御"]
+        SP_Plan["StrategicPlanner<br>(大局ミッション調停・コミット)"]
+        MS["MissionSelector<br>(大局優先順位評価)"]
+        DIR["StrategicDirective<br>(明確な戦術命令)"]
+        PARAMS["DynamicBotParameters<br>(幾何スケール連動パラメータ)"]
+        PARAMS --> MS
+        TS --> MS
+        MS --> SP_Plan
+        SP_Plan --> DIR
+    end
+
+    subgraph Tactics_Layer ["【動作側：戦術層 Tactics】命令受託・安全遂行"]
+        TE["TacticalExecutor / Behavior<br>(戦術実行器: 命令を受けてキー入力生成)"]
+        NAV["AdaptiveNavigator<br>(BFS探索・スタック追跡・ヒートマップ)"]
+        COMBAT["TacticalCombat<br>(ミクロ戦闘判断・反撃)"]
+        ACTION["BotAction<br>(MOVE / SPACE / MAGIC / GIVE_UP)"]
+        DIR --> TE
+        TS --> TE
+        TE --> NAV
+        TE --> COMBAT
+        TE --> ACTION
+    end
+
+    Execution_Contexts --> Strategy_Layer
+    Strategy_Layer --> Tactics_Layer
+```
+
+#### 指示側と動作側の階層規律（違反基準）
+1. **指示側（戦略層 Strategy）**:
+   - `snapshot.params` の動的パラメータ（`targetStr`, `targetDefenseExp`, `stoneSearchDist` 等）に基づき、大局目標（`IStrategicMission`）を決定する。
+   - **固定しきい値（カンスト値等）のハードコードを禁止**し、必ず動的パラメータを参照して状態を切り替える。
+   - 戦術層に対して、意図が明確なディレクティブ（`UNLOCK_CHEST_8STEP`, `UNLOCK_CHEST_RAPID`, `CASH_IN_GOLD` 等）を発行する。
+2. **動作側（戦術層 Tactics / Behavior）**:
+   - 戦略層から与えられたディレクティブ（命令）を忠実に遂行し、具体的な操作（キー入力）を決定する。
+   - 目的地到着時に勝手に `{ type: 'WAIT' }` してサボタージュすることや、戦略層をバイパスして独自に大局判断を下すことを禁止する。
 
 ```mermaid
 graph TD
