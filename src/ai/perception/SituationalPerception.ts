@@ -16,7 +16,6 @@ export interface GrowthMilestones {
   hasTargetDefenseExp: boolean; // EXP >= targetDefenseExp
   hasSufficientMagic: boolean;  // MP >= minDragonMagic
   hasMaxMagic: boolean;         // MP >= maxTargetMagic
-  isReadyForDragon: boolean;    // 決戦準備完了
   canCastMagic: boolean;        // !hasDeath && magic >= 1 (魔法詠唱可能か)
   canPickupFloorItem: boolean;  // holdItem === 'NONE' (床アイテム拾い可能か)
   canOpenChest: boolean;        // holdItem === 'KEY' (宝箱開錠可能か)
@@ -29,7 +28,6 @@ export interface StagnationState {
   turnsSinceNewTile: number;
   isStagnated: boolean;
   isPhysicallyTrapped: boolean;
-  isGoalBlocked: boolean;
 }
 
 export interface ThreatDistribution {
@@ -48,7 +46,7 @@ export class SituationalPerception {
   public static evaluateMilestones(
     player: Player,
     params: DynamicBotParameters,
-    dragon?: Dragon
+    _dragon?: Dragon
   ): GrowthMilestones {
     const hasSword = player.hasSword;
     const canBreak = !player.hasDeath && player.magic >= 1 && player.experience >= 4000;
@@ -62,19 +60,6 @@ export class SituationalPerception {
     const canOpenChest = player.holdItem === 'KEY';
     const isStrCapped = player.strength >= 655350;
 
-    // 決戦準備完了判定 (要件1):
-    // 1. 生存首DEFを超過する確実な攻撃力 (hasTargetStr または isStrCapped)
-    // 2. 斜め移動解禁 (canDiagonal: EXP >= 12,000)
-    // 3. BREAK魔法解禁 (canBreak: EXP >= 4,000 && MP >= 1)
-    // 4. 最低限のMP (MP >= 3)
-    // 5. 十分なHP (HP >= 50% または HP >= 15,000)
-    const livingHeads = dragon ? dragon.heads.filter(h => h.isAlive) : [];
-    const minHeadDef = livingHeads.length > 0 ? Math.min(...livingHeads.map(h => h.def)) : 300000;
-    const canDamageAnyHead = hasSword && (hasTargetStr || isStrCapped || player.strength > minHeadDef);
-
-    const hasEnoughHp = player.hp >= player.maxHp * 0.50 || player.hp >= 15000;
-    const isReadyForDragon = canDamageAnyHead && canDiagonal && canBreak && player.magic >= 3 && hasEnoughHp;
-
     return {
       hasSword,
       canBreak,
@@ -83,7 +68,6 @@ export class SituationalPerception {
       hasTargetDefenseExp,
       hasSufficientMagic,
       hasMaxMagic,
-      isReadyForDragon,
       canCastMagic,
       canPickupFloorItem,
       canOpenChest,
@@ -98,8 +82,7 @@ export class SituationalPerception {
     player: Player,
     map: WorldMap,
     enemies: EnemyInstance[],
-    nav: any,
-    targetPos?: Position
+    nav: any
   ): StagnationState {
     const curPos = player.pos;
     const currentHeat = nav.getHeat ? nav.getHeat(curPos) : 0;
@@ -156,22 +139,12 @@ export class SituationalPerception {
       isPhysicallyTrapped = walkableCount <= 3;
     }
 
-    // 目標への進路遮断判定
-    let isGoalBlocked = false;
-    if (targetPos && !isPhysicallyTrapped && isStagnated) {
-      const path = nav.findPath ? nav.findPath(curPos, targetPos, map, player, enemies, { targetStr: 0, targetDefenseExp: 0 } as any) : null;
-      if (path === null) {
-        isGoalBlocked = true;
-      }
-    }
-
     return {
       currentHeat,
       neighborhoodHeat,
       turnsSinceNewTile,
       isStagnated,
       isPhysicallyTrapped,
-      isGoalBlocked,
     };
   }
 

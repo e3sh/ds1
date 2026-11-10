@@ -21,18 +21,7 @@ export class DirectiveArbiter {
     activeMission: IStrategicMission | null,
     nav?: AdaptiveNavigator
   ): StrategicDirective {
-    // 0. 目標への進路遮断検知時: 当該目標を一時到達不能マークし、停滞ミッションをアボート
-    if (snapshot.stagnation?.isGoalBlocked && rawDirective.targetPos) {
-      snapshot.memory.markTargetUnreachable(rawDirective.targetPos, 45, snapshot.totalTurns);
-      if (nav) {
-        nav.markTargetUnreachable(rawDirective.targetPos, 45);
-      }
-      if (activeMission && activeMission.id !== 'EMERGENCY_EVACUATE' && activeMission.id !== 'CROWN_ESCAPE') {
-        activeMission.status = 'ABORTED';
-      }
-    }
-
-    // 0-B. 袋小路拘束・孤立ハマりの能動脱出判定（最優先打開: priority 97〜99）
+    // 0. 袋小路拘束・孤立ハマりの能動脱出判定（最優先打開: priority 97〜99）
     if (nav) {
       const incarcerationDirective = TacticalStallResolver.resolveIncarceration(snapshot, engine, nav);
       if (incarcerationDirective) {

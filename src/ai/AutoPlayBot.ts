@@ -810,11 +810,7 @@ export class AutoPlayBot {
       player,
       map,
       enemies,
-      this.nav,
-      this.strategicPlanner.activeMission?.generateDirective(
-        { player, map, milestones, threats, livingEnemies: enemies, memory: this.episodicMemory, params: this.params, spatial: this.spatialKnowledge, totalTurns: this.totalTurns } as any,
-        engine
-      )?.targetPos
+      this.nav
     );
 
     const snapshot: TacticalSnapshot = {

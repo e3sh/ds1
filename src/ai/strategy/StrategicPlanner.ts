@@ -129,7 +129,7 @@ export class StrategicPlanner {
 
     // 1-C. 決戦・準備移行割り込み: 育成・探索系ミッション中に適正戦力に到達したら準備または決戦へ移行
     const player = engine.getPlayer();
-    const canTransitionToPrep = snapshot.milestones.isReadyForDragon || snapshot.milestones.isStrCapped || snapshot.milestones.hasTargetStr;
+    const canTransitionToPrep = MissionSelector.isReadyForDragon(snapshot, engine) || snapshot.milestones.isStrCapped || snapshot.milestones.hasTargetStr;
 
     if (canTransitionToPrep) {
       this.defensePrepTurns++;

@@ -210,7 +210,6 @@ console.log('Testing 4: StrategicPlanner mission selection, commitment, and emer
       turnsSinceNewTile: 0,
       isStagnated: false,
       isPhysicallyTrapped: false,
-      isGoalBlocked: false,
     };
     return {
       spatial,
