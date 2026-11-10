@@ -169,6 +169,29 @@ export class CrownEscapeMission implements IStrategicMission {
         }
       }
 
+      // 1-C. 道が岩（BLOCK）で遮断されている場合の一時ドロップ開削
+      // 足元にアイテムがなく、かつ直角隣接に即死敵がいない場合は、王冠を一時ドロップして手ぶら化し、BREAK詠唱可能にする
+      const hasClearRoad = this.canWalkToHomeWithoutMagic(curPos, homePos, map);
+      if (!hasClearRoad && map.getItem(curPos) === 'NONE') {
+        const hasBlockNearby = cardDirs.some(d => {
+          const adj = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
+          return map.getObject(adj) === 'BLOCK';
+        });
+        const hasAdjacentLethal = cardDirs.some(d => {
+          const adj = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
+          const e = enemies.find(en => en.isAlive && en.pos.x === adj.x && en.pos.y === adj.y);
+          return e && ThreatEvaluator.evaluateThreatDetails(player, e).defenseThreat === 'LETHAL';
+        });
+
+        if (hasBlockNearby && !hasAdjacentLethal && player.magic > 0 && player.experience >= 4000) {
+          return {
+            type: 'DROP_HOLD_ITEM',
+            priority: 97,
+            reason: '👑 王冠運搬路遮断: 岩開削のため王冠一時ドロップ（手ぶら化してBREAK詠唱準備）',
+          };
+        }
+      }
+
       // 1-D. 最適な我が家へ最速直行
       return {
         type: 'NAVIGATE_TO_POSITION',
@@ -272,12 +295,38 @@ export class CrownEscapeMission implements IStrategicMission {
         };
       }
 
-      // ③ 安全確認完了: 王冠を取得！
+      // ③ 我が家までの進軍ルートが開通しているかチェック（魔法封印前の事前開削）
+      const hasClearRoadToHome = this.canWalkToHomeWithoutMagic(curPos, homePos, map);
+      if (!hasClearRoadToHome && player.experience >= 4000) {
+        // 直角4方向に岩があれば、即座にBREAKで破壊
+        for (const d of cardDirs) {
+          const adj = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
+          if (map.getObject(adj) === 'BLOCK' && MagicSystem.canCast(player, 'BREAK').allowed) {
+            return {
+              type: 'BREACH_SHORTCUT',
+              targetPos: adj,
+              priority: 95,
+              reason: '🔨 王冠運搬路の事前開削: 直角隣接の岩を破壊',
+            };
+          }
+        }
+
+        // 我が家への開拓進軍（手ぶら状態で岩を掘りながら進む）
+        return {
+          type: 'NAVIGATE_TO_POSITION',
+          targetPos: homePos,
+          priority: 92,
+          policy: { disallowFreezeNearHome: true },
+          reason: '🔨 王冠運搬路の事前開拓へ移動（手ぶらのうちに帰還ルートを開削）',
+        };
+      }
+
+      // ④ 完全開通確認済み: 安全に王冠を取得！
       return {
         type: 'PICKUP_ITEM',
         targetItemType: 'CROWN',
         priority: 93,
-        reason: '👑 床の王冠を取得',
+        reason: '👑 進軍ルート開通確認完了: 床の王冠を取得',
       };
     }
 
@@ -417,5 +466,41 @@ export class CrownEscapeMission implements IStrategicMission {
       }
     }
     return bestHome;
+  }
+
+  /**
+   * 魔法（BREAK）を使わずに、壁・岩・墓を避けて我が家へ徒歩で到達できるか（BFS計測）
+   */
+  private canWalkToHomeWithoutMagic(from: Position, home: Position, map: WorldMap): boolean {
+    const queue: Position[] = [{ ...from }];
+    const visited = new Set<string>();
+    visited.add(`${from.x},${from.y}`);
+
+    const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
+
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      if (cur.x === home.x && cur.y === home.y) {
+        return true;
+      }
+
+      for (const d of cardDirs) {
+        const nextP = map.wrapPosition(MovementSystem.getNextPosition(cur, d));
+        const key = `${nextP.x},${nextP.y}`;
+        if (visited.has(key)) continue;
+        visited.add(key);
+
+        const base = map.getBaseTile(nextP);
+        const obj = map.getObject(nextP);
+        // 壁、岩、墓は歩行不可（魔法なしで通行不能）
+        if (base === 'WALL_STATIC') continue;
+        if (obj === 'BLOCK') continue;
+        if (base === 'GRAVE' && obj === 'NONE') continue;
+
+        queue.push(nextP);
+      }
+    }
+
+    return false;
   }
 }

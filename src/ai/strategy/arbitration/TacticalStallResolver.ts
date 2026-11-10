@@ -157,6 +157,23 @@ export class TacticalStallResolver {
       };
     }
 
+    // 5-B. 王冠所持中に四方が岩や墓で塞がれた場合: 足元に王冠を一時ドロップして手ぶらに戻り、BREAKで岩を破壊
+    if (player.holdItem === 'CROWN' && map.getItem(player.pos) === 'NONE') {
+      const hasAdjacentLethal = cardDirs.some(d => {
+        const adjPos = map.wrapPosition(MovementSystem.getNextPosition(player.pos, d));
+        const enemy = enemies.find(e => e.isAlive && e.pos.x === adjPos.x && e.pos.y === adjPos.y);
+        return enemy && ThreatEvaluator.evaluateThreatDetails(player, enemy).defenseThreat === 'LETHAL';
+      });
+
+      if (!hasAdjacentLethal) {
+        return {
+          type: 'DROP_HOLD_ITEM',
+          priority: 98,
+          reason: '👑 袋小路拘束打開: 岩破壊のため王冠を一時ドロップ（手ぶら化してBREAK詠唱準備）',
+        };
+      }
+    }
+
     // 6. 脱出魔法皆無かつ敵・地形により完全に移動不可能な場合は正式ギブアップ
     if (player.hp > 0 && (isTotallySealedByTerrainOrEnemy || !!snapshot.stagnation?.isPhysicallyTrapped)) {
       const dirDetails: string[] = [];
