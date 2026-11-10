@@ -460,7 +460,7 @@ console.log('Testing 7: TacticalStallResolver & Eight-step chain protection...')
   const nav = new AdaptiveNavigator();
   const spatial = new SpatialKnowledge(map);
   const memory = new EpisodicMemory();
-  const planner = new StrategicPlanner(nav);
+  const planner = new StrategicPlanner();
 
   // 7-1. 8歩周期チェーン保護: 足元に石が出現した直後 (stepCountSinceStone === 0) で周辺に宝箱がある場合
   map.setItem(player.pos, 'POWER_STONE');

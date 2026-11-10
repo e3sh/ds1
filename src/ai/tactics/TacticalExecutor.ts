@@ -13,7 +13,7 @@ import { TacticalSnapshot } from '../perception/TacticalSnapshot.js';
 import { MagicSystem } from '../../systems/MagicSystem.js';
 import { MovementSystem } from '../../systems/MovementSystem.js';
 import { ThreatEvaluator } from '../../systems/ThreatEvaluator.js';
-import { CombatBehavior } from '../behaviors/CombatBehavior.js';
+import { TacticalCombat } from './TacticalCombat.js';
 
 export type TacticalExecutionStatus = 'SUCCESS' | 'PATH_BLOCKED' | 'STALLED';
 
@@ -145,7 +145,7 @@ export class TacticalExecutor {
 
     // 0-C. 膠着・周回（カルーセルループ）の能動打開（王冠脱出中は除外）
     if (this.nav.oscillationCount >= 2 || snapshot.memory.pingPongCount >= 2) {
-      const circlingAction = CombatBehavior.tryBreakCirclingLoop(player, map, enemies, dragon, this.nav, params);
+      const circlingAction = TacticalCombat.tryBreakCirclingLoop(player, map, enemies, dragon, this.nav, params);
       if (circlingAction) {
         return {
           action: this.resolveMoveOrBreak(circlingAction.action, player, map),
@@ -153,7 +153,7 @@ export class TacticalExecutor {
           status: 'STALLED',
         };
       }
-      const breakthroughAction = CombatBehavior.tryBreakthroughCombat(player, map, enemies, dragon, this.nav, params);
+      const breakthroughAction = TacticalCombat.tryBreakthroughCombat(player, map, enemies, dragon, this.nav, params);
       if (breakthroughAction) {
         return {
           action: this.resolveMoveOrBreak(breakthroughAction.action, player, map),
@@ -853,7 +853,7 @@ export class TacticalExecutor {
 
       // 4-B. 岩があれば KICK スナイプで反撃（敵即死排除＋通路開削）
       if (canSpendReserve) {
-        const kickAction = CombatBehavior.tryKickSnipe(player, map, enemies, dragon ?? ({} as any));
+        const kickAction = TacticalCombat.tryKickSnipe(player, map, enemies, dragon ?? ({} as any));
         if (kickAction) {
           return {
             action: kickAction.action,

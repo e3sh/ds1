@@ -1,7 +1,6 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
 import { StrategicDirective } from '../StrategicDirective.js';
-import { AdaptiveNavigator } from '../../AdaptiveNavigator.js';
 import { OpportunisticEvaluator } from './OpportunisticEvaluator.js';
 import { TacticalStallResolver } from './TacticalStallResolver.js';
 import { IStrategicMission } from '../StrategicMission.js';
@@ -9,7 +8,7 @@ import { IStrategicMission } from '../StrategicMission.js';
 /**
  * DirectiveArbiter (戦略指令調停器)
  *
- * 主作戦ディレクティブ、戦術膠着打開ディレクティブ、および並行基本行動ディレクティブを
+ * 主作戦ディレクティブ、袋小路拘束打開ディレクティブ、および並行基本行動ディレクティブを
  * 優先度（priority）と緊急度・逸脱コストに基づいて調停し、
  * 戦術層がそのまま実行可能な単一の StrategicDirective を決定する。
  */
@@ -18,27 +17,15 @@ export class DirectiveArbiter {
     rawDirective: StrategicDirective,
     snapshot: TacticalSnapshot,
     engine: GameEngine,
-    activeMission: IStrategicMission | null,
-    nav?: AdaptiveNavigator
+    activeMission: IStrategicMission | null
   ): StrategicDirective {
-    // 0. 袋小路拘束・孤立ハマりの能動脱出判定（最優先打開: priority 97〜99）
-    if (nav) {
-      const incarcerationDirective = TacticalStallResolver.resolveIncarceration(snapshot, engine, nav);
-      if (incarcerationDirective) {
-        return incarcerationDirective;
-      }
+    // 0. 袋小路拘束・孤立ハマりの能動脱出判定（最優先打開: priority 94〜99 / GIVE_UP 100）
+    const incarcerationDirective = TacticalStallResolver.resolveIncarceration(snapshot, engine);
+    if (incarcerationDirective) {
+      return incarcerationDirective;
     }
 
-    // 1. 周回ループ（カルーセル膠着）の能動打開判定（priority 94〜96）
-    // 王冠脱出やドラゴン決戦のクライマックス以外で評価
-    if (nav && activeMission?.id !== 'CROWN_ESCAPE' && activeMission?.id !== 'SLAY_DRAGON') {
-      const circlingDirective = TacticalStallResolver.resolveCirclingLoop(snapshot, engine, nav);
-      if (circlingDirective) {
-        return circlingDirective;
-      }
-    }
-
-    // 2. 調停をスキップすべきクリティカル状況
+    // 1. 調停をスキップすべきクリティカル状況
     if (
       activeMission?.id === 'EMERGENCY_EVACUATE' ||
       activeMission?.id === 'CROWN_ESCAPE' ||
@@ -53,7 +40,7 @@ export class DirectiveArbiter {
       return rawDirective;
     }
 
-    // 3. 並行基本行動（Opportunistic Behaviors）の評価
+    // 2. 並行基本行動（Opportunistic Behaviors）の評価
     const candidates: StrategicDirective[] = [];
 
     // 並行行動 1: 動線上のついで拾い (手ぶら時のみ)

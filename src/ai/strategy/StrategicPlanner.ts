@@ -10,7 +10,6 @@ import { CashInGoldMission } from './missions/CashInGoldMission.js';
 import { EarlyBreakUnlockMission } from './missions/EarlyBreakUnlockMission.js';
 import { RelocateHomeMission } from './missions/RelocateHomeMission.js';
 import { ReadinessEvaluator } from './evaluators/ReadinessEvaluator.js';
-import { AdaptiveNavigator } from '../AdaptiveNavigator.js';
 import { DirectiveArbiter } from './arbitration/DirectiveArbiter.js';
 import { MissionSelector } from './evaluators/MissionSelector.js';
 import { TacticalExecutionResult, TacticalExecutionStatus } from '../tactics/TacticalExecutor.js';
@@ -40,11 +39,7 @@ export class StrategicPlanner {
   private lastBlockedTarget: Position | null = null;
   private consecutiveBlockedTurns: number = 0;
 
-  constructor(private nav?: AdaptiveNavigator) {}
-
-  public setNavigator(nav: AdaptiveNavigator): void {
-    this.nav = nav;
-  }
+  constructor() {}
 
   /**
    * 戦術層からの行動実行結果フィードバックを受け取る
@@ -78,11 +73,8 @@ export class StrategicPlanner {
 
       // 同一ターゲットへの移動が 2〜3 ターン連続で PATH_BLOCKED となった場合
       if (this.consecutiveBlockedTurns >= 2) {
-        // エピソード記憶 & ナビゲータにブラックリスト登録
+        // エピソード記憶（認知層）にブラックリスト登録
         snapshot.memory.markTargetUnreachable(target, 30, snapshot.totalTurns);
-        if (this.nav) {
-          this.nav.markTargetUnreachable(target, 30);
-        }
 
         // 現行ミッションを即座に ABORTED として別作戦・別ターゲットへ強制転進
         if (this.activeMission) {
@@ -246,6 +238,6 @@ export class StrategicPlanner {
     snapshot: TacticalSnapshot,
     engine: GameEngine
   ): StrategicDirective {
-    return DirectiveArbiter.arbitrate(rawDirective, snapshot, engine, this.activeMission, this.nav);
+    return DirectiveArbiter.arbitrate(rawDirective, snapshot, engine, this.activeMission);
   }
 }

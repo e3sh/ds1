@@ -1,18 +1,16 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
 import { StrategicDirective } from '../StrategicDirective.js';
-import { AdaptiveNavigator } from '../../AdaptiveNavigator.js';
-import { CombatBehavior } from '../../behaviors/CombatBehavior.js';
 import { MagicSystem } from '../../../systems/MagicSystem.js';
 import { MovementSystem } from '../../../systems/MovementSystem.js';
 import { ThreatEvaluator } from '../../../systems/ThreatEvaluator.js';
 import { Direction, Position } from '../../../models/Types.js';
 
 /**
- * TacticalStallResolver (カテゴリ3: 戦術膠着・袋小路打開リゾルバー)
+ * TacticalStallResolver (戦略層: 袋小路拘束・孤立打開リゾルバー)
  *
- * 障害物周回ループ（カルーセル膠着）や、袋小路・敵封鎖による物理的詰みを検知し、
- * 能動的に打開する高優先度ディレクティブを発行する。
+ * 袋小路・敵封鎖による物理的詰みを検知し、
+ * 能動的に打開する高優先度ディレクティブ（脱出魔法、岩破壊、強行突破、正式ギブアップ）を発行する。
  */
 export class TacticalStallResolver {
   /**
@@ -20,8 +18,7 @@ export class TacticalStallResolver {
    */
   public static resolveIncarceration(
     snapshot: TacticalSnapshot,
-    engine: GameEngine,
-    _nav: AdaptiveNavigator
+    engine: GameEngine
   ): StrategicDirective | null {
     const player = engine.getPlayer();
     const map = snapshot.map;
@@ -56,7 +53,7 @@ export class TacticalStallResolver {
       return false;
     });
 
-    if (!isTotallySealedByTerrainOrEnemy && !snapshot.stagnation.isPhysicallyTrapped) {
+    if (!isTotallySealedByTerrainOrEnemy && !snapshot.stagnation?.isPhysicallyTrapped) {
       return null;
     }
 
@@ -159,7 +156,7 @@ export class TacticalStallResolver {
     }
 
     // 6. 脱出魔法皆無かつ敵・地形により完全に移動不可能な場合は正式ギブアップ
-    if (player.hp > 0 && (isTotallySealedByTerrainOrEnemy || snapshot.stagnation.isPhysicallyTrapped)) {
+    if (player.hp > 0 && (isTotallySealedByTerrainOrEnemy || !!snapshot.stagnation?.isPhysicallyTrapped)) {
       return {
         type: 'GIVE_UP',
         priority: 100,
@@ -172,56 +169,5 @@ export class TacticalStallResolver {
       priority: 85,
       reason: '🌀 局所停滞打開: 冷涼マスへ離脱移動',
     };
-  }
-
-  /**
-   * カルーセル周回膠着（障害物ループ）およびブレークスルー戦闘の検知と打開ディレクティブ発行
-   */
-  public static resolveCirclingLoop(
-    snapshot: TacticalSnapshot,
-    engine: GameEngine,
-    nav: AdaptiveNavigator
-  ): StrategicDirective | null {
-    const player = engine.getPlayer();
-    const map = snapshot.map;
-    const enemies = snapshot.livingEnemies;
-    const dragon = engine.getDragon();
-    const params = snapshot.params;
-
-    // A. 訪問ヒートマップによる障害物周回ループ（カルーセル膠着）の能動打開
-    const circlingResult = CombatBehavior.tryBreakCirclingLoop(player, map, enemies, dragon, nav, params);
-    if (circlingResult) {
-      if (circlingResult.action.type === 'MAGIC' && circlingResult.action.magic) {
-        return {
-          type: 'CAST_MAGIC',
-          magicToCast: circlingResult.action.magic as any,
-          priority: 96,
-          reason: circlingResult.description,
-        };
-      }
-      if (circlingResult.action.type === 'MOVE') {
-        const targetPos = map.wrapPosition(MovementSystem.getNextPosition(player.pos, circlingResult.action.dir));
-        return {
-          type: 'ATTACK_TARGET',
-          targetPos,
-          priority: 95,
-          reason: circlingResult.description,
-        };
-      }
-    }
-
-    // B. ブレークスルー戦闘（安全に倒せる敵を押し通って進路を開く）
-    const breakthroughResult = CombatBehavior.tryBreakthroughCombat(player, map, enemies, dragon, nav, params);
-    if (breakthroughResult && breakthroughResult.action.type === 'MOVE') {
-      const targetPos = map.wrapPosition(MovementSystem.getNextPosition(player.pos, breakthroughResult.action.dir));
-      return {
-        type: 'ATTACK_TARGET',
-        targetPos,
-        priority: 94,
-        reason: `⚔️ 進路突破戦闘: ${breakthroughResult.description}`,
-      };
-    }
-
-    return null;
   }
 }

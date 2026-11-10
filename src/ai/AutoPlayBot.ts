@@ -93,7 +93,7 @@ export class AutoPlayBot {
     this.eightStepController = new EightStepController(this.nav);
     const rawVersion = opts.botVersion ?? 'pst';
     this.botVersion = (rawVersion === 'v1' || rawVersion === 'behavior') ? 'behavior' : 'pst';
-    this.strategicPlanner = new StrategicPlanner(this.nav);
+    this.strategicPlanner = new StrategicPlanner();
     this.tacticalExecutor = new TacticalExecutor(this.nav, this.eightStepController);
     this.episodicMemory = new EpisodicMemory();
   }
