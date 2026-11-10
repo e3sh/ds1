@@ -171,8 +171,8 @@ export class TacticalStallResolver {
         } else if (base === 'GRAVE' && obj === 'NONE') {
           dirDetails.push(`${d}:墓`);
         } else if (obj === 'BLOCK') {
-          const canBreak = MagicSystem.canCast(player, 'BREAK').allowed;
-          dirDetails.push(`${d}:岩(${canBreak ? 'BREAK可' : player.experience < 4000 ? 'EXP不足' : 'MP枯渇'})`);
+          const breakCheck = MagicSystem.canCast(player, 'BREAK');
+          dirDetails.push(`${d}:岩(${breakCheck.allowed ? 'BREAK可' : breakCheck.reason})`);
         } else if (enemy) {
           const details = ThreatEvaluator.evaluateThreatDetails(player, enemy);
           dirDetails.push(`${d}:敵(${enemy.name},被ダメ${details.damageToPlayer},撃破${details.turnsToKill}T)`);
@@ -184,7 +184,7 @@ export class TacticalStallResolver {
       return {
         type: 'GIVE_UP',
         priority: 100,
-        reason: `💀 詰み検知 [四方閉塞: ${dirDetails.join(', ')}] (HP:${player.hp}/${player.maxHp}, MP:${player.magic}, STR:${player.strength}, EXP:${player.experience})`,
+        reason: `💀 詰み検知 [四方閉塞: ${dirDetails.join(', ')}] (HP:${player.hp}/${player.maxHp}, MP:${player.magic}, STR:${player.strength}, EXP:${player.experience}, Item:${player.holdItem})`,
       };
     }
 
