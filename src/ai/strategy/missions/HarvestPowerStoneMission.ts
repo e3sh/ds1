@@ -85,9 +85,9 @@ export class HarvestPowerStoneMission implements IStrategicMission {
 
     // 2. まだ石を拾っていないが足元にある場合:
     if (map.getItem(player.pos) === 'POWER_STONE') {
-      const canChain = player.holdItem === 'KEY' && player.stepCountSinceStone === 0 && MissionSelector.hasNearbyChest(player.pos, map, 6) && player.strength < snapshot.params.targetStr && !snapshot.milestones.isStrCapped;
+      const canChain = player.holdItem === 'KEY' && MissionSelector.hasNearbyChest(player.pos, map, 8);
       if (canChain) {
-        const nearestChest = this.findNearestNearbyChest(player.pos, map, 6);
+        const nearestChest = this.findNearestNearbyChest(player.pos, map, 8);
         if (nearestChest) {
           return {
             type: 'UNLOCK_CHEST_8STEP',

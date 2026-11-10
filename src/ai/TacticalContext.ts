@@ -249,8 +249,8 @@ export class TacticalContext {
    * ルールモードに応じた目標防御力(EXP)の算出
    */
   public calculateTargetDefenseExp(isClassic?: boolean): number {
-    if (isClassic) return 12000;
-    return 18000;
+    if (isClassic) return 15000;
+    return 35000;
   }
 
   /**

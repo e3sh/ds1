@@ -47,12 +47,13 @@ export class MissionSelector {
 
     const canUnlockChests = this.hasReachableKey(map, snapshot) && this.hasReachableChests(map, snapshot);
 
-    // ★重要: STR目標達成（首DEF突破可能）かつ斜め移動解禁済みの場合は、
+    // ★重要: STR目標達成 かつ 防御EXP（DEF）目標達成 かつ 斜め移動解禁済みの場合は、
     // 残存宝箱開錠や石集めを打ち切り、直ちに決戦準備評価へ直行！
     const canDamageDragon = player.hasSword && (player.strength >= snapshot.params.targetStr || snapshot.milestones.isStrCapped || snapshot.milestones.hasTargetStr);
+    const hasEnoughDefense = player.experience >= Math.max(25000, snapshot.params.targetDefenseExp);
     const hasDiagonal = snapshot.milestones.canDiagonal;
 
-    if (!canDamageDragon || !hasDiagonal) {
+    if (!canDamageDragon || !hasEnoughDefense || !hasDiagonal) {
       // ②-B. 鍵所持中（holdItem === 'KEY'）: 宝物庫ゾーン・残存宝箱の一括開錠を最優先
       if (player.holdItem === 'KEY') {
         const nearestZone = snapshot.spatial.getNearestUnclearedTreasureZone(player.pos, map, snapshot.memory, snapshot.totalTurns);
@@ -98,7 +99,7 @@ export class MissionSelector {
       }
       const floorItem = map.getItem(player.pos);
       if (floorItem === 'POWER_STONE') {
-        const canChain = player.holdItem === 'KEY' && player.stepCountSinceStone === 0 && this.hasNearbyChest(player.pos, map, 6);
+        const canChain = player.holdItem === 'KEY' && this.hasNearbyChest(player.pos, map, 8);
         if (!canChain) {
           return new HarvestPowerStoneMission(player.pos);
         }
@@ -334,6 +335,10 @@ export class MissionSelector {
     const hasDragonAssaultMagic = player.magic >= 3;
     const hasEnoughHp = player.hp >= player.maxHp * 0.50 || player.hp >= 15000;
 
-    return canDamageAllHeads && canDiagonal && canBreak && hasDragonAssaultMagic && hasEnoughHp;
+    // 防御力（EXP）の適正判定: ドラゴン決戦で即死しないための十分なEXP
+    const requiredDefenseExp = snapshot.params.targetDefenseExp ?? 12000;
+    const hasEnoughDefense = player.experience >= requiredDefenseExp;
+
+    return canDamageAllHeads && canDiagonal && canBreak && hasDragonAssaultMagic && hasEnoughHp && hasEnoughDefense;
   }
 }

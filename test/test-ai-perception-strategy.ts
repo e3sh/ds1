@@ -588,6 +588,8 @@ console.log('Testing 8: ReadinessEvaluator & PrepareDragonAssaultMission...');
 
   // 8-4. ポーション回収・換金完了後は準備完了となり SlayDragonMission が選定されること
   player.magic = 10;
+  player.experience = mockParams.targetDefenseExp; // コイン換金により防御EXP達成
+  snapshot.player.experience = player.experience;
   map.setItem({ x: 12, y: 12 }, 'NONE');
   const finalMission = planner.selectNextMission(snapshot, engine);
   assert.strictEqual(finalMission.id, 'SLAY_DRAGON', '準備完了後にドラゴン決戦ミッションが選定されること');

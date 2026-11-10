@@ -121,7 +121,8 @@ export class StrategicPlanner {
 
     // 1-C. 決戦・準備移行割り込み: 育成・探索系ミッション中に適正戦力に到達したら準備または決戦へ移行
     const player = engine.getPlayer();
-    const canTransitionToPrep = MissionSelector.isReadyForDragon(snapshot, engine) || snapshot.milestones.isStrCapped || snapshot.milestones.hasTargetStr;
+    const hasEnoughDefense = player.experience >= (snapshot.params.targetDefenseExp ?? 12000);
+    const canTransitionToPrep = MissionSelector.isReadyForDragon(snapshot, engine) || ((snapshot.milestones.isStrCapped || snapshot.milestones.hasTargetStr) && hasEnoughDefense);
 
     if (canTransitionToPrep) {
       this.defensePrepTurns++;
@@ -135,7 +136,8 @@ export class StrategicPlanner {
       this.activeMission.id !== 'RELOCATE_HOME' &&
       this.activeMission.id !== 'CROWN_ESCAPE' &&
       this.activeMission.id !== 'EMERGENCY_EVACUATE' &&
-      player.holdItem !== 'POWER_STONE'
+      player.holdItem !== 'POWER_STONE' &&
+      !(player.holdItem === 'KEY' && MissionSelector.hasNearbyChest(player.pos, snapshot.map, 8))
     ) {
       this.activeMission.onCompleted?.(snapshot);
       this.missionHistory.push({

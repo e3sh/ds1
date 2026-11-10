@@ -101,10 +101,11 @@ export class ClearTreasureZoneMission implements IStrategicMission {
       }
     }
 
-    // 2. 足元にパワーストーンがある場合: 回収（※STR未カンスト時のみ）
+    // 2. 足元にパワーストーンがある場合: 周辺に宝箱があるならチェーンを優先し、なければ回収
     const floorItem = map.getItem(player.pos);
     if (floorItem === 'POWER_STONE' && !snapshot.milestones.isStrCapped) {
-      const canChain = player.holdItem === 'KEY' && player.stepCountSinceStone === 0 && this.hasNearbyChest(player.pos, map, 6);
+      const hasNearbyChest = this.hasNearbyChest(player.pos, map, 8);
+      const canChain = player.holdItem === 'KEY' && hasNearbyChest;
       if (!canChain) {
         if (player.holdItem === 'KEY') {
           return {
@@ -183,7 +184,7 @@ export class ClearTreasureZoneMission implements IStrategicMission {
         return {
           type: 'UNLOCK_CHEST_8STEP',
           targetPos: nearestChest,
-          priority: 80,
+          priority: 88,
           reason: `宝箱の8歩開錠 (${nearestChest.x}, ${nearestChest.y})`,
         };
       }
