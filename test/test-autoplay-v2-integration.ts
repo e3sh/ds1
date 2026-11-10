@@ -7,17 +7,23 @@ console.log('================================================================');
 console.log('  Testing PST Step 2: AutoPlayBot v2 Integration Test           ');
 console.log('================================================================');
 
-// Test 1: v1 と v2 のバージョン切り替え動作の確認
-console.log('Testing 1: botVersion v1 and v2 instantiation...');
+// Test 1: behavior と pst (旧 v1/v2) のバージョン切り替え動作の確認
+console.log('Testing 1: botVersion behavior and pst instantiation...');
 {
   const botV1 = new AutoPlayBot({ botVersion: 'v1' });
-  assert.strictEqual(botV1.botVersion, 'v1');
+  assert.strictEqual(botV1.botVersion, 'behavior');
+
+  const botBehavior = new AutoPlayBot({ botVersion: 'behavior' });
+  assert.strictEqual(botBehavior.botVersion, 'behavior');
 
   const botV2 = new AutoPlayBot({ botVersion: 'v2' });
-  assert.strictEqual(botV2.botVersion, 'v2');
+  assert.strictEqual(botV2.botVersion, 'pst');
+
+  const botPst = new AutoPlayBot({ botVersion: 'pst' });
+  assert.strictEqual(botPst.botVersion, 'pst');
 
   const botDefault = new AutoPlayBot();
-  assert.strictEqual(botDefault.botVersion, 'v2', 'デフォルトはv2であること');
+  assert.strictEqual(botDefault.botVersion, 'pst', 'デフォルトはpstであること');
 
   console.log('✓ 1. Version instantiation verified.');
 }

@@ -105,7 +105,7 @@ export class DemoAndAutoPlayController {
   }
 
   private createBotInstance(profile: 'NOVICE' | 'STANDARD' | 'EXPERT' = 'STANDARD'): AutoPlayBot {
-    return new AutoPlayBot({ profile });
+    return new AutoPlayBot({ profile, botVersion: this.useV2Bot ? 'pst' : 'behavior' });
   }
 
   public getDemoBot(): AutoPlayBot | null {

@@ -81,12 +81,14 @@ export interface DynamicBotParameters {
   graveSealPolicy: GraveSealPolicy;
 }
 
+export type BotVersion = 'behavior' | 'pst' | 'v1' | 'v2';
+
 export interface AutoPlayBotOptions {
   profile?: BotSkillProfile;
   maxTurnsLimit?: number;
   parameterOverrides?: Partial<DynamicBotParameters>;
   strategyTuning?: BotStrategyTuning;
-  botVersion?: 'v1' | 'v2';
+  botVersion?: BotVersion;
 }
 
 export type AdaptiveBotOptions = AutoPlayBotOptions;

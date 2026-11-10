@@ -1,7 +1,7 @@
 import { GameEngine } from '../core/GameEngine.js';
 import { SeedRandom } from '../core/SeedRandom.js';
 import { GameEventBus } from '../core/GameEventBus.js';
-import { AutoPlayBot, BotSkillProfile, BotStrategyTuning } from '../ai/AutoPlayBot.js';
+import { AutoPlayBot, BotSkillProfile, BotStrategyTuning, BotVersion } from '../ai/AutoPlayBot.js';
 import { SimulationTelemetry, SimulationSummaryReport } from './SimulationTelemetry.js';
 import {
   DungeonTopology,
@@ -20,7 +20,7 @@ export interface SimulationConfig {
   botProfile?: BotSkillProfile;
   baseSeed?: number;
   strategyTuning?: BotStrategyTuning;
-  botVersion?: 'v1' | 'v2';
+  botVersion?: BotVersion;
 }
 
 /**
@@ -100,9 +100,9 @@ export class SimulationRunner {
       const won = engine.getState() === 'STAGECLEAR';
       const player = engine.getPlayer();
 
-      // PST 3層アーキテクチャテレメトリ情報の収集 (v2)
+      // PST 3層アーキテクチャテレメトリ情報の収集 (PST版)
       let pstMetrics: any = undefined;
-      if (bot.botVersion === 'v2') {
+      if (bot.botVersion === 'pst') {
         const missionTurns: Record<string, number> = {};
         const missionOutcomes: Record<string, { completed: number; aborted: number; failed: number }> = {};
 

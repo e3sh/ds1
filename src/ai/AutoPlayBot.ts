@@ -80,8 +80,8 @@ export class AutoPlayBot {
   public currentTargetDesc: string = '初期化中';
   public lastDecidedActionDesc: string = '待機';
 
-  // PST 3層アーキテクチャユニット (v2)
-  public readonly botVersion: 'v1' | 'v2';
+  // PST 3層アーキテクチャユニット (PST版)
+  public readonly botVersion: 'behavior' | 'pst';
   public readonly strategicPlanner: StrategicPlanner;
   public readonly tacticalExecutor: TacticalExecutor;
   public readonly episodicMemory: EpisodicMemory;
@@ -91,7 +91,8 @@ export class AutoPlayBot {
     this.profile = opts.profile ?? 'STANDARD';
     this.nav = new AdaptiveNavigator();
     this.eightStepController = new EightStepController(this.nav);
-    this.botVersion = opts.botVersion ?? 'v2';
+    const rawVersion = opts.botVersion ?? 'pst';
+    this.botVersion = (rawVersion === 'v1' || rawVersion === 'behavior') ? 'behavior' : 'pst';
     this.strategicPlanner = new StrategicPlanner(this.nav);
     this.tacticalExecutor = new TacticalExecutor(this.nav, this.eightStepController);
     this.episodicMemory = new EpisodicMemory();
@@ -110,7 +111,7 @@ export class AutoPlayBot {
    * メイン意思決定ルーチン
    */
   public decideAction(engine: GameEngine): BotAction {
-    if (this.botVersion === 'v2') {
+    if (this.botVersion === 'pst') {
       return this.decideActionV2(engine);
     }
     const player = engine.getPlayer();

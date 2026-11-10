@@ -1,6 +1,6 @@
 import { SimulationRunner, SimulationConfig } from '../src/simulation/SimulationRunner.js';
 import { DungeonTopology, MapDifficulty, PlayPacingMode, RuleMode } from '../src/models/Types.js';
-import { BotSkillProfile, GraveSealPolicy, GraveSealTiming } from '../src/ai/BotTypes.js';
+import { BotSkillProfile, BotVersion, GraveSealPolicy, GraveSealTiming } from '../src/ai/BotTypes.js';
 
 function parseArgs(): SimulationConfig {
   const rawArgs = process.argv.slice(2).filter(a => a !== '--');
@@ -46,7 +46,7 @@ function parseArgs(): SimulationConfig {
       config.botProfile = val as BotSkillProfile;
       if (!raw.includes('=')) i++;
     } else if (key === '--botVersion' && val) {
-      config.botVersion = val as 'v1' | 'v2';
+      config.botVersion = val as BotVersion;
       if (!raw.includes('=')) i++;
     } else if (key === '--graveSealPolicy' && val) {
       config.strategyTuning!.graveSealPolicy = val as GraveSealPolicy;
