@@ -144,7 +144,12 @@ export class DragonSlayBehavior {
     // 3. 最も近い首の安全な斜め隣接攻撃マスへ進軍
     const attackSpot = this.findBestAttackSpot(curPos, targetHeads, livingHeads, map, dragon, enemies, nav, params);
     if (attackSpot) {
-      const dir = nav.findPath(curPos, attackSpot, map, player, enemies, params, { dragon });
+      // 3-A. 火炎射線を完全回避する安全進軍パス
+      let dir = nav.findPath(curPos, attackSpot, map, player, enemies, params, { dragon });
+      // 3-B. 安全パスが見つからない場合は直接突撃パス（要塞進入・決戦突入）
+      if (!dir) {
+        dir = nav.findPath(curPos, attackSpot, map, player, enemies, params);
+      }
       if (dir) {
         const dist = map.getTorusDistance(curPos, attackSpot).chebyshev;
         return {

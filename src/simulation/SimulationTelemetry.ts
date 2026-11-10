@@ -44,6 +44,13 @@ export interface SingleRunRecord {
   ghostItemsPickedUp: number;
   ghostItemsStolen: number;
   turnSeriesSnapshots: { turn: number; exp: number; str: number }[];
+  pstMetrics?: {
+    missionTurns: Record<string, number>;
+    missionOutcomes: Record<string, { completed: number; aborted: number; failed: number }>;
+    breachShortcutsUsed: number;
+    terminalMissionId?: string;
+    terminalZoneId?: string;
+  };
 }
 
 export interface SimulationSummaryReport {
@@ -100,6 +107,12 @@ export interface SimulationSummaryReport {
       itemsPickedUp: number;
       itemsStolenFromPlayer: number;
     };
+  };
+  pstMetrics?: {
+    avgMissionTurns: Record<string, number>;
+    missionCompletionRates: Record<string, { total: number; completed: number; rate: number }>;
+    avgBreachShortcutsUsed: number;
+    terminalMissionBreakdown: Record<string, number>;
   };
 }
 
@@ -203,10 +216,16 @@ export class SimulationTelemetry {
     }
   }
 
-  public finalizeCurrentRun(totalTurns: number, won: boolean, deathInfo?: DeathInfo): void {
+  public finalizeCurrentRun(
+    totalTurns: number,
+    won: boolean,
+    deathInfo?: DeathInfo,
+    pstMetrics?: SingleRunRecord['pstMetrics']
+  ): void {
     this.currentRecord.totalTurns = totalTurns;
     this.currentRecord.won = won;
     if (deathInfo) this.currentRecord.deathInfo = deathInfo;
+    if (pstMetrics) this.currentRecord.pstMetrics = pstMetrics;
     this.allRecords.push(this.currentRecord);
   }
 

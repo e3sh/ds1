@@ -181,7 +181,7 @@ export class TacticalContext {
 
     // 5. ナビゲーション・BFSコスト
     // 迷路度が高い場合は壁破壊（BREAK）をより積極的に幹線道路として活用
-    const allowBreakAsRoad = player.experience >= 4000;
+    const allowBreakAsRoad = !player.hasDeath && player.magic >= 1 && player.experience >= 4000;
     const breakCostMultiplier = mazeIndex > 0.5 ? 1.1 : 1.6;
     const warpAvoidanceCost = this.scale.nearRadius * 2;
     // マップ面積に比例したBFSステップ上限
@@ -238,11 +238,11 @@ export class TacticalContext {
    */
   public calculateTargetStr(dragon?: Dragon, isClassic?: boolean): number {
     const livingHeads = dragon ? dragon.heads.filter(h => h.isAlive) : [];
-    const minHeadDef = livingHeads.length > 0 ? Math.min(...livingHeads.map(h => h.def)) : 0;
-    if (minHeadDef > 0) {
-      return minHeadDef + 1000;
+    const maxHeadDef = livingHeads.length > 0 ? Math.max(...livingHeads.map(h => h.def)) : 0;
+    if (maxHeadDef > 0) {
+      return maxHeadDef + 1000;
     }
-    return isClassic ? 11000 : 301000;
+    return isClassic ? 11000 : 401000;
   }
 
   /**

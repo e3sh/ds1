@@ -638,6 +638,7 @@ export class AdaptiveNavigator {
     const enemyTileMap = new Map<string, EnemyInstance>();
     const threatDangerZones = new Set<string>();
     const lethalOrthogonalZones = new Set<string>();
+    const lethalAdjacentDiagZones = new Set<string>();
     const lethalChebyshevZones = new Set<string>();
     const effectiveDef = Math.floor(player.experience * 1.0);
 
@@ -651,7 +652,8 @@ export class AdaptiveNavigator {
         const rawDmg = Math.max(0, e.atk - effectiveDef);
         const isTwoShotWithCrown = player.holdItem === 'CROWN' && rawDmg >= player.hp * 0.45;
         const isLethal = rawDmg >= player.hp || isTwoShotWithCrown || ThreatEvaluator.evaluateThreat(player, e) === 'LETHAL';
-        const isDangerous = isLethal || rawDmg >= player.hp * params.dangerHpRatio || rawDmg >= 10000 || (player.holdItem === 'CROWN' && rawDmg > 0);
+        const cannotDefeat = !isLethal && ThreatEvaluator.evaluateThreatDetails(player, e).turnsToKill > 8;
+        const isDangerous = isLethal || cannotDefeat || rawDmg >= player.hp * params.dangerHpRatio || rawDmg >= 10000 || (player.holdItem === 'CROWN' && rawDmg > 0);
 
         if (isLethal) {
           const cardDeltas = [{ dx: 0, dy: -1 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }, { dx: 1, dy: 0 }];
@@ -659,13 +661,21 @@ export class AdaptiveNavigator {
             const p = map.wrapPosition({ x: e.pos.x + cd.dx, y: e.pos.y + cd.dy });
             lethalOrthogonalZones.add(`${p.x},${p.y}`);
           }
-          const diagDeltas = [
+          const diagAdjacentDeltas = [
             { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: -1, dy: 1 }, { dx: 1, dy: 1 },
-            { dx: 0, dy: -2 }, { dx: 0, dy: 2 }, { dx: -2, dy: 0 }, { dx: 2, dy: 0 },
           ];
-          for (const dd of diagDeltas) {
+          for (const dd of diagAdjacentDeltas) {
             const p = map.wrapPosition({ x: e.pos.x + dd.dx, y: e.pos.y + dd.dy });
-            lethalChebyshevZones.add(`${p.x},${p.y}`);
+            lethalAdjacentDiagZones.add(`${p.x},${p.y}`);
+          }
+          // チェビシェフ距離2の外周16マス（敵が1歩動いて直角隣接になりうる危険マス）
+          for (let dy = -2; dy <= 2; dy++) {
+            for (let dx = -2; dx <= 2; dx++) {
+              if (Math.max(Math.abs(dx), Math.abs(dy)) === 2) {
+                const p = map.wrapPosition({ x: e.pos.x + dx, y: e.pos.y + dy });
+                lethalChebyshevZones.add(`${p.x},${p.y}`);
+              }
+            }
           }
         }
 
@@ -769,7 +779,7 @@ export class AdaptiveNavigator {
           }
         }
 
-        // ドラゴン部位・ブレス射線回避
+        // ドラゴン部位・ファイアボール・ブレス射線回避
         if (dragon) {
           if (dragon.getPartAt(nextPos)) continue;
           if (dragon.heads.some(h => h.isAlive && map.getTorusDistance(nextPos, h.pos).manhattan === 1)) continue;
@@ -782,7 +792,13 @@ export class AdaptiveNavigator {
             });
             if (willHitFireball) continue;
           }
-          if (this.isDragonFireLine(nextPos, dragon, map)) continue;
+          // 首の正面至近（2マス以内）は発射と同時に被弾するため完全進入禁止
+          if (this.isDragonFireLineClose(nextPos, dragon, map, 2)) continue;
+
+          // それ以外の遠距離射線は完全進入禁止ではなくソフトペナルティ（迂回優先だが横切りを許容）
+          if (this.isDragonFireLine(nextPos, dragon, map)) {
+            stepCost += 10;
+          }
         }
 
         // 敵マス進入判定
@@ -791,7 +807,17 @@ export class AdaptiveNavigator {
           if (player.holdItem === 'CROSS' || d.dir.includes('_')) continue;
           const threatDetails = ThreatEvaluator.evaluateThreatDetails(player, enemyOnTile);
           const threat = threatDetails.overallThreat;
-          if (player.holdItem === 'CROWN' && threat !== 'ONE_SHOT') continue;
+          const isFrozenEnemy = enemyOnTile.isPermanentlyFrozen || (enemyOnTile.frozenTimer ?? 0) > 0;
+          const isHeadingToHome = to && (map.getBaseTile(to) === 'HOME' || (to.x === map.realHomePos.x && to.y === map.realHomePos.y));
+
+          if (player.holdItem === 'CROWN' && threat !== 'ONE_SHOT') {
+            // 我が家への帰還進路上、または我が家マスの上にいる凍結敵は反撃ダメージ0のため攻撃突破を特別許可
+            if (isFrozenEnemy && isHeadingToHome) {
+              stepCost += 10;
+            } else {
+              continue;
+            }
+          }
           // 初手で敵を撃破する場合、プレイヤーはその場に留まるため他に即死敵が隣接していたら攻撃不可
           if (current.firstDir === null) {
             const hasOtherLethalAtFrom = enemies.some(e => {
@@ -802,31 +828,31 @@ export class AdaptiveNavigator {
             if (hasOtherLethalAtFrom) continue;
           }
           if (player.hp < player.maxHp * params.emergencyHpRatio && threat !== 'ONE_SHOT' && !(nextPos.x === to.x && nextPos.y === to.y)) {
-            continue;
+            if (!(isFrozenEnemy && isHeadingToHome)) continue;
           }
 
           // 安全撃破可能敵（被ダメ0 かつ 短手数で撃破可能）の突破判定
-          const canBreakthrough = threatDetails.defenseThreat === 'NO_DAMAGE' && threatDetails.turnsToKill <= 8;
+          const canBreakthrough = (threatDetails.defenseThreat === 'NO_DAMAGE' && threatDetails.turnsToKill <= 8) || (isFrozenEnemy && isHeadingToHome);
 
           if (nextPos.x === to.x && nextPos.y === to.y) {
-            if (threat !== 'ONE_SHOT' && threat !== 'SAFE' && !canBreakthrough) continue;
+            if (threat !== 'ONE_SHOT' && threat !== 'SAFE' && !canBreakthrough && threatDetails.defenseThreat !== 'NO_DAMAGE') continue;
           } else {
             if (threat !== 'ONE_SHOT' && !canBreakthrough) continue;
           }
 
           if (canBreakthrough && threat !== 'ONE_SHOT') {
-            stepCost += threatDetails.turnsToKill * 5;
+            stepCost += (threatDetails.turnsToKill ?? 1) * 5;
           }
         }
 
-        // 即死敵の直角隣接への飛び込み禁止（我が家への帰還時のみ入室許可）
-        const isTargetHome = to && to.x === map.realHomePos.x && to.y === map.realHomePos.y && nextPos.x === to.x && nextPos.y === to.y;
-        if (lethalOrthogonalZones.has(key) && !enemyTileMap.has(key) && !isTargetHome) {
+        // 即死敵の周囲（直角隣接および斜め隣接＝周囲8マス）への飛び込み禁止（敵の追尾攻撃による即死を防ぐ）
+        const isTargetHome = to && (map.getBaseTile(to) === 'HOME' || (to.x === map.realHomePos.x && to.y === map.realHomePos.y)) && nextPos.x === to.x && nextPos.y === to.y;
+        if ((lethalOrthogonalZones.has(key) || lethalAdjacentDiagZones.has(key)) && !enemyTileMap.has(key) && !isTargetHome) {
           continue;
         }
 
         if (lethalChebyshevZones.has(key) && !enemyTileMap.has(key) && !isTargetHome) {
-          stepCost += (player.holdItem === 'CROWN' || isEscapePhase) ? 10000 : 2000;
+          stepCost += (player.holdItem === 'CROWN' || isEscapePhase) ? 50000 : 5000;
         }
 
         if (threatDangerZones.has(key) && !enemyTileMap.has(key) && !(nextPos.x === to.x && nextPos.y === to.y)) {
@@ -863,13 +889,8 @@ export class AdaptiveNavigator {
           }
         }
 
-        // 訪問ヒートマップによる反発コスト（頻繁に踏んでいる高熱マスへの再進入を抑制）
-        if (!(nextPos.x === to.x && nextPos.y === to.y)) {
-          const heat = this.getHeat(nextPos);
-          if (heat > 0) {
-            stepCost += Math.min(80, Math.floor(heat * 2.5));
-          }
-        }
+        // 訪問ヒートマップによる反発は最短経路探索を歪めて大回りを引き起こすため、
+        // 移動ナビゲーションの findPath では加算せず、停滞・周回検知（認知層）のみで利用する
 
         const newCost = current.cost + stepCost;
         const prevCost = visited.get(key);
@@ -919,8 +940,17 @@ export class AdaptiveNavigator {
 
       if (dragon) {
         if (dragon.getPartAt(nextPos)) continue;
-        if (this.isDragonFireLine(nextPos, dragon, map)) continue;
         if (dragon.heads.some(h => h.isAlive && map.getTorusDistance(nextPos, h.pos).manhattan === 1)) continue;
+        if (this.isDragonFireLineClose(nextPos, dragon, map, 2)) continue;
+        if (dragon.fireballs && dragon.fireballs.length > 0) {
+          const willHit = dragon.fireballs.some(fb => {
+            if (!fb.isAlive) return false;
+            if (fb.pos.x === nextPos.x && fb.pos.y === nextPos.y) return true;
+            const nextFb = map.wrapPosition(MovementSystem.getNextPosition(fb.pos, fb.dir));
+            return nextFb.x === nextPos.x && nextFb.y === nextPos.y;
+          });
+          if (willHit) continue;
+        }
       }
 
       const enemy = enemies.find(e => e.isAlive && e.pos.x === nextPos.x && e.pos.y === nextPos.y);
@@ -941,6 +971,7 @@ export class AdaptiveNavigator {
 
       let penalty = 0;
       if (isBlock) penalty += 30;
+      if (dragon && this.isDragonFireLine(nextPos, dragon, map)) penalty += 80;
 
       // 直近訪問履歴に対する段階的再訪ペナルティ
       // this.recentPositions の末尾 (length - 1) は現在地 player.pos
@@ -1033,8 +1064,18 @@ export class AdaptiveNavigator {
       const enemyOnTile = enemies.find(e => e.isAlive && e.pos.x === nextPos.x && e.pos.y === nextPos.y);
       if (enemyOnTile) continue;
 
-      if (dragon && (dragon.getPartAt(nextPos) || this.isDragonFireLine(nextPos, dragon, map))) {
-        continue;
+      if (dragon) {
+        if (dragon.getPartAt(nextPos)) continue;
+        if (this.isDragonFireLineClose(nextPos, dragon, map, 2)) continue;
+        if (dragon.fireballs && dragon.fireballs.length > 0) {
+          const willHit = dragon.fireballs.some(fb => {
+            if (!fb.isAlive) return false;
+            if (fb.pos.x === nextPos.x && fb.pos.y === nextPos.y) return true;
+            const nextFb = map.wrapPosition(MovementSystem.getNextPosition(fb.pos, fb.dir));
+            return nextFb.x === nextPos.x && nextFb.y === nextPos.y;
+          });
+          if (willHit) continue;
+        }
       }
 
       // 我が家（指輪非所持時）は絶対安全地帯なので最優先退避先
@@ -1065,6 +1106,7 @@ export class AdaptiveNavigator {
         }
       }
       if (hasLethalOrthogonal) continue;
+      if (dragon && this.isDragonFireLine(nextPos, dragon, map)) enemyPenalty += 60;
 
       let penalty = enemyPenalty;
       if (player.holdItem === 'CROWN') {
@@ -1098,6 +1140,21 @@ export class AdaptiveNavigator {
     for (const head of dragon.heads) {
       if (!head.isAlive) continue;
       if (dragon.canHeadSeePlayer(head, pos, map)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 首の正面射線のうち、至近距離（maxRangeマス以内）にあるか判定（発射即被弾の危険ゾーン）
+   */
+  public isDragonFireLineClose(pos: Position, dragon: Dragon, map: WorldMap, maxRange: number = 2): boolean {
+    if (!dragon || !dragon.heads) return false;
+    for (const head of dragon.heads) {
+      if (!head.isAlive) continue;
+      const d = map.getTorusDistance(pos, head.pos).manhattan;
+      if (d <= maxRange && dragon.canHeadSeePlayer(head, pos, map)) {
         return true;
       }
     }
@@ -1203,6 +1260,17 @@ export class AdaptiveNavigator {
   public getAdjacentDirection(from: Position, to: Position, map: WorldMap): Direction | null {
     const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
     for (const dir of cardDirs) {
+      const nextPos = map.wrapPosition(MovementSystem.getNextPosition(from, dir));
+      if (nextPos.x === to.x && nextPos.y === to.y) {
+        return dir;
+      }
+    }
+    return null;
+  }
+
+  public get8WayAdjacentDirection(from: Position, to: Position, map: WorldMap): Direction | null {
+    const allDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT', 'UP_LEFT', 'UP_RIGHT', 'DOWN_LEFT', 'DOWN_RIGHT'];
+    for (const dir of allDirs) {
       const nextPos = map.wrapPosition(MovementSystem.getNextPosition(from, dir));
       if (nextPos.x === to.x && nextPos.y === to.y) {
         return dir;

@@ -28,6 +28,12 @@ import { RelocateBehavior } from './behaviors/RelocateBehavior.js';
 import { CombatBehavior } from './behaviors/CombatBehavior.js';
 import { DragonSlayBehavior } from './behaviors/DragonSlayBehavior.js';
 import { EscapeBehavior } from './behaviors/EscapeBehavior.js';
+import { SpatialKnowledge } from './perception/SpatialKnowledge.js';
+import { SituationalPerception } from './perception/SituationalPerception.js';
+import { EpisodicMemory } from './perception/EpisodicMemory.js';
+import { TacticalSnapshot } from './perception/TacticalSnapshot.js';
+import { StrategicPlanner } from './strategy/StrategicPlanner.js';
+import { TacticalExecutor } from './tactics/TacticalExecutor.js';
 
 export * from './BotTypes.js';
 export { TacticalContext } from './TacticalContext.js';
@@ -74,10 +80,21 @@ export class AutoPlayBot {
   public currentTargetDesc: string = '初期化中';
   public lastDecidedActionDesc: string = '待機';
 
+  // PST 3層アーキテクチャユニット (v2)
+  public readonly botVersion: 'v1' | 'v2';
+  public readonly strategicPlanner: StrategicPlanner;
+  public readonly tacticalExecutor: TacticalExecutor;
+  public readonly episodicMemory: EpisodicMemory;
+  public spatialKnowledge?: SpatialKnowledge;
+
   constructor(opts: AutoPlayBotOptions = {}) {
     this.profile = opts.profile ?? 'STANDARD';
     this.nav = new AdaptiveNavigator();
     this.eightStepController = new EightStepController(this.nav);
+    this.botVersion = opts.botVersion ?? 'v2';
+    this.strategicPlanner = new StrategicPlanner(this.nav);
+    this.tacticalExecutor = new TacticalExecutor(this.nav, this.eightStepController);
+    this.episodicMemory = new EpisodicMemory();
   }
 
   public setPhase(newPhase: BotPhase): void {
@@ -93,6 +110,9 @@ export class AutoPlayBot {
    * メイン意思決定ルーチン
    */
   public decideAction(engine: GameEngine): BotAction {
+    if (this.botVersion === 'v2') {
+      return this.decideActionV2(engine);
+    }
     const player = engine.getPlayer();
     const map = engine.getMap ? engine.getMap() : (engine as any).getWorldMap();
     const enemies = engine.getEnemies().filter(e => e.isAlive);
@@ -151,6 +171,10 @@ export class AutoPlayBot {
         this.currentTargetDesc = '🌀 袋小路拘束打開: JUMP詠唱で脱出';
         this.nav.clearPositionHistory();
         return { type: 'MAGIC', magic: 'JUMP' };
+      }
+      if (engine.isAutoPlayVerifyActive && engine.isAutoPlayVerifyActive()) {
+        this.nav.clearPositionHistory();
+        return this.nav.wanderSafe(player, map, enemies, dragon);
       }
       this.isGivenUp = true;
       this.currentTargetDesc = '💀 詰み検知: 袋小路・敵封鎖により脱出不能のためギブアップ';
@@ -372,7 +396,7 @@ export class AutoPlayBot {
         engine.castMagic(action.magic);
         break;
       case 'WAIT':
-        engine.executeTurn(null);
+        engine.executeTurn(null, true);
         break;
       case 'GIVE_UP':
         this.isGivenUp = true;
@@ -726,6 +750,137 @@ export class AutoPlayBot {
       case 'DRAGON_SLAY': return '💡【決戦】ドラゴンの首のブレス射線を避け、安全な斜め位置から首を攻撃します！';
       case 'CROWN_ESCAPE': return '💡【王冠脱出】ドラゴンの全首を撃破！出現した4つの王冠を我が家へ運搬します。';
     }
+  }
+
+  /**
+   * PSTモデル（Perception - Strategy - Tactics 3層分離）による新意思決定ルーチン (v2)
+   */
+  public decideActionV2(engine: GameEngine): BotAction {
+    const player = engine.getPlayer();
+    const map = engine.getMap ? engine.getMap() : (engine as any).getWorldMap();
+    const enemies = engine.getEnemies().filter(e => e.isAlive);
+    const dragon = engine.getDragon();
+    const tuning = typeof engine.getActiveTuningParams === 'function' ? engine.getActiveTuningParams() : undefined;
+
+    // 0. コンテキストと動的パラメータの更新
+    if (!this.context || (map as any) !== (this as any)._lastMapRef) {
+      const metrics = MapProfiler.measureGeometricMetrics(map);
+      this.context = new TacticalContext(map, { tuning, profile: this.profile, metrics });
+      (this as any)._lastMapRef = map;
+    }
+
+    this.updatePhase(player, dragon, map, enemies);
+
+    this.params = this.context.resolveParameters(this.currentPhase, player, dragon, enemies, {
+      totalTurns: this.totalTurns,
+      defensePrepTurns: this.defensePrepTurns,
+    });
+    MagicSystem.updatePassiveSkills(player);
+
+    // BREAK 解禁検知
+    if (!this.unlockedBreakNotified && player.experience >= 4000) {
+      this.unlockedBreakNotified = true;
+      this.nav.clearUnreachableTargets();
+      this.episodicMemory.clearAllUnreachableTargets();
+    }
+
+    // ナビゲータおよびエピソード記憶のターン更新
+    this.nav.updateTurn(player.pos);
+    this.episodicMemory.recordStep(player.pos, this.totalTurns);
+
+    // 序盤の剣回収前ハマり（物理的詰み）検知
+    if (!player.hasSword) {
+      if (this.nav.detectEarlySwordTrap(player, map, enemies, this.params, dragon)) {
+        this.isGivenUp = true;
+        this.currentTargetDesc = '💀 詰み検知: 剣への到達経路が存在しないためギブアップ';
+        return { type: 'GIVE_UP' };
+      }
+    }
+
+    // 1. 【認知・知識ユニット (Perception & Knowledge)】
+    if (!this.spatialKnowledge) {
+      this.spatialKnowledge = new SpatialKnowledge(map, map.tacticalMetadata);
+    }
+    this.spatialKnowledge.update(map);
+
+    const milestones = SituationalPerception.evaluateMilestones(player, this.params, dragon);
+    const threats = SituationalPerception.evaluateThreats(player, map, enemies, dragon, this.params);
+    const stagnation = SituationalPerception.evaluateStagnation(
+      player,
+      map,
+      enemies,
+      this.nav,
+      this.strategicPlanner.activeMission?.generateDirective(
+        { player, map, milestones, threats, livingEnemies: enemies, memory: this.episodicMemory, params: this.params, spatial: this.spatialKnowledge, totalTurns: this.totalTurns } as any,
+        engine
+      )?.targetPos
+    );
+
+    const snapshot: TacticalSnapshot = {
+      spatial: this.spatialKnowledge,
+      milestones,
+      threats,
+      stagnation,
+      player: {
+        pos: { ...player.pos },
+        hp: player.hp,
+        maxHp: player.maxHp,
+        strength: player.strength,
+        experience: player.experience,
+        magic: player.magic,
+        gold: player.gold,
+        holdItem: player.holdItem,
+        hasSword: player.hasSword,
+        isFlying: player.isFlying,
+        canDiagonal: milestones.canDiagonal,
+        hasDeath: player.hasDeath,
+        stepCountSinceStone: player.stepCountSinceStone,
+      },
+      dragon: dragon ? {
+        center: dragon.centerPos,
+        livingHeadsCount: dragon.heads.filter(h => h.isAlive).length,
+        defeatedHeadsCount: dragon.defeatedHeadsCount,
+        isAllHeadsDefeated: dragon.isAllHeadsDefeated,
+        livingHeadPositions: dragon.heads.filter(h => h.isAlive).map(h => ({ ...h.pos })),
+        heads: dragon.heads.map(h => ({
+          type: h.type,
+          pos: { ...h.pos },
+          hp: h.hp,
+          def: h.def,
+          isAlive: h.isAlive,
+          attackSpots: this.spatialKnowledge!.calculateHeadAttackSpots(h, dragon, map),
+        })),
+      } : undefined,
+      livingEnemies: enemies,
+      memory: this.episodicMemory,
+      params: this.params,
+      map,
+      totalTurns: this.totalTurns,
+    };
+
+    // 2. 【判断・指示：戦略ユニット (Strategic Planner)】
+    const directive = this.strategicPlanner.planTurn(snapshot, engine);
+    const missionName = this.strategicPlanner.activeMission?.name ?? '作戦なし';
+
+    if (directive.type === 'GIVE_UP') {
+      this.isGivenUp = true;
+      this.currentTargetDesc = directive.reason;
+      return { type: 'GIVE_UP' };
+    }
+
+    // 3. 【行動：戦術実行ユニット (Tactical Execution)】
+    const execResult = this.tacticalExecutor.execute(directive, snapshot, engine);
+    this.currentTargetDesc = `[${missionName}] ${execResult.description}`;
+
+    // 要件2: 戦術実行結果（成功・経路遮断・膠着）を戦略層へフィードバック
+    this.strategicPlanner.recordExecutionResult(directive, execResult, snapshot);
+
+    if (execResult.action.type === 'GIVE_UP') {
+      this.isGivenUp = true;
+      return { type: 'GIVE_UP' };
+    }
+
+    return this.resolveMoveOrBreak(execResult.action, player, map);
   }
 
   public getTelemetryStatus(player: Player, _map?: WorldMap, turn?: number): string {

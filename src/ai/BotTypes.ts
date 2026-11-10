@@ -86,6 +86,7 @@ export interface AutoPlayBotOptions {
   maxTurnsLimit?: number;
   parameterOverrides?: Partial<DynamicBotParameters>;
   strategyTuning?: BotStrategyTuning;
+  botVersion?: 'v1' | 'v2';
 }
 
 export type AdaptiveBotOptions = AutoPlayBotOptions;

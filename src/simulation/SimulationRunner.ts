@@ -67,6 +67,7 @@ export class SimulationRunner {
         profile: botProfile,
         maxTurnsLimit,
         strategyTuning: config.strategyTuning,
+        botVersion: config.botVersion,
       });
 
       let turns = 0;
@@ -98,7 +99,43 @@ export class SimulationRunner {
 
       const won = engine.getState() === 'STAGECLEAR';
       const player = engine.getPlayer();
-      telemetry.finalizeCurrentRun(turns, won, player.deathInfo ?? undefined);
+
+      // PST 3層アーキテクチャテレメトリ情報の収集 (v2)
+      let pstMetrics: any = undefined;
+      if (bot.botVersion === 'v2') {
+        const missionTurns: Record<string, number> = {};
+        const missionOutcomes: Record<string, { completed: number; aborted: number; failed: number }> = {};
+
+        for (const h of bot.strategicPlanner.missionHistory) {
+          missionTurns[h.missionId] = (missionTurns[h.missionId] || 0) + h.turns;
+          if (!missionOutcomes[h.missionId]) {
+            missionOutcomes[h.missionId] = { completed: 0, aborted: 0, failed: 0 };
+          }
+          if (h.status === 'COMPLETED') missionOutcomes[h.missionId].completed++;
+          else if (h.status === 'ABORTED') missionOutcomes[h.missionId].aborted++;
+          else if (h.status === 'FAILED') missionOutcomes[h.missionId].failed++;
+        }
+
+        // 現在実行中だったアクティブミッションのターンも加算
+        const active = bot.strategicPlanner.activeMission;
+        if (active) {
+          missionTurns[active.id] = (missionTurns[active.id] || 0) + active.turnsElapsed;
+        }
+
+        const breachShortcutsUsed = bot.spatialKnowledge?.breachShortcuts.filter(s => s.isBreached).length ?? 0;
+        const terminalMissionId = active?.id ?? 'NONE';
+        const terminalZoneId = active && 'zoneId' in active ? (active as any).zoneId : undefined;
+
+        pstMetrics = {
+          missionTurns,
+          missionOutcomes,
+          breachShortcutsUsed,
+          terminalMissionId,
+          terminalZoneId,
+        };
+      }
+
+      telemetry.finalizeCurrentRun(turns, won, player.deathInfo ?? undefined, pstMetrics);
     }
 
     return this.generateSummaryReport(telemetry, {
@@ -192,6 +229,55 @@ export class SimulationRunner {
 
     const chestCapFallbackCount = Math.round(records.reduce((acc, r) => acc + r.chestCapFallbackCount, 0) / runsCount);
 
+    // PST 3層アーキテクチャ & 構造テレメトリ集計
+    let pstSummary: any = undefined;
+    const pstRecords = records.map(r => r.pstMetrics).filter((m): m is NonNullable<typeof m> => !!m);
+    if (pstRecords.length > 0) {
+      const avgMissionTurns: Record<string, number> = {};
+      const outcomeAgg: Record<string, { total: number; completed: number }> = {};
+      const terminalBreakdown: Record<string, number> = {};
+      let totalShortcuts = 0;
+
+      for (const m of pstRecords) {
+        totalShortcuts += m.breachShortcutsUsed;
+        if (m.terminalMissionId) {
+          const key = m.terminalZoneId ? `${m.terminalMissionId} [Zone:${m.terminalZoneId}]` : m.terminalMissionId;
+          terminalBreakdown[key] = (terminalBreakdown[key] || 0) + 1;
+        }
+
+        for (const [mid, turns] of Object.entries(m.missionTurns)) {
+          avgMissionTurns[mid] = (avgMissionTurns[mid] || 0) + turns;
+        }
+
+        for (const [mid, out] of Object.entries(m.missionOutcomes)) {
+          if (!outcomeAgg[mid]) outcomeAgg[mid] = { total: 0, completed: 0 };
+          const tries = out.completed + out.aborted + out.failed;
+          outcomeAgg[mid].total += tries;
+          outcomeAgg[mid].completed += out.completed;
+        }
+      }
+
+      for (const mid of Object.keys(avgMissionTurns)) {
+        avgMissionTurns[mid] = Math.round(avgMissionTurns[mid] / pstRecords.length);
+      }
+
+      const missionCompletionRates: Record<string, { total: number; completed: number; rate: number }> = {};
+      for (const [mid, data] of Object.entries(outcomeAgg)) {
+        missionCompletionRates[mid] = {
+          total: data.total,
+          completed: data.completed,
+          rate: data.total > 0 ? Math.round((data.completed / data.total) * 100) / 100 : 0,
+        };
+      }
+
+      pstSummary = {
+        avgMissionTurns,
+        missionCompletionRates,
+        avgBreachShortcutsUsed: Math.round((totalShortcuts / pstRecords.length) * 10) / 10,
+        terminalMissionBreakdown: terminalBreakdown,
+      };
+    }
+
     return {
       config: {
         topology: config.topology,
@@ -230,6 +316,7 @@ export class SimulationRunner {
           itemsStolenFromPlayer: Math.round(records.reduce((acc, r) => acc + r.ghostItemsStolen, 0) / runsCount),
         },
       },
+      pstMetrics: pstSummary,
     };
   }
 }

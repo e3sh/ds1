@@ -817,6 +817,36 @@ export class WorldMap {
   }
 
   /**
+   * マップ上に存在するすべての我が家（HOME）の座標を取得（2軒化対応）
+   */
+  public getAllHomePositions(): Position[] {
+    const homes: Position[] = [];
+    const seen = new Set<string>();
+
+    const checkAndAdd = (pos: Position) => {
+      const p = this.wrapPosition(pos);
+      const key = `${p.x},${p.y}`;
+      if (!seen.has(key) && this.baseTiles[p.y][p.x] === 'HOME') {
+        seen.add(key);
+        homes.push(p);
+      }
+    };
+
+    checkAndAdd(this.homePos);
+    checkAndAdd(this.initialHomePos);
+
+    for (let y = 0; y < this.height; y++) {
+      for (let x = 0; x < this.width; x++) {
+        if (this.baseTiles[y][x] === 'HOME') {
+          checkAndAdd({ x, y });
+        }
+      }
+    }
+
+    return homes.length > 0 ? homes : [{ ...this.homePos }];
+  }
+
+  /**
    * ドラゴン首討伐時等に初期位置へ我が家（HOME）を復活配置
    * 移動させた家は維持し、初期位置を敵の湧き場（spawnHomePos）として再興する
    */
