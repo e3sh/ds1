@@ -6,7 +6,7 @@ function parseArgs(): SimulationConfig {
   const rawArgs = process.argv.slice(2).filter(a => a !== '--');
   const config: SimulationConfig = {
     runs: 5,
-    maxTurnsLimit: 1200,
+    maxTurnsLimit: 2500,
     topology: 'STANDARD_ROOMS',
     difficulty: 'NORMAL',
     pacing: 'STANDARD',

@@ -30,8 +30,39 @@ export class BootstrapBehavior {
   ): BehaviorResult | null {
     const curPos = player.pos;
 
-    // 1. 足元に剣があるなら拾う
-    if (map.getItem(curPos) === 'SWORD' && !player.hasSword) {
+    // 0. 剣未所持時に何か持っている場合、剣を拾うために安全な空き床に置いて手ぶら (NONE) に戻る
+    if (!player.hasSword && player.holdItem !== 'NONE') {
+      const isFireLine = dragon && nav.isDragonFireLine(curPos, dragon, map);
+      const canDropHere = !isFireLine &&
+                          map.getItem(curPos) === 'NONE' &&
+                          map.getObject(curPos) === 'NONE' &&
+                          map.getBaseTile(curPos) !== 'WALL_STATIC' &&
+                          map.getBaseTile(curPos) !== 'WARP' &&
+                          map.getBaseTile(curPos) !== 'GRAVE';
+      if (canDropHere) {
+        return {
+          action: { type: 'SPACE' },
+          description: `📦 剣取得のため所持品を床に置く [${player.holdItem}]`,
+        };
+      }
+      // 隣接安全マス探索
+      const cardDirs = ['UP', 'RIGHT', 'DOWN', 'LEFT'] as const;
+      for (const d of cardDirs) {
+        const p = map.wrapPosition({
+          x: curPos.x + (d === 'RIGHT' ? 1 : d === 'LEFT' ? -1 : 0),
+          y: curPos.y + (d === 'DOWN' ? 1 : d === 'UP' ? -1 : 0),
+        });
+        if (map.getItem(p) === 'NONE' && map.getObject(p) === 'NONE' && map.getBaseTile(p) !== 'WALL_STATIC') {
+          return {
+            action: { type: 'MOVE', dir: d },
+            description: `📦 所持品を置くため安全マスへ移動 [${player.holdItem}]`,
+          };
+        }
+      }
+    }
+
+    // 1. 足元に剣があるなら拾う (手ぶら必須)
+    if (map.getItem(curPos) === 'SWORD' && !player.hasSword && player.holdItem === 'NONE') {
       if (bot) {
         bot.lockedItemPos = null;
         bot.lockedItemType = null;
@@ -92,8 +123,8 @@ export class BootstrapBehavior {
       }
     }
 
-    // 3. 足元に鍵があるなら拾う（手ぶら時）
-    if (map.getItem(curPos) === 'KEY' && player.holdItem === 'NONE') {
+    // 3. 足元に鍵があるなら拾う（手ぶら時 かつ 剣所持時のみ）
+    if (map.getItem(curPos) === 'KEY' && player.holdItem === 'NONE' && player.hasSword) {
       if (bot) {
         bot.lockedItemPos = null;
         bot.lockedItemType = null;

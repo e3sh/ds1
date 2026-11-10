@@ -9,6 +9,7 @@ import { MagicSystem } from '../systems/MagicSystem.js';
 import { MovementSystem } from '../systems/MovementSystem.js';
 import { BotAction, DynamicBotParameters } from './BotTypes.js';
 import type { TacticalContext } from './TacticalContext.js';
+import type { MapTacticalMetadata } from '../systems/generator/ThemeBlockTypes.js';
 
 export interface PathResult {
   dir: Direction;
@@ -604,6 +605,7 @@ export class AdaptiveNavigator {
       extraBlocked?: Position[];
       isEscapePhase?: boolean;
       ghosts?: Ghost[];
+      context?: TacticalContext;
     }
   ): Direction | null {
     const result = this.executeBfs(from, to, map, player, enemies, params, options);
@@ -622,6 +624,7 @@ export class AdaptiveNavigator {
       extraBlocked?: Position[];
       isEscapePhase?: boolean;
       ghosts?: Ghost[];
+      context?: TacticalContext;
     }
   ): PathResult | null {
     if (!from || !to) return null;
@@ -747,6 +750,11 @@ export class AdaptiveNavigator {
 
         const obj = map.getObject(nextPos);
         if (obj === 'BLOCK') {
+          // 墓封鎖ブロックは BREAK による破壊および一般通行から保護（通過不可）
+          if (AdaptiveNavigator.isProtectedGraveBlock(nextPos, map, options?.context?.metadata)) {
+            continue;
+          }
+
           if (params.allowBreakAsRoad && MagicSystem.canCast(player, 'BREAK').allowed) {
             stepCost = params.breakCostMultiplier;
           } else if (player.holdItem === 'RING') {
@@ -1218,5 +1226,94 @@ export class AdaptiveNavigator {
       }
     }
     return results;
+  }
+
+  /**
+   * 墓封鎖用ブロック（墓周囲8マス、またはメタデータの封鎖ターゲット／推奨岩押しブロック）か判定
+   */
+  public static isProtectedGraveBlock(
+    pos: Position,
+    map: WorldMap,
+    metadata?: MapTacticalMetadata
+  ): boolean {
+    if (map.getObject(pos) !== 'BLOCK') {
+      return false;
+    }
+
+    // 1. 墓（GRAVE）の周囲8マス判定 (トーラス循環考慮)
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const neighbor = map.wrapPosition({ x: pos.x + dx, y: pos.y + dy });
+        if (map.getBaseTile(neighbor) === 'GRAVE') {
+          return true;
+        }
+      }
+    }
+
+    // 2. メタデータ (gravePuzzleHints) による保護判定
+    const hints = metadata?.gravePuzzleHints ?? map.tacticalMetadata?.gravePuzzleHints;
+    if (hints && hints.length > 0) {
+      for (const hint of hints) {
+        if (hint.sealTargetPositions) {
+          for (const target of hint.sealTargetPositions) {
+            if (pos.x === target.x && pos.y === target.y) {
+              return true;
+            }
+          }
+        }
+        if (hint.recommendedPushes) {
+          for (const push of hint.recommendedPushes) {
+            if (
+              (pos.x === push.blockPos.x && pos.y === push.blockPos.y) ||
+              (pos.x === push.destinationPos.x && pos.y === push.destinationPos.y)
+            ) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * 手持ちアイテムを安全に置くための隣接空きマスを探す
+   */
+  public findAdjacentDropTile(
+    pos: Position,
+    map: WorldMap,
+    enemies: EnemyInstance[],
+    dragon?: Dragon,
+    player?: Player
+  ): Direction | null {
+    const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
+    for (const d of cardDirs) {
+      const p = map.wrapPosition(MovementSystem.getNextPosition(pos, d));
+      if (map.getBaseTile(p) === 'WALL_STATIC') continue;
+      if (map.getBaseTile(p) === 'GRAVE') continue;
+      if (map.getBaseTile(p) === 'WARP') continue;
+      if (map.getBaseTile(p) === 'HOME') continue;
+      if (map.getObject(p) !== 'NONE') continue;
+      if (map.getItem(p) !== 'NONE') continue;
+      if (dragon && (dragon.getPartAt(p) || this.isDragonFireLine(p, dragon, map))) continue;
+
+      const onEnemy = enemies.find(e => e.isAlive && e.pos.x === p.x && e.pos.y === p.y);
+      if (onEnemy) continue;
+
+      if (player) {
+        const dangerousAdj = enemies.some(e => {
+          if (!e.isAlive || e.isPermanentlyFrozen || e.frozenTimer > 0) return false;
+          if (map.getTorusDistance(p, e.pos).chebyshev > 1) return false;
+          const threat = ThreatEvaluator.evaluateThreat(player, e);
+          return threat === 'LETHAL' || threat === 'DANGER';
+        });
+        if (dangerousAdj) continue;
+      }
+
+      return d;
+    }
+    return null;
   }
 }

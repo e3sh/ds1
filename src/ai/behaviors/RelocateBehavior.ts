@@ -45,6 +45,31 @@ export class RelocateBehavior {
       return null; // 移転完了
     }
 
+    // 2-B. RING以外のアイテム（KEY等）を所持している場合、まず手ぶらにする
+    if (player.holdItem !== 'NONE' && player.holdItem !== 'RING') {
+      const isFireLine = dragon && nav.isDragonFireLine(curPos, dragon, map);
+      const canDropHere = !isFireLine &&
+                          map.getItem(curPos) === 'NONE' &&
+                          map.getObject(curPos) === 'NONE' &&
+                          map.getBaseTile(curPos) !== 'WALL_STATIC' &&
+                          map.getBaseTile(curPos) !== 'WARP' &&
+                          map.getBaseTile(curPos) !== 'GRAVE' &&
+                          map.getBaseTile(curPos) !== 'HOME';
+      if (canDropHere) {
+        return {
+          action: { type: 'SPACE' },
+          description: `💍 RING回収準備: 手持ちアイテムを置く [${player.holdItem}]`,
+        };
+      }
+      const safeDir = nav.findAdjacentDropTile(curPos, map, enemies, dragon, player);
+      if (safeDir) {
+        return {
+          action: { type: 'MOVE', dir: safeDir },
+          description: `💍 RING回収準備: 手持ちアイテムを置くため安全マスへ移動 [${player.holdItem}]`,
+        };
+      }
+    }
+
     // 3. RINGを持っていない場合、RINGを回収に向かう
     if (player.holdItem !== 'RING') {
       const ringPos = this.findNearestItem(curPos, 'RING', map, nav);

@@ -10,10 +10,12 @@ import { AdaptiveNavigator } from '../src/ai/AdaptiveNavigator.js';
 import { AutoPlayBot, AdaptiveAutoPlayBot } from '../src/ai/AutoPlayBot.js';
 import { MapTacticalMetadata, GravePuzzleHint } from '../src/systems/generator/ThemeBlockTypes.js';
 import { GraveSealBehavior } from '../src/ai/behaviors/GraveSealBehavior.js';
+import { RelocateBehavior } from '../src/ai/behaviors/RelocateBehavior.js';
 import { ResourceFarmBehavior } from '../src/ai/behaviors/ResourceFarmBehavior.js';
 import { CombatBehavior } from '../src/ai/behaviors/CombatBehavior.js';
 import { EscapeBehavior } from '../src/ai/behaviors/EscapeBehavior.js';
 import { EnemyInstance } from '../src/models/Enemy.js';
+import { BotAction } from '../src/ai/BotTypes.js';
 
 console.log('================================================================');
 console.log('   AdaptiveAutoPlayBot (v2) Integration & Scale Verification   ');
@@ -387,8 +389,8 @@ console.log('Testing 11: Suppression of redundant FLASH casting on stunned enemi
   console.log('✓ 11. Stunned enemy exclusion & crown pickup/escape during FLASH stun verified.');
 }
 
-// Test 12: STR達成後の宝箱コイン収集スワップ＆一括換金帰還の検証
-console.log('Testing 12: Post-targetStr chest unlocking, COIN swap collection, and batch cash-in return...');
+// Test 12: 宝箱開け効率化（スワップ廃止・連続開錠＆宝箱枯渇後の鍵手放し回収）の検証
+console.log('Testing 12: Post-targetStr chest unlocking, continuous opening without COIN swap, and batch cash-in return...');
 {
   const map = createEmptyMap();
   map.setBaseTile({ x: 8, y: 8 }, 'HOME');
@@ -416,13 +418,23 @@ console.log('Testing 12: Post-targetStr chest unlocking, COIN swap collection, a
   assert.ok(resOpen !== null);
   assert.strictEqual(resOpen.action.type, 'SPACE', 'STR達成後はピボット待機せず即座に宝箱を開錠すること');
 
-  // B. 宝箱から COIN が出現した状態: 鍵を持ったまま放置せず、一時置きスワップを開始して回収すること
+  // B1. 宝箱から COIN が出現し、別の宝箱 (16, 8) がある状態:
+  // 足元のCOINをスワップ回収せず、床に残したまま次の未開封宝箱へ向かうこと
   map.setObject({ x: 12, y: 8 }, 'NONE');
   map.setItem({ x: 12, y: 8 }, 'COIN');
-  const resSwap = ResourceFarmBehavior.execute(player, map, [], dragon, bot.nav, ctx, params, swapState, bot);
-  assert.ok(resSwap !== null);
-  assert.strictEqual(resSwap.action.type, 'MOVE', '足元のCOINを回収するため鍵一時置き移動を開始すること');
-  assert.ok(swapState.itemToPickupPos !== null, 'swapState.itemToPickupPos にCOIN座標が記録されること');
+  map.setObject({ x: 16, y: 8 }, 'CHEST');
+  const resNextChest = ResourceFarmBehavior.execute(player, map, [], dragon, bot.nav, ctx, params, swapState, bot);
+  assert.ok(resNextChest !== null);
+  assert.strictEqual(resNextChest.action.type, 'MOVE', '次の宝箱へ移動すること');
+  assert.strictEqual(swapState.itemToPickupPos, null, '足元COINに対する一時置きスワップは発生しないこと');
+  assert.ok(resNextChest.description.includes('宝箱へ移動'), '行動説明が宝箱へ移動であること');
+
+  // B2. 他に宝箱が存在しない場合: 鍵を床に置いて手放すこと
+  map.setObject({ x: 16, y: 8 }, 'NONE');
+  const resDropKey = ResourceFarmBehavior.execute(player, map, [], dragon, bot.nav, ctx, params, swapState, bot);
+  assert.ok(resDropKey !== null);
+  // 足元が COIN なので、隣接安全マスへ移動して置くか、置く処理が発火
+  assert.ok(resDropKey.description.includes('鍵'), '鍵を手放すための処理が発火すること');
 
   // C. コインが4枚貯まった状態: 我が家 (8, 8) へ徒歩帰還して一括換金を行うこと
   swapState.itemToPickupPos = null;
@@ -435,7 +447,7 @@ console.log('Testing 12: Post-targetStr chest unlocking, COIN swap collection, a
   assert.strictEqual((resCashIn.action as any).dir, 'LEFT', '我が家(8,8)へ向かうこと');
   assert.ok(resCashIn.description.includes('コイン一括換金'), '行動説明にコイン一括換金が含まれること');
 
-  console.log('✓ 12. Post-targetStr chest COIN swap collection and batch cash-in verified.');
+  console.log('✓ 12. Post-targetStr chest continuous opening and batch cash-in verified.');
 }
 
 // Test 13: 序盤の剣回収前ハマり（物理的詰み）のヒートマップ検知と GiveUP 発火の検証
@@ -485,6 +497,179 @@ console.log('Testing 13: Heatmap-based early sword trap detection and GiveUP ter
   console.log(`✓ 13. Early sword trap detected and GiveUP triggered in ${steps} turns.`);
 }
 
+// Test 14: 家移動モード (RELOCATE_HOME) 移行時の手ぶら化処理の検証
+console.log('Testing 14: RelocateBehavior hands-free drop and RING pickup...');
+{
+  const map = createEmptyMap();
+  map.setBaseTile({ x: 10, y: 10 }, 'HOME');
+  map.homePos = { x: 10, y: 10 };
+  map.setRealHomePos({ x: 10, y: 10 });
+  const dragon = new Dragon({ x: 30, y: 30 });
+  const ctx = new TacticalContext(map);
+  const bot = new AdaptiveAutoPlayBot();
+  const params = ctx.resolveParameters('RELOCATE_HOME', new Player({ x: 10, y: 11 }), dragon, []);
+
+  // RING を (12, 10) に配置
+  map.setItem({ x: 12, y: 10 }, 'RING');
+
+  // プレイヤーが KEY を持っている状態で (11, 10) にいる
+  const player = new Player({ x: 11, y: 10 });
+  player.holdItem = 'KEY';
+  const anchor = { x: 25, y: 25 };
+
+  // 1手目: KEY を安全な床に置く処理が発火すること（null を返さない）
+  const resDrop = RelocateBehavior.execute(player, map, [], dragon, bot.nav, ctx, params, anchor);
+  assert.ok(resDrop !== null, '手持ちKEYがある場合は手ぶら化アクションが返ること');
+  assert.strictEqual(resDrop.action.type, 'SPACE', '床に置くSPACEアクションが返ること');
+  assert.ok(resDrop.description.includes('RING回収準備'), '行動説明に手ぶら化準備が含まれること');
+
+  // 手ぶら化をシミュレート
+  player.holdItem = 'NONE';
+  map.setItem({ x: 11, y: 10 }, 'KEY');
+
+  // 2手目: RING (12, 10) に向かって移動すること
+  const resMove = RelocateBehavior.execute(player, map, [], dragon, bot.nav, ctx, params, anchor);
+  assert.ok(resMove !== null);
+  assert.strictEqual(resMove.action.type, 'MOVE', 'RINGへ向かって移動すること');
+  assert.strictEqual((resMove.action as any).dir, 'RIGHT');
+
+  // 3手目: RING のマスに到着したら SPACE で RING を取得すること
+  player.pos = { x: 12, y: 10 };
+  const resPickup = RelocateBehavior.execute(player, map, [], dragon, bot.nav, ctx, params, anchor);
+  assert.ok(resPickup !== null);
+  assert.strictEqual(resPickup.action.type, 'SPACE', 'RINGを取得するSPACEアクションが返ること');
+  assert.ok(resPickup.description.includes('RINGを取得'), '行動説明にRING取得が含まれること');
+
+  console.log('✓ 14. RelocateBehavior hands-free drop and RING pickup verified.');
+}
+
+// Test 15: 墓封鎖 (GRAVE_SEAL) におけるKEY所持時の手ぶら化と起動保証の検証
+console.log('Testing 15: GraveSealBehavior hands-free drop and non-null execution with KEY...');
+{
+  const map = createEmptyMap();
+  map.setBaseTile({ x: 10, y: 10 }, 'GRAVE');
+  // 未使用十字架を (15, 10) に配置
+  map.setItem({ x: 15, y: 10 }, 'CROSS');
+
+  const dragon = new Dragon({ x: 32, y: 32 });
+  const ctx = new TacticalContext(map);
+  const bot = new AdaptiveAutoPlayBot();
+  const params = ctx.resolveParameters('GRAVE_SEAL', new Player({ x: 12, y: 10 }), dragon, []);
+
+  // プレイヤーが KEY を所持している状態
+  const player = new Player({ x: 12, y: 10 });
+  player.holdItem = 'KEY';
+
+  // 1手目: null で即座に終了せず、手ぶら化アクションを返すこと
+  const resDrop = GraveSealBehavior.execute(player, map, [], dragon, bot.nav, ctx, params);
+  assert.ok(resDrop !== null, '封鎖手段がある場合はKEY所持でもnullを返さず手ぶら化すること');
+  assert.strictEqual(resDrop.action.type, 'SPACE', '所持品を置くSPACEアクションが返ること');
+  assert.ok(resDrop.description.includes('墓封鎖準備'), '行動説明に墓封鎖準備が含まれること');
+
+  // 手ぶら化後: 十字架回収へ向かうこと
+  player.holdItem = 'NONE';
+  const resMove = GraveSealBehavior.execute(player, map, [], dragon, bot.nav, ctx, params);
+  assert.ok(resMove !== null);
+  assert.strictEqual(resMove.action.type, 'MOVE', '十字架回収へ移動すること');
+  assert.ok(resMove.description.includes('十字架'), '行動説明に十字架回収が含まれること');
+
+  console.log('✓ 15. GraveSealBehavior hands-free drop and non-null execution verified.');
+}
+
+// Test 16: RING所持時の岩押し保護と墓封鎖ブロックの破壊保護の検証
+console.log('Testing 16: RING block push preservation and grave block break protection...');
+{
+  const map = createEmptyMap();
+  const bot = new AdaptiveAutoPlayBot();
+
+  // 16-1. RING所持時: 前方に岩があり押し先が空いている場合、BREAK変換せずMOVE(岩押し)を実行
+  const player1 = new Player({ x: 5, y: 5, magic: 10, experience: 10000 }); // BREAK使用可能
+  player1.holdItem = 'RING';
+  map.setObject({ x: 6, y: 5 }, 'BLOCK');
+  // (7, 5) は空きマス
+  const pushAction: BotAction = { type: 'MOVE', dir: 'RIGHT' };
+  const resolvedPush = bot.resolveMoveOrBreak(pushAction, player1, map);
+  assert.strictEqual(resolvedPush.type, 'MOVE', 'RING所持で岩が押せる場合はBREAK変換せずMOVEのままであること');
+
+  // 16-2. 墓の周囲8マスのBLOCKに対する破壊保護: 手ぶらでBREAKが使える場合でもBREAK変換しない
+  map.setBaseTile({ x: 10, y: 10 }, 'GRAVE');
+  map.setObject({ x: 11, y: 10 }, 'BLOCK'); // 墓の右隣の岩
+  const player2 = new Player({ x: 12, y: 10, magic: 10, experience: 10000 });
+  player2.holdItem = 'NONE';
+  const moveTowardsGraveBlock: BotAction = { type: 'MOVE', dir: 'LEFT' }; // (11, 10) の岩に向かう
+  const resolvedProtected = bot.resolveMoveOrBreak(moveTowardsGraveBlock, player2, map);
+  assert.strictEqual(resolvedProtected.type, 'MOVE', '墓封鎖岩はBREAK変換されず保護されること');
+
+  // 16-3. AdaptiveNavigator の allowBreakAsRoad による経路探索で墓周囲の岩が開削対象から除外されること
+  const params = new TacticalContext(map).resolveParameters('RESOURCE_FARM', player2, undefined, []);
+  params.allowBreakAsRoad = true;
+  // (10, 10)が墓、周囲8マス(11, 10)が岩
+  const isProtected = AdaptiveNavigator.isProtectedGraveBlock({ x: 11, y: 10 }, map);
+  assert.strictEqual(isProtected, true, '墓の隣接岩が isProtectedGraveBlock で true と判定されること');
+
+  console.log('✓ 16. RING push preservation and grave block break protection verified.');
+}
+
 console.log('================================================================');
+
+// Test 17: 決戦前のポーション備蓄＆手ぶら一括スイープ回収と決戦移行条件の検証
+console.log('Testing 17: Pre-dragon potion reserve sweep and defenseReady transition...');
+{
+  const map = createEmptyMap();
+  map.setBaseTile({ x: 8, y: 8 }, 'HOME');
+  map.homePos = { x: 8, y: 8 };
+  map.setRealHomePos({ x: 8, y: 8 });
+
+  const dragon = new Dragon({ x: 32, y: 32 });
+  const ctx = new TacticalContext(map);
+  const bot = new AdaptiveAutoPlayBot();
+
+  // プレイヤー: STR達成済み、手ぶら、MP=5 (目標18未満)、EXP=30,000 (目標40,000未満)
+  const player = new Player({ x: 12, y: 8, hp: 30000, strength: 600000, experience: 30000 });
+  player.hasSword = true;
+  player.magic = 5;
+  player.holdItem = 'NONE';
+
+  // マップ上に宝箱はなく、(14, 8) に POTION、(16, 8) に COIN を配置
+  map.setItem({ x: 14, y: 8 }, 'POTION');
+  map.setItem({ x: 16, y: 8 }, 'COIN');
+
+  const params = ctx.resolveParameters('RESOURCE_FARM', player, dragon, []);
+  assert.strictEqual(params.maxTargetMagic, 14, 'デフォルト目標MPは18であること');
+  assert.ok(params.potionSearchDist >= 20, 'STR達成後のポーション探索半径は20以上(広域)であること');
+
+  // 17-1. hasRemainingDefenseFarmResources が床の POTION を認識して true を返すこと
+  const hasRes = (bot as any).hasRemainingDefenseFarmResources(map, player);
+  assert.strictEqual(hasRes, true, '床にPOTIONが残っているため回収資源ありと判定されること');
+
+  // 17-2. 手ぶらスイープモードが発動し、最寄りの POTION (14, 8) へ移動すること
+  const swapState = { itemToPickupPos: null, tempDroppedKeyPos: null, swapTurns: 0 };
+  const resSweep = ResourceFarmBehavior.execute(player, map, [], dragon, bot.nav, ctx, params, swapState, bot);
+  assert.ok(resSweep !== null);
+  assert.strictEqual(resSweep.action.type, 'MOVE');
+  assert.strictEqual((resSweep.action as any).dir, 'RIGHT', '最寄りのPOTION(14,8)へ向かうこと');
+  assert.ok(resSweep.description.includes('一括スイープ回収'), '行動説明に一括スイープ回収が含まれること');
+
+  // 17-3. ポーションマス上に到達した時、SPACEでポーションを取得すること
+  player.pos = { x: 14, y: 8 };
+  const resPickup = ResourceFarmBehavior.execute(player, map, [], dragon, bot.nav, ctx, params, swapState, bot);
+  assert.ok(resPickup !== null);
+  assert.strictEqual(resPickup.action.type, 'SPACE', '足元のPOTIONを取得すること');
+
+  // 17-4. MP未達 (MP=5) の間は床に資源があるため defenseReady は false のままであること
+  (bot as any).params = params;
+  (bot as any).currentPhase = 'RESOURCE_FARM';
+  (bot as any).updatePhase(player, dragon, map, []);
+  assert.strictEqual(bot.defenseReady, false, 'ポーション残存＆目標MP未達時は決戦へ移行しないこと');
+
+  // 17-5. 目標MP (18) かつ 目標EXP (40,000) 達成時に defenseReady = true となること
+  player.magic = 14;
+  player.experience = 40000;
+  (bot as any).updatePhase(player, dragon, map, []);
+  assert.strictEqual(bot.defenseReady, true, '目標MP・EXP達成で決戦準備完了となること');
+
+  console.log('✓ 17. Pre-dragon potion sweep and defenseReady transition verified.');
+}
+
 console.log('   ALL AdaptiveAutoPlayBot (v2) TESTS PASSED SUCCESSFULLY!     ');
 console.log('================================================================');

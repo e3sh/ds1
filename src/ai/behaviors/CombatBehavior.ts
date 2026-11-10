@@ -76,11 +76,12 @@ export class CombatBehavior {
       if (snipeAction) return snipeAction;
     }
 
-    // 4. 直角隣接の ONE_SHOT 敵を攻撃排除
+    // 4. 直角隣接の ONE_SHOT または NO_DAMAGE 安全敵を攻撃排除（自衛の露払い）
     for (const { enemy, dir } of adjacentTargets) {
       if (dragon && dragon.getPartAt(enemy.pos)) continue;
       const threat = ThreatEvaluator.evaluateThreat(player, enemy);
-      if (threat === 'ONE_SHOT') {
+      const details = ThreatEvaluator.evaluateThreatDetails(player, enemy);
+      if (threat === 'ONE_SHOT' || details.defenseThreat === 'NO_DAMAGE') {
         return {
           action: { type: 'MOVE', dir },
           description: `⚔️ 隣接敵撃破 (${enemy.name})`,
@@ -181,7 +182,10 @@ export class CombatBehavior {
       if (nav.isTargetUnreachable(e.pos)) continue;
 
       const threat = ThreatEvaluator.evaluateThreat(player, e);
-      if (threat !== 'ONE_SHOT') continue;
+      const details = ThreatEvaluator.evaluateThreatDetails(player, e);
+      // ONE_SHOTの敵、または被ダメージ0（完全無傷）で安全に倒せる敵
+      const isSafe = threat === 'ONE_SHOT' || details.defenseThreat === 'NO_DAMAGE';
+      if (!isSafe) continue;
 
       const dist = map.getTorusDistance(from, e.pos).manhattan;
       if (dist <= maxDist && dist < minDist) {

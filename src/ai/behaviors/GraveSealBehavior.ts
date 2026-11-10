@@ -46,6 +46,45 @@ export class GraveSealBehavior {
       }
     }
 
+    // 1-B. CROSS, RING 以外のアイテム（KEY等）を所持している場合の手ぶら化（Hands-Free）判定
+    if (player.holdItem !== 'CROSS' && player.holdItem !== 'RING' && player.holdItem !== 'NONE') {
+      const unusedCross = this.findNearestUnusedCross(curPos, map, context, nav);
+      const hasCrossCandidate = unusedCross !== null && map.getTorusDistance(curPos, unusedCross).manhattan <= params.keySearchDist;
+
+      let hasRingCandidate = false;
+      const ringPos = this.findNearestItem(curPos, 'RING', map, nav);
+      if (ringPos && map.getTorusDistance(curPos, ringPos).manhattan <= context.scale.nearRadius) {
+        hasRingCandidate = this.hasPushableBlock(openTargets, map, enemies, context);
+      }
+
+      if (hasCrossCandidate || hasRingCandidate) {
+        const isFireLine = dragon && nav.isDragonFireLine(curPos, dragon, map);
+        const canDropHere = !isFireLine &&
+                            map.getItem(curPos) === 'NONE' &&
+                            map.getObject(curPos) === 'NONE' &&
+                            map.getBaseTile(curPos) !== 'WALL_STATIC' &&
+                            map.getBaseTile(curPos) !== 'WARP' &&
+                            map.getBaseTile(curPos) !== 'GRAVE' &&
+                            map.getBaseTile(curPos) !== 'HOME';
+        if (canDropHere) {
+          return {
+            action: { type: 'SPACE' },
+            description: `✝️ 墓封鎖準備: 所持品を床に置く [${player.holdItem}]`,
+          };
+        }
+        const safeDir = nav.findAdjacentDropTile(curPos, map, enemies, dragon, player);
+        if (safeDir) {
+          return {
+            action: { type: 'MOVE', dir: safeDir },
+            description: `✝️ 墓封鎖準備: 所持品を置くため安全マスへ移動 [${player.holdItem}]`,
+          };
+        }
+      }
+
+      // 利用可能な封鎖手段がない場合は封鎖不可のため null を返す
+      return null;
+    }
+
     // 2. 十字架所持時: 最寄りの封鎖ターゲットへ移動して設置
     if (player.holdItem === 'CROSS') {
       const nearestTarget = this.findNearestPos(curPos, openTargets, map, nav);
@@ -368,5 +407,44 @@ export class GraveSealBehavior {
       }
     }
     return nearest;
+  }
+
+  public static hasPushableBlock(
+    openTargets: Position[],
+    map: WorldMap,
+    enemies: EnemyInstance[],
+    context: TacticalContext
+  ): boolean {
+    // 1. recommendedPushes の評価
+    if (context.metadata?.gravePuzzleHints) {
+      for (const hint of context.metadata.gravePuzzleHints) {
+        if (!hint.recommendedPushes || hint.recommendedPushes.length === 0) continue;
+        for (const push of hint.recommendedPushes) {
+          const blockPos = map.wrapPosition(push.blockPos);
+          const destPos = map.wrapPosition(push.destinationPos);
+          if (map.getObject(blockPos) === 'BLOCK' && map.isPushDestinationValid(destPos, enemies)) {
+            return true;
+          }
+        }
+      }
+    }
+
+    // 2. openTargets に隣接する岩
+    const cardDirs: { dx: number; dy: number }[] = [
+      { dx: 0, dy: -1 },
+      { dx: 0, dy: 1 },
+      { dx: -1, dy: 0 },
+      { dx: 1, dy: 0 },
+    ];
+    for (const spot of openTargets) {
+      if (!map.isPushDestinationValid(spot, enemies)) continue;
+      for (const d of cardDirs) {
+        const blockPos = map.wrapPosition({ x: spot.x - d.dx, y: spot.y - d.dy });
+        if (map.getObject(blockPos) === 'BLOCK') {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 }
