@@ -50,10 +50,12 @@ export class MissionSelector {
       return new HarvestPowerStoneMission(player.pos);
     }
 
+    const needStr = player.strength < snapshot.params.targetStr;
+
     // 足元にパワーストーンが存在する場合:
-    // 8歩周期チェーン可能（KEY所持かつ8歩以内に未開封宝箱）なら開錠を継続し、そうでなければ回収奉納へ
+    // STR未達時で8歩周期チェーン可能（KEY所持かつ8歩以内に未開封宝箱）なら開錠を継続し、そうでなければ回収奉納へ
     const floorItem = map.getItem(player.pos);
-    if (floorItem === 'POWER_STONE' && !snapshot.milestones.isStrCapped) {
+    if (floorItem === 'POWER_STONE' && needStr) {
       const canChain = player.holdItem === 'KEY' && this.hasNearbyChest(player.pos, map, 8);
       if (!canChain) {
         return new HarvestPowerStoneMission(player.pos);
@@ -64,7 +66,7 @@ export class MissionSelector {
 
     // ★重要: STR目標達成 かつ 防御EXP（DEF）目標達成 かつ 斜め移動解禁済みの場合は、
     // 残存宝箱開錠や石集めを打ち切り、直ちに決戦準備評価へ直行！
-    const canDamageDragon = player.hasSword && (player.strength >= snapshot.params.targetStr || snapshot.milestones.isStrCapped || snapshot.milestones.hasTargetStr);
+    const canDamageDragon = player.hasSword && !needStr;
     const hasEnoughDefense = player.experience >= Math.max(25000, snapshot.params.targetDefenseExp);
     const hasDiagonal = snapshot.milestones.canDiagonal;
 
@@ -100,27 +102,22 @@ export class MissionSelector {
       // ④-C. 手ぶら時（holdItem === 'NONE'）の資源回収:
       if (player.holdItem === 'NONE') {
         const nearestStone = this.findNearestPowerStone(player.pos, map, snapshot);
-        // STR未達時は床のパワーストーン回収・奉納を宝箱攻略より最優先！
-        if (nearestStone && !canDamageDragon && !snapshot.milestones.isStrCapped) {
+        const distStone = nearestStone ? map.getTorusDistance(player.pos, nearestStone).manhattan : Infinity;
+
+        // STR未達時かつ近傍（stoneSearchDist以内）に石がある場合のみ石回収・奉納を優先
+        if (needStr && nearestStone && distStone <= snapshot.params.stoneSearchDist) {
           return new HarvestPowerStoneMission(nearestStone);
         }
 
-        const nearestKey = this.findNearestAvailableKey(player.pos, map, snapshot);
-        const nearestZone = snapshot.spatial.getNearestUnclearedTreasureZone(player.pos, map, snapshot.memory, snapshot.totalTurns);
-
-        const distKey = nearestKey ? map.getTorusDistance(player.pos, nearestKey).manhattan : Infinity;
-        const distZone = nearestZone ? map.getTorusDistance(player.pos, {
-          x: Math.floor((nearestZone.bounds.x1 + nearestZone.bounds.x2) / 2),
-          y: Math.floor((nearestZone.bounds.y1 + nearestZone.bounds.y2) / 2),
-        }).manhattan : Infinity;
-
-        const hasCloseChestOrKey = (distKey <= 8 || distZone <= 10) && canUnlockChests;
-        if (hasCloseChestOrKey) {
+        // 未開封宝箱・鍵が存在する場合は宝箱攻略を最優先！
+        if (canUnlockChests) {
+          const nearestZone = snapshot.spatial.getNearestUnclearedTreasureZone(player.pos, map, snapshot.memory, snapshot.totalTurns);
           if (nearestZone) return new ClearTreasureZoneMission(nearestZone.id);
           return new ClearTreasureZoneMission('GLOBAL_ALL');
         }
 
-        if (nearestStone && !snapshot.milestones.isStrCapped) {
+        // 到達可能な宝箱が枯渇している場合のみ、残存石の回収へ
+        if (needStr && nearestStone) {
           return new HarvestPowerStoneMission(nearestStone);
         }
       }
