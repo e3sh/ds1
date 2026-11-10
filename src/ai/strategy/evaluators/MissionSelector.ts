@@ -54,6 +54,23 @@ export class MissionSelector {
     const hasDiagonal = snapshot.milestones.canDiagonal;
 
     if (!canDamageDragon || !hasEnoughDefense || !hasDiagonal) {
+      // ②-A. STR達成後の防御EXP育成期:
+      // コインが一定枚数（4枚以上、または換金で目標EXP達成）集まったら、宝箱開錠を一時切り替えて我が家へ一括換金帰還！
+      if (canDamageDragon && !hasEnoughDefense && player.gold > 0 && player.holdItem !== 'POWER_STONE') {
+        const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
+        const afterExp = player.experience + estimatedGainedExp;
+        const reachesTargetDefenseExp = afterExp >= snapshot.params.targetDefenseExp;
+        const hasBatchCoins = player.gold >= 4;
+
+        // 鍵を持って周辺宝箱を開錠中（チェーン中）でなければ、またはコインが6枚以上溜まっていれば即換金
+        const isActivelyChaining = player.holdItem === 'KEY' && this.hasNearbyChest(player.pos, map, 8);
+        if (!isActivelyChaining || player.gold >= 6 || reachesTargetDefenseExp) {
+          if (reachesTargetDefenseExp || hasBatchCoins) {
+            return new CashInGoldMission(player.gold);
+          }
+        }
+      }
+
       // ②-B. 鍵所持中（holdItem === 'KEY'）: 宝物庫ゾーン・残存宝箱の一括開錠を最優先
       if (player.holdItem === 'KEY') {
         const nearestZone = snapshot.spatial.getNearestUnclearedTreasureZone(player.pos, map, snapshot.memory, snapshot.totalTurns);

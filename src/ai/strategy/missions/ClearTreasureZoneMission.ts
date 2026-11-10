@@ -57,6 +57,13 @@ export class ClearTreasureZoneMission implements IStrategicMission {
       return 'ABORTED';
     }
 
+    // STR達成後の防御EXP育成期: コインが一定数集まり、手ぶら（鍵なし）なら換金のため完了
+    const canDamageDragon = player.hasSword && (player.strength >= snapshot.params.targetStr || snapshot.milestones.isStrCapped || snapshot.milestones.hasTargetStr);
+    const hasEnoughDefense = player.experience >= Math.max(25000, snapshot.params.targetDefenseExp);
+    if (canDamageDragon && !hasEnoughDefense && player.gold >= 4 && player.holdItem !== 'KEY') {
+      return 'COMPLETED';
+    }
+
     return 'ACTIVE';
   }
 
@@ -181,11 +188,12 @@ export class ClearTreasureZoneMission implements IStrategicMission {
       }
 
       if (nearestChest) {
+        const needStr = player.strength < snapshot.params.targetStr && !snapshot.milestones.isStrCapped;
         return {
-          type: 'UNLOCK_CHEST_8STEP',
+          type: needStr ? 'UNLOCK_CHEST_8STEP' : 'NAVIGATE_TO_POSITION',
           targetPos: nearestChest,
           priority: 88,
-          reason: `宝箱の8歩開錠 (${nearestChest.x}, ${nearestChest.y})`,
+          reason: needStr ? `宝箱の8歩開錠 (${nearestChest.x}, ${nearestChest.y})` : `宝箱の最速開錠(コイン回収) (${nearestChest.x}, ${nearestChest.y})`,
         };
       }
 

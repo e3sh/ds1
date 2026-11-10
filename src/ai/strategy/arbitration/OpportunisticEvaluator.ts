@@ -42,12 +42,13 @@ export class OpportunisticEvaluator {
       };
     }
 
-    // B. 近傍（マンハッタン距離 1〜3歩以内）にあるアイテム
+    // B. 近傍にあるアイテム（STR達成後のEXP育成期は探索半径を拡大）
     let bestItemPos: Position | null = null;
     let bestItemType: string | null = null;
     let bestDist = Infinity;
 
-    const maxSearchDist = 3;
+    const isExpFarming = player.strength >= snapshot.params.targetStr && player.experience < (snapshot.params.targetDefenseExp ?? 35000);
+    const maxSearchDist = isExpFarming ? Math.min(8, snapshot.params.coinSearchDist ?? 8) : 3;
     for (let dy = -maxSearchDist; dy <= maxSearchDist; dy++) {
       for (let dx = -maxSearchDist; dx <= maxSearchDist; dx++) {
         const manhattan = Math.abs(dx) + Math.abs(dy);
