@@ -176,6 +176,9 @@ export class TacticalExecutor {
       case 'UNLOCK_CHEST_8STEP':
         return this.executeUnlockChest8Step(directive, player, map, enemies, dragon, params, snapshot);
 
+      case 'UNLOCK_CHEST_RAPID':
+        return this.executeUnlockChestRapid(directive, player, map, enemies, dragon, params, snapshot);
+
       case 'PICKUP_ITEM':
         return this.executePickupItem(directive, player, map, enemies, dragon, params, snapshot);
 
@@ -264,6 +267,14 @@ export class TacticalExecutor {
         return {
           action: { type: 'SPACE' },
           description: `📦 目的地アイテム取得 [${directive.targetItemType}]`,
+          status: 'SUCCESS',
+        };
+      }
+      // 足元が宝箱で鍵を所持している場合は、決してWAITに陥らず即座に開錠！
+      if (map.getObject(player.pos) === 'CHEST' && player.holdItem === 'KEY') {
+        return {
+          action: { type: 'SPACE' },
+          description: `🔓 目的地宝箱開錠 (${player.pos.x}, ${player.pos.y})`,
           status: 'SUCCESS',
         };
       }
@@ -496,6 +507,48 @@ export class TacticalExecutor {
         return {
           action: { type: 'MOVE', dir },
           description: `📦 宝箱へ進入 (${chestPos.x}, ${chestPos.y}) [歩数:${S}]`,
+          status: 'SUCCESS',
+        };
+      }
+    }
+
+    // 3. 通常ナビゲーション
+    return this.executeNavigate(directive, player, map, enemies, dragon, params, snapshot);
+  }
+
+  /**
+   * 最速宝箱開錠（直行＆即座に開錠、コイン・ポーション回収用）
+   */
+  private executeUnlockChestRapid(
+    directive: StrategicDirective,
+    player: Player,
+    map: WorldMap,
+    enemies: EnemyInstance[],
+    dragon: Dragon | undefined,
+    params: DynamicBotParameters,
+    snapshot: TacticalSnapshot
+  ): TacticalExecutionResult {
+    const chestPos = directive.targetPos!;
+    const curPos = player.pos;
+    const isAtChest = curPos.x === chestPos.x && curPos.y === chestPos.y;
+
+    // 1. 宝箱マスにいる場合: 即座に開錠！
+    if (isAtChest) {
+      return {
+        action: { type: 'SPACE' },
+        description: `🔓 宝箱最速開錠 (${curPos.x}, ${curPos.y})`,
+        status: 'SUCCESS',
+      };
+    }
+
+    // 2. 宝箱に隣接（距離1）の場合: 直ちに宝箱マスへ進入
+    const dist = map.getTorusDistance(curPos, chestPos).manhattan;
+    if (dist === 1) {
+      const dir = this.nav.getAdjacentDirection(curPos, chestPos, map);
+      if (dir) {
+        return {
+          action: { type: 'MOVE', dir },
+          description: `📦 宝箱へ進入 (${chestPos.x}, ${chestPos.y})`,
           status: 'SUCCESS',
         };
       }

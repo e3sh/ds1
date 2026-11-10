@@ -4,6 +4,7 @@ export type DirectiveType =
   | 'NAVIGATE_TO_POSITION'   // 指定座標へ移動 (最短経路 + 必要時BREAK開削)
   | 'BREACH_SHORTCUT'        // 指定ショートカット位置の壁/岩をBREAK開削
   | 'UNLOCK_CHEST_8STEP'     // 8歩周期に合わせて宝箱を開錠
+  | 'UNLOCK_CHEST_RAPID'     // 最速で宝箱へ直行し即座に開錠 (コイン・ポーション回収用)
   | 'PICKUP_ITEM'            // 足元または指定座標のアイテム取得
   | 'DROP_HOLD_ITEM'         // 不要な手持ち品を床に置いて手ぶらになる
   | 'SWAP_KEY_FOR_ITEM'      // 鍵を一時退避して足元の有益アイテムを回収

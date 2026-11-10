@@ -45,6 +45,21 @@ export class MissionSelector {
       return new BootstrapSwordMission();
     }
 
+    // ③ パワーストーン所持中 -> 無条件で最優先奉納（STR倍化＆HP全快＆コイン自動換金）
+    if (player.holdItem === 'POWER_STONE') {
+      return new HarvestPowerStoneMission(player.pos);
+    }
+
+    // 足元にパワーストーンが存在する場合:
+    // 8歩周期チェーン可能（KEY所持かつ8歩以内に未開封宝箱）なら開錠を継続し、そうでなければ回収奉納へ
+    const floorItem = map.getItem(player.pos);
+    if (floorItem === 'POWER_STONE' && !snapshot.milestones.isStrCapped) {
+      const canChain = player.holdItem === 'KEY' && this.hasNearbyChest(player.pos, map, 8);
+      if (!canChain) {
+        return new HarvestPowerStoneMission(player.pos);
+      }
+    }
+
     const canUnlockChests = this.hasReachableKey(map, snapshot) && this.hasReachableChests(map, snapshot);
 
     // ★重要: STR目標達成 かつ 防御EXP（DEF）目標達成 かつ 斜め移動解禁済みの場合は、
@@ -54,9 +69,9 @@ export class MissionSelector {
     const hasDiagonal = snapshot.milestones.canDiagonal;
 
     if (!canDamageDragon || !hasEnoughDefense || !hasDiagonal) {
-      // ②-A. STR達成後の防御EXP育成期:
+      // ④-A. STR達成後の防御EXP育成期:
       // コインが一定枚数（4枚以上、または換金で目標EXP達成）集まったら、宝箱開錠を一時切り替えて我が家へ一括換金帰還！
-      if (canDamageDragon && !hasEnoughDefense && player.gold > 0 && player.holdItem !== 'POWER_STONE') {
+      if (canDamageDragon && !hasEnoughDefense && player.gold > 0) {
         const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
         const afterExp = player.experience + estimatedGainedExp;
         const reachesTargetDefenseExp = afterExp >= snapshot.params.targetDefenseExp;
@@ -71,7 +86,7 @@ export class MissionSelector {
         }
       }
 
-      // ②-B. 鍵所持中（holdItem === 'KEY'）: 宝物庫ゾーン・残存宝箱の一括開錠を最優先
+      // ④-B. 鍵所持中（holdItem === 'KEY'）: 宝物庫ゾーン・残存宝箱の一括開錠を最優先
       if (player.holdItem === 'KEY') {
         const nearestZone = snapshot.spatial.getNearestUnclearedTreasureZone(player.pos, map, snapshot.memory, snapshot.totalTurns);
         if (nearestZone) {
@@ -82,43 +97,31 @@ export class MissionSelector {
         }
       }
 
-      // ②-C. 手ぶら時（holdItem === 'NONE'）の距離・安全優先制御:
-      // 目の前や近傍にある資源を優先し、遠くの石や遠くの鍵に惑わされず最寄りの育成行動を選択
+      // ④-C. 手ぶら時（holdItem === 'NONE'）の資源回収:
       if (player.holdItem === 'NONE') {
         const nearestStone = this.findNearestPowerStone(player.pos, map, snapshot);
+        // STR未達時は床のパワーストーン回収・奉納を宝箱攻略より最優先！
+        if (nearestStone && !canDamageDragon && !snapshot.milestones.isStrCapped) {
+          return new HarvestPowerStoneMission(nearestStone);
+        }
+
         const nearestKey = this.findNearestAvailableKey(player.pos, map, snapshot);
         const nearestZone = snapshot.spatial.getNearestUnclearedTreasureZone(player.pos, map, snapshot.memory, snapshot.totalTurns);
 
-        const distStone = nearestStone ? map.getTorusDistance(player.pos, nearestStone).manhattan : Infinity;
         const distKey = nearestKey ? map.getTorusDistance(player.pos, nearestKey).manhattan : Infinity;
         const distZone = nearestZone ? map.getTorusDistance(player.pos, {
           x: Math.floor((nearestZone.bounds.x1 + nearestZone.bounds.x2) / 2),
           y: Math.floor((nearestZone.bounds.y1 + nearestZone.bounds.y2) / 2),
         }).manhattan : Infinity;
 
-        // 宝箱や鍵が近くにあり（<=8歩）、石が遠い場合は宝箱攻略を優先
         const hasCloseChestOrKey = (distKey <= 8 || distZone <= 10) && canUnlockChests;
-        const isStoneCloser = nearestStone && (distStone <= distKey && distStone <= distZone);
-
-        if (isStoneCloser || (!hasCloseChestOrKey && nearestStone)) {
-          return new HarvestPowerStoneMission(nearestStone);
-        }
-
         if (hasCloseChestOrKey) {
           if (nearestZone) return new ClearTreasureZoneMission(nearestZone.id);
           return new ClearTreasureZoneMission('GLOBAL_ALL');
         }
-      }
 
-      // ③ パワーストーン所持中または足元に存在 -> パワーストーン奉納
-      if (player.holdItem === 'POWER_STONE') {
-        return new HarvestPowerStoneMission(player.pos);
-      }
-      const floorItem = map.getItem(player.pos);
-      if (floorItem === 'POWER_STONE') {
-        const canChain = player.holdItem === 'KEY' && this.hasNearbyChest(player.pos, map, 8);
-        if (!canChain) {
-          return new HarvestPowerStoneMission(player.pos);
+        if (nearestStone && !snapshot.milestones.isStrCapped) {
+          return new HarvestPowerStoneMission(nearestStone);
         }
       }
     }

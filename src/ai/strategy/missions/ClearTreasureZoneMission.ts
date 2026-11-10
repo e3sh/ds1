@@ -190,7 +190,7 @@ export class ClearTreasureZoneMission implements IStrategicMission {
       if (nearestChest) {
         const needStr = player.strength < snapshot.params.targetStr && !snapshot.milestones.isStrCapped;
         return {
-          type: needStr ? 'UNLOCK_CHEST_8STEP' : 'NAVIGATE_TO_POSITION',
+          type: needStr ? 'UNLOCK_CHEST_8STEP' : 'UNLOCK_CHEST_RAPID',
           targetPos: nearestChest,
           priority: 88,
           reason: needStr ? `宝箱の8歩開錠 (${nearestChest.x}, ${nearestChest.y})` : `宝箱の最速開錠(コイン回収) (${nearestChest.x}, ${nearestChest.y})`,
