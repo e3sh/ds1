@@ -313,9 +313,9 @@ export class TacticalExecutor {
       }
     }
 
-    // 経路が見つからない場合: 到達不能マーク
-    this.nav.markTargetUnreachable(targetPos, 16);
-    snapshot.memory.markTargetUnreachable(targetPos, 16, snapshot.totalTurns);
+    // 経路が見つからない場合: 到達不能マーク (長期ブラックリスト化してピンポンを完全防止)
+    this.nav.markTargetUnreachable(targetPos, 120);
+    snapshot.memory.markTargetUnreachable(targetPos, 120, snapshot.totalTurns);
     const wander = this.nav.wanderSafe(player, map, enemies, dragon);
     return {
       action: this.resolveMoveOrBreak(wander, player, map),

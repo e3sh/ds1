@@ -13,6 +13,7 @@ export interface UnreachableTarget {
  */
 export class EpisodicMemory {
   private unreachableTargets: Map<string, number> = new Map();
+  private unreachableZones: Map<string, number> = new Map();
   private positionHistory: Position[] = [];
   private readonly maxHistorySize: number = 30;
   private visitCounts: Map<string, number> = new Map();
@@ -39,6 +40,11 @@ export class EpisodicMemory {
     for (const [k, expireTurn] of this.unreachableTargets.entries()) {
       if (currentTurn >= expireTurn) {
         this.unreachableTargets.delete(k);
+      }
+    }
+    for (const [z, expireTurn] of this.unreachableZones.entries()) {
+      if (currentTurn >= expireTurn) {
+        this.unreachableZones.delete(z);
       }
     }
 
@@ -72,6 +78,26 @@ export class EpisodicMemory {
    */
   public clearUnreachableTarget(pos: Position): void {
     this.unreachableTargets.delete(this.toKey(pos));
+  }
+
+  /**
+   * ゾーンを一時的に攻略不能（クールダウン）として登録
+   */
+  public markZoneUnreachable(zoneId: string, durationTurns: number, currentTurn: number): void {
+    this.unreachableZones.set(zoneId, currentTurn + durationTurns);
+  }
+
+  /**
+   * ゾーンが現在攻略不能クールダウン中か判定
+   */
+  public isZoneUnreachable(zoneId: string, currentTurn: number): boolean {
+    const expireTurn = this.unreachableZones.get(zoneId);
+    if (expireTurn === undefined) return false;
+    if (currentTurn >= expireTurn) {
+      this.unreachableZones.delete(zoneId);
+      return false;
+    }
+    return true;
   }
 
   /**

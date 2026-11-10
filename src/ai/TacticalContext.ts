@@ -101,7 +101,7 @@ export class TacticalContext {
     player: Player,
     dragon?: Dragon,
     enemies?: EnemyInstance[],
-    options?: { totalTurns?: number; defensePrepTurns?: number; strategyTuning?: BotStrategyTuning }
+    options?: { totalTurns?: number; defensePrepTurns?: number; strategyTuning?: BotStrategyTuning; enableGiveUp?: boolean }
   ): DynamicBotParameters {
     const isClassic = this.tuning?.progressionConfig?.ruleMode === 'CLASSIC';
     const mazeIndex = this.metrics?.mazeIndex ?? 0.3;
@@ -230,6 +230,7 @@ export class TacticalContext {
       homeRelocateDistMin,
       homeRelocateDistMax,
       graveSealPolicy,
+      enableGiveUp: options?.enableGiveUp ?? true,
     };
   }
 

@@ -217,6 +217,7 @@ export class SpatialKnowledge {
 
     for (const zone of this.treasureZones.values()) {
       if (zone.isCleared || zone.remainingChests === 0) continue;
+      if (memory && currentTurn !== undefined && memory.isZoneUnreachable(zone.id, currentTurn)) continue;
 
       // ゾーン内の残存宝箱がすべて到達不能か判定
       if (memory && currentTurn !== undefined) {

@@ -71,18 +71,21 @@ export class MissionSelector {
     const hasDiagonal = snapshot.milestones.canDiagonal;
 
     if (!canDamageDragon || !hasEnoughDefense || !hasDiagonal) {
-      // ④-A. STR達成後の防御EXP育成期:
-      // コインが一定枚数（4枚以上、または換金で目標EXP達成）集まったら、宝箱開錠を一時切り替えて我が家へ一括換金帰還！
-      if (canDamageDragon && !hasEnoughDefense && player.gold > 0) {
+      // ④-A. コイン換金帰還トリガー:
+      // 1. STR達成後の防御EXP育成期 (canDamageDragon && !hasEnoughDefense && player.gold >= 4)
+      // 2. STR未達時でも、手持ちコインが多く (gold >= 8)、または換金で BREAK (4000) / 斜め移動 (12000) 解禁可能な場合
+      if (player.gold > 0) {
         const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
         const afterExp = player.experience + estimatedGainedExp;
+        const reachesMilestone = (player.experience < 4000 && afterExp >= 4000) || (player.experience < 12000 && afterExp >= 12000);
         const reachesTargetDefenseExp = afterExp >= snapshot.params.targetDefenseExp;
-        const hasBatchCoins = player.gold >= 4;
+        const hasLargeGold = player.gold >= 8;
+        const isDefensePrep = canDamageDragon && !hasEnoughDefense && (player.gold >= 4 || reachesTargetDefenseExp);
 
-        // 鍵を持って周辺宝箱を開錠中（チェーン中）でなければ、またはコインが6枚以上溜まっていれば即換金
-        const isActivelyChaining = player.holdItem === 'KEY' && this.hasNearbyChest(player.pos, map, 8);
-        if (!isActivelyChaining || player.gold >= 6 || reachesTargetDefenseExp) {
-          if (reachesTargetDefenseExp || hasBatchCoins) {
+        if (reachesMilestone || hasLargeGold || isDefensePrep) {
+          // 鍵を持って周辺宝箱を開錠中（チェーン中）でなければ、またはコインが12枚以上溜まっていれば即換金
+          const isActivelyChaining = player.holdItem === 'KEY' && this.hasNearbyChest(player.pos, map, 8);
+          if (!isActivelyChaining || player.gold >= 12 || reachesTargetDefenseExp) {
             return new CashInGoldMission(player.gold);
           }
         }

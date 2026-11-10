@@ -79,6 +79,7 @@ export interface DynamicBotParameters {
   homeRelocateDistMin: number;
   homeRelocateDistMax: number;
   graveSealPolicy: GraveSealPolicy;
+  enableGiveUp?: boolean;
 }
 
 export type BotVersion = 'behavior' | 'pst' | 'v1' | 'v2';
@@ -89,6 +90,7 @@ export interface AutoPlayBotOptions {
   parameterOverrides?: Partial<DynamicBotParameters>;
   strategyTuning?: BotStrategyTuning;
   botVersion?: BotVersion;
+  enableGiveUp?: boolean;
 }
 
 export type AdaptiveBotOptions = AutoPlayBotOptions;

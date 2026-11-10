@@ -18,6 +18,8 @@ export class ClearTreasureZoneMission implements IStrategicMission {
   public readonly maxTurns = 60;
   public turnsElapsed = 0;
   public status: MissionStatus = 'ACTIVE';
+  private lastTargetChestPos: Position | null = null;
+  private targetChestTurns: number = 0;
 
   constructor(public readonly zoneId: string) {
     this.name = zoneId === 'GLOBAL_ALL'
@@ -52,8 +54,11 @@ export class ClearTreasureZoneMission implements IStrategicMission {
       return 'ABORTED';
     }
 
-    // 規定ターン超過時はアボートして別ミッションへ
+    // 規定ターン超過時はアボートして別ミッションへ（ゾーンを120ターンクールダウン）
     if (this.turnsElapsed >= this.maxTurns) {
+      if (this.zoneId !== 'GLOBAL_ALL') {
+        snapshot.memory.markZoneUnreachable(this.zoneId, 120, snapshot.totalTurns);
+      }
       return 'ABORTED';
     }
 
@@ -108,9 +113,15 @@ export class ClearTreasureZoneMission implements IStrategicMission {
       }
     }
 
-    // 2. 足元にパワーストーンがある場合: 周辺に宝箱があるならチェーンを優先し、なければ回収
+    // 2. 足元に有益アイテム（POWER_STONE, POTION, COIN）が出現した場合:
+    // 鍵所持中なら一時置きスワップ（SWAP_KEY_FOR_ITEM）、手ぶらなら直接拾い（PICKUP_ITEM）
     const floorItem = map.getItem(player.pos);
-    if (floorItem === 'POWER_STONE' && !snapshot.milestones.isStrCapped) {
+    const needStr = player.strength < snapshot.params.targetStr;
+    const needExp = player.experience < snapshot.params.targetDefenseExp;
+    const needMagic = player.magic < snapshot.params.maxTargetMagic;
+
+    // 2-A. パワーストーン
+    if (floorItem === 'POWER_STONE' && needStr) {
       const hasNearbyChest = this.hasNearbyChest(player.pos, map, 8);
       const canChain = player.holdItem === 'KEY' && hasNearbyChest;
       if (!canChain) {
@@ -132,14 +143,46 @@ export class ClearTreasureZoneMission implements IStrategicMission {
       }
     }
 
-    // 2-B. 足元に POTION または COIN がある場合: 手ぶらなら即拾い（MP/所持金加算）
-    if (player.holdItem === 'NONE' && (floorItem === 'POTION' || floorItem === 'COIN')) {
-      return {
-        type: 'PICKUP_ITEM',
-        targetItemType: floorItem,
-        priority: 92,
-        reason: `足元の ${floorItem === 'POTION' ? '魔法の壺(MP回復)' : '金貨'} を取得`,
-      };
+    // 2-B. 魔法の壺 (POTION)
+    if (floorItem === 'POTION' && (needMagic || player.magic < 20)) {
+      if (player.holdItem === 'KEY') {
+        return {
+          type: 'SWAP_KEY_FOR_ITEM',
+          targetPos: player.pos,
+          targetItemType: 'POTION',
+          priority: 94,
+          reason: '足元の魔法の壺(MP回復)回収のため鍵を一時置きスワップ',
+        };
+      }
+      if (player.holdItem === 'NONE') {
+        return {
+          type: 'PICKUP_ITEM',
+          targetItemType: 'POTION',
+          priority: 92,
+          reason: '足元の魔法の壺(MP回復)を取得',
+        };
+      }
+    }
+
+    // 2-C. 金貨 (COIN): 防御EXP育成のために最重要回収！
+    if (floorItem === 'COIN' && (needExp || player.experience < 40000)) {
+      if (player.holdItem === 'KEY') {
+        return {
+          type: 'SWAP_KEY_FOR_ITEM',
+          targetPos: player.pos,
+          targetItemType: 'COIN',
+          priority: 94,
+          reason: '足元の金貨(防御EXP資産)回収のため鍵を一時置きスワップ',
+        };
+      }
+      if (player.holdItem === 'NONE') {
+        return {
+          type: 'PICKUP_ITEM',
+          targetItemType: 'COIN',
+          priority: 92,
+          reason: '足元の金貨を取得',
+        };
+      }
     }
 
     // 3. 鍵を持っていない場合: 鍵を回収
@@ -188,6 +231,23 @@ export class ClearTreasureZoneMission implements IStrategicMission {
       }
 
       if (nearestChest) {
+        if (this.lastTargetChestPos && this.lastTargetChestPos.x === nearestChest.x && this.lastTargetChestPos.y === nearestChest.y) {
+          this.targetChestTurns++;
+          if (this.targetChestTurns > 15) {
+            snapshot.memory.markTargetUnreachable(nearestChest, 120, snapshot.totalTurns);
+            this.lastTargetChestPos = null;
+            this.targetChestTurns = 0;
+            // 次の宝箱へフォールバック
+            const nextChest = this.findNearestChestGlobal(player.pos, map, snapshot);
+            if (nextChest) {
+              nearestChest = nextChest;
+            }
+          }
+        } else {
+          this.lastTargetChestPos = { ...nearestChest };
+          this.targetChestTurns = 0;
+        }
+
         const needStr = player.strength < snapshot.params.targetStr && !snapshot.milestones.isStrCapped;
         return {
           type: needStr ? 'UNLOCK_CHEST_8STEP' : 'UNLOCK_CHEST_RAPID',
@@ -197,12 +257,12 @@ export class ClearTreasureZoneMission implements IStrategicMission {
         };
       }
 
-      // ゾーン内の到達可能宝箱が枯渇している場合: 即座に完了/アボートして別ゾーンへ
+      // ゾーン内の到達可能宝箱が枯渇している場合: 鍵を手放して手ぶら資源回収・換金帰還へ
       this.status = 'COMPLETED';
       return {
-        type: 'WANDER_SAFELY',
-        priority: 20,
-        reason: `ゾーン ${this.zoneId} 内の到達可能宝箱が完了したため別作戦へ移行`,
+        type: 'DROP_HOLD_ITEM',
+        priority: 75,
+        reason: `ゾーン ${this.zoneId} 内の到達可能宝箱が完了したため鍵を手放し手ぶら回収へ移行`,
       };
     }
 
@@ -219,6 +279,9 @@ export class ClearTreasureZoneMission implements IStrategicMission {
           priority: 50,
           reason: `ゾーン ${this.zoneId} へ移動`,
         };
+      }
+      if (this.zoneId !== 'GLOBAL_ALL') {
+        snapshot.memory.markZoneUnreachable(this.zoneId, 120, snapshot.totalTurns);
       }
       this.status = 'ABORTED';
     }

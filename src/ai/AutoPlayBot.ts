@@ -86,8 +86,10 @@ export class AutoPlayBot {
   public readonly tacticalExecutor: TacticalExecutor;
   public readonly episodicMemory: EpisodicMemory;
   public spatialKnowledge?: SpatialKnowledge;
+  public readonly opts: AutoPlayBotOptions;
 
   constructor(opts: AutoPlayBotOptions = {}) {
+    this.opts = opts;
     this.profile = opts.profile ?? 'STANDARD';
     this.nav = new AdaptiveNavigator();
     this.eightStepController = new EightStepController(this.nav);
@@ -131,6 +133,7 @@ export class AutoPlayBot {
     this.params = this.context.resolveParameters(this.currentPhase, player, dragon, enemies, {
       totalTurns: this.totalTurns,
       defensePrepTurns: this.defensePrepTurns,
+      enableGiveUp: this.opts.enableGiveUp,
     });
     MagicSystem.updatePassiveSkills(player);
 
@@ -775,6 +778,7 @@ export class AutoPlayBot {
     this.params = this.context.resolveParameters(this.currentPhase, player, dragon, enemies, {
       totalTurns: this.totalTurns,
       defensePrepTurns: this.defensePrepTurns,
+      enableGiveUp: this.opts.enableGiveUp,
     });
     MagicSystem.updatePassiveSkills(player);
 

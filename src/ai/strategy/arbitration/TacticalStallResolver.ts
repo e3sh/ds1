@@ -174,8 +174,13 @@ export class TacticalStallResolver {
       }
     }
 
-    // 6. 脱出魔法皆無かつ敵・地形により完全に移動不可能な場合は正式ギブアップ
-    if (player.hp > 0 && (isTotallySealedByTerrainOrEnemy || !!snapshot.stagnation?.isPhysicallyTrapped)) {
+    // 6. 脱出魔法皆無かつ敵・地形により完全に移動不可能な場合のギブアップ判定
+    // ※enableGiveUp が false の場合は絶対にギブアップせず最後まで粘り強くプレイ継続
+    // ※死神 (hasDeath) 憑依で一時的にBREAK不可なだけでHPが残っている場合も不当ギブアップを抑止
+    const canGiveUp = snapshot.params.enableGiveUp !== false;
+    const isDeathTemporarySealed = player.hasDeath && player.hp > 1000;
+
+    if (canGiveUp && !isDeathTemporarySealed && player.hp > 0 && (isTotallySealedByTerrainOrEnemy || !!snapshot.stagnation?.isPhysicallyTrapped)) {
       const dirDetails: string[] = [];
       for (const d of cardDirs) {
         const adjPos = map.wrapPosition(MovementSystem.getNextPosition(player.pos, d));
