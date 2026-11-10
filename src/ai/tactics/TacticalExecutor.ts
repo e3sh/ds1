@@ -104,7 +104,10 @@ export class TacticalExecutor {
 
     // 0-B. 直角隣接の即死・危険敵に対する緊急自衛FREEZE / FLASH
     // ※前線基地近傍（チェビシェフ<=2）またはディレクティブ方針では進入路封鎖を防ぐためFLASHを優先し、FREEZEは抑止
-    if (player.magic > 0 && !player.hasDeath) {
+    // ※BREAK用 MP=1 温存: BREAK解禁済み(EXP>=4000)では MP>1 の時のみ自衛魔法を許可（退避方向がなく即死する場合を除く）
+    const evadeDirForSelfDefense = this.nav.findEvadeDirection(player.pos, map, enemies, player, dragon);
+    const canSpendForSelfDefense = !player.hasDeath && (player.magic > 1 || (player.experience < 4000 && player.magic > 0) || !evadeDirForSelfDefense);
+    if (canSpendForSelfDefense) {
       const isNearEscapeHome = map.getTorusDistance(player.pos, map.realHomePos).chebyshev <= 2;
       const shouldDisallowFreeze = directive.policy?.disallowFreezeNearHome || isNearEscapeHome;
       const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];

@@ -98,7 +98,9 @@ export class TacticalStallResolver {
       return enemies.some(e => e.isAlive && !e.isPermanentlyFrozen && (e.frozenTimer ?? 0) <= 0 && e.pos.x === adjPos.x && e.pos.y === adjPos.y);
     });
 
-    if (hasAdjEnemy && player.magic > 0 && !player.hasDeath) {
+    // BREAK用 MP=1 温存: EXP >= 4000 で BREAK が解禁されている場合は MP > 1 の時のみ魔法を使用（最後の1個は岩破壊用に死守）
+    const canSpendMagicForFreeze = !player.hasDeath && (player.experience < 4000 ? player.magic > 0 : player.magic > 1);
+    if (hasAdjEnemy && canSpendMagicForFreeze) {
       const allHomes = map.getAllHomePositions();
       const isNearHome = allHomes.some(h => map.getTorusDistance(player.pos, h).chebyshev <= 2);
       if (!isNearHome && MagicSystem.canCast(player, 'FREEZE').allowed) {
@@ -157,10 +159,32 @@ export class TacticalStallResolver {
 
     // 6. 脱出魔法皆無かつ敵・地形により完全に移動不可能な場合は正式ギブアップ
     if (player.hp > 0 && (isTotallySealedByTerrainOrEnemy || !!snapshot.stagnation?.isPhysicallyTrapped)) {
+      const dirDetails: string[] = [];
+      for (const d of cardDirs) {
+        const adjPos = map.wrapPosition(MovementSystem.getNextPosition(player.pos, d));
+        const base = map.getBaseTile(adjPos);
+        const obj = map.getObject(adjPos);
+        const enemy = enemies.find(e => e.isAlive && e.pos.x === adjPos.x && e.pos.y === adjPos.y);
+
+        if (base === 'WALL_STATIC') {
+          dirDetails.push(`${d}:壁`);
+        } else if (base === 'GRAVE' && obj === 'NONE') {
+          dirDetails.push(`${d}:墓`);
+        } else if (obj === 'BLOCK') {
+          const canBreak = MagicSystem.canCast(player, 'BREAK').allowed;
+          dirDetails.push(`${d}:岩(${canBreak ? 'BREAK可' : player.experience < 4000 ? 'EXP不足' : 'MP枯渇'})`);
+        } else if (enemy) {
+          const details = ThreatEvaluator.evaluateThreatDetails(player, enemy);
+          dirDetails.push(`${d}:敵(${enemy.name},被ダメ${details.damageToPlayer},撃破${details.turnsToKill}T)`);
+        } else {
+          dirDetails.push(`${d}:即死危険マス`);
+        }
+      }
+
       return {
         type: 'GIVE_UP',
         priority: 100,
-        reason: '💀 詰み検知: 敵封鎖・袋小路により脱出不能のためギブアップ',
+        reason: `💀 詰み検知 [四方閉塞: ${dirDetails.join(', ')}] (HP:${player.hp}/${player.maxHp}, MP:${player.magic}, STR:${player.strength}, EXP:${player.experience})`,
       };
     }
 

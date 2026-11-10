@@ -73,8 +73,10 @@ export class OpportunisticEvaluator {
         // 壁や岩で塞がれていないか
         if (map.getBaseTile(checkPos) === 'WALL_STATIC' || map.getObject(checkPos) === 'BLOCK') continue;
 
-        if (manhattan < bestDist) {
-          bestDist = manhattan;
+        // POTION を COIN より優先（POTIONならスコアボーナス）
+        const score = manhattan - (item === 'POTION' ? 0.5 : 0);
+        if (score < bestDist) {
+          bestDist = score;
           bestItemPos = checkPos;
           bestItemType = item;
         }
@@ -82,14 +84,16 @@ export class OpportunisticEvaluator {
     }
 
     if (bestItemPos && bestItemType) {
-      // 距離に応じた優先度: 距離1なら82、距離2なら79、距離3なら76
-      const priority = 83 - bestDist * 3;
+      // 手ぶら歩行時は至近のPOTION/COINを主作戦移動(85)より優先して確実に回収
+      // 距離1=88, 距離2=87, 距離3=86
+      const integerDist = Math.ceil(bestDist);
+      const priority = 89 - integerDist;
       return {
         type: 'NAVIGATE_TO_POSITION',
         targetPos: bestItemPos,
         targetItemType: bestItemType,
         priority,
-        reason: `動線近傍の [${bestItemType === 'POTION' ? '魔法の壺' : '金貨'}] (${bestItemPos.x}, ${bestItemPos.y}) をついで回収 [距離:${bestDist}]`,
+        reason: `動線近傍の [${bestItemType === 'POTION' ? '魔法の壺(MP回復)' : '金貨'}] (${bestItemPos.x}, ${bestItemPos.y}) を能動回収 [距離:${integerDist}]`,
       };
     }
 
