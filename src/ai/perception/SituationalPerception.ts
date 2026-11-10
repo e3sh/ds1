@@ -28,6 +28,7 @@ export interface StagnationState {
   turnsSinceNewTile: number;
   isStagnated: boolean;
   isPhysicallyTrapped: boolean;
+  isEarlySwordTrapped: boolean;
 }
 
 export interface ThreatDistribution {
@@ -82,7 +83,9 @@ export class SituationalPerception {
     player: Player,
     map: WorldMap,
     enemies: EnemyInstance[],
-    nav: any
+    nav: any,
+    dragon?: Dragon,
+    params?: DynamicBotParameters
   ): StagnationState {
     const curPos = player.pos;
     const currentHeat = nav.getHeat ? nav.getHeat(curPos) : 0;
@@ -139,12 +142,18 @@ export class SituationalPerception {
       isPhysicallyTrapped = walkableCount <= 3;
     }
 
+    // 序盤の剣回収前ハマり（物理的詰み）検知
+    const isEarlySwordTrapped = !player.hasSword && nav.detectEarlySwordTrap
+      ? Boolean(nav.detectEarlySwordTrap(player, map, enemies, params ?? { targetStr: 0, targetDefenseExp: 0 } as any, dragon))
+      : false;
+
     return {
       currentHeat,
       neighborhoodHeat,
       turnsSinceNewTile,
       isStagnated,
       isPhysicallyTrapped,
+      isEarlySwordTrapped,
     };
   }
 

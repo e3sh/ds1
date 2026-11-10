@@ -789,15 +789,6 @@ export class AutoPlayBot {
     this.nav.updateTurn(player.pos);
     this.episodicMemory.recordStep(player.pos, this.totalTurns);
 
-    // 序盤の剣回収前ハマり（物理的詰み）検知
-    if (!player.hasSword) {
-      if (this.nav.detectEarlySwordTrap(player, map, enemies, this.params, dragon)) {
-        this.isGivenUp = true;
-        this.currentTargetDesc = '💀 詰み検知: 剣への到達経路が存在しないためギブアップ';
-        return { type: 'GIVE_UP' };
-      }
-    }
-
     // 1. 【認知・知識ユニット (Perception & Knowledge)】
     if (!this.spatialKnowledge) {
       this.spatialKnowledge = new SpatialKnowledge(map, map.tacticalMetadata);
@@ -810,7 +801,9 @@ export class AutoPlayBot {
       player,
       map,
       enemies,
-      this.nav
+      this.nav,
+      dragon,
+      this.params
     );
 
     const snapshot: TacticalSnapshot = {

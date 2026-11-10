@@ -79,33 +79,6 @@ export class TacticalExecutor {
       }
     }
 
-    // 0-A2. 8歩周期パワーストーン・チェーン起動:
-    // 鍵所持中、STR未達で足元にパワーストーンが出現した直後 (stepCountSinceStone === 0) であれば、周辺宝箱へのチェーンを起動
-    if (
-      player.holdItem === 'KEY' &&
-      map.getItem(player.pos) === 'POWER_STONE' &&
-      player.stepCountSinceStone === 0 &&
-      player.strength < params.targetStr
-    ) {
-      const target = this.eightStepController.findNearbyChestForEightStepCycle(player.pos, map, enemies, dragon, player);
-      if (target) {
-        this.eightStepController.eightStepTargetChestPos = target.chestPos;
-        this.eightStepController.eightStepOriginPos = { ...player.pos };
-        this.eightStepController.eightStepPivotPos = target.pivotPos;
-        this.eightStepController.eightStepWaitPos = target.waitPos;
-        this.eightStepController.eightStepPathToPivot = target.pathToPivot;
-        const firstStep = target.pathToPivot[0] ?? target.pivotPos;
-        const dir = this.nav.getAdjacentDirection(player.pos, firstStep, map);
-        if (dir) {
-          return {
-            action: this.resolveMoveOrBreak({ type: 'MOVE', dir }, player, map),
-            description: `💎 8歩周期チェーン開始！周辺宝箱へ移動 -> (${target.chestPos.x}, ${target.chestPos.y})`,
-            status: 'SUCCESS',
-          };
-        }
-      }
-    }
-
     if (player.holdItem === 'POWER_STONE') {
       this.eightStepController.clearEightStepState();
     }

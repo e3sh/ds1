@@ -27,6 +27,16 @@ export class BootstrapSwordMission implements IStrategicMission {
   }
 
   public generateDirective(snapshot: TacticalSnapshot, engine: GameEngine): StrategicDirective {
+    // 序盤の剣回収前ハマり（物理的詰み）検知
+    if (snapshot.stagnation.isEarlySwordTrapped) {
+      this.status = 'FAILED';
+      return {
+        type: 'GIVE_UP',
+        priority: 100,
+        reason: '💀 詰み検知: 剣への到達経路が存在しないためギブアップ',
+      };
+    }
+
     const player = engine.getPlayer();
     const map = snapshot.map;
 
