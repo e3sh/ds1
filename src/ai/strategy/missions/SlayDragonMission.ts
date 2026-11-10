@@ -2,11 +2,8 @@ import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
 import { IStrategicMission, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
-import { Direction, Position } from '../../../models/Types.js';
+import { Position } from '../../../models/Types.js';
 import { WorldMap } from '../../../models/WorldMap.js';
-import { MagicSystem } from '../../../systems/MagicSystem.js';
-import { ThreatEvaluator } from '../../../systems/ThreatEvaluator.js';
-import { MovementSystem } from '../../../systems/MovementSystem.js';
 
 /**
  * SlayDragonMission (ドラゴン討伐決戦作戦)
@@ -73,8 +70,6 @@ export class SlayDragonMission implements IStrategicMission {
       };
     }
 
-    const enemies = snapshot.livingEnemies;
-    const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
     const allHomes = map.getAllHomePositions();
     let bestHome = map.realHomePos;
     let minHomeDist = Infinity;
@@ -83,35 +78,6 @@ export class SlayDragonMission implements IStrategicMission {
       if (d < minHomeDist) {
         minHomeDist = d;
         bestHome = h;
-      }
-    }
-
-    // サブステップ 1-B: 直角隣接の未凍結・未スタン危険敵（被ダメ大・即死）をFREEZE/FLASHで即時無力化
-    const adjacentDangerous = cardDirs.some(d => {
-      const np = map.wrapPosition(MovementSystem.getNextPosition(player.pos, d));
-      const e = enemies.find(enemy => enemy.isAlive && !enemy.isPermanentlyFrozen && (enemy.frozenTimer ?? 0) <= 0 && enemy.pos.x === np.x && enemy.pos.y === np.y);
-      if (!e) return false;
-      const details = ThreatEvaluator.evaluateThreatDetails(player, e);
-      return details.defenseThreat === 'LETHAL' || (details.defenseThreat === 'TAKES_DAMAGE' && details.attackThreat !== 'ONE_SHOT');
-    });
-
-    if (adjacentDangerous && player.magic > 0 && !player.hasDeath) {
-      const isNearHome = allHomes.some(h => map.getTorusDistance(player.pos, h).chebyshev <= 2);
-      if (!isNearHome && MagicSystem.canCast(player, 'FREEZE').allowed) {
-        return {
-          type: 'CAST_MAGIC',
-          magicToCast: 'FREEZE',
-          priority: 99,
-          reason: '❄️ 首決戦中の隣接危険敵FREEZE無力化',
-        };
-      }
-      if (MagicSystem.canCast(player, 'FLASH').allowed) {
-        return {
-          type: 'CAST_MAGIC',
-          magicToCast: 'FLASH',
-          priority: 99,
-          reason: '⚡ 首決戦中の隣接危険敵FLASH足止め',
-        };
       }
     }
 
@@ -196,6 +162,7 @@ export class SlayDragonMission implements IStrategicMission {
         type: 'NAVIGATE_TO_POSITION',
         targetPos: bestSpot,
         priority: 90,
+        policy: { disallowFreezeNearHome: true },
         reason: `🐉 首(${targetHead.pos.x}, ${targetHead.pos.y})の斜め安全位置(${bestSpot.x}, ${bestSpot.y})へ進軍 [距離:${minDistance}]`,
       };
     }

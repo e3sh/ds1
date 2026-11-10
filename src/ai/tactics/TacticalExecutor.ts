@@ -103,9 +103,10 @@ export class TacticalExecutor {
     }
 
     // 0-B. 直角隣接の即死・危険敵に対する緊急自衛FREEZE / FLASH
-    // ※前線基地近傍（チェビシェフ<=2）では進入路封鎖を防ぐためFLASHを優先し、FREEZEは抑止（敵湧き家では封鎖FREEZEを許可）
+    // ※前線基地近傍（チェビシェフ<=2）またはディレクティブ方針では進入路封鎖を防ぐためFLASHを優先し、FREEZEは抑止
     if (player.magic > 0 && !player.hasDeath) {
       const isNearEscapeHome = map.getTorusDistance(player.pos, map.realHomePos).chebyshev <= 2;
+      const shouldDisallowFreeze = directive.policy?.disallowFreezeNearHome || isNearEscapeHome;
       const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
       const hasAdjacentDangerous = cardDirs.some(d => {
         const np = map.wrapPosition(MovementSystem.getNextPosition(player.pos, d));
@@ -118,14 +119,14 @@ export class TacticalExecutor {
       });
 
       if (hasAdjacentDangerous) {
-        if (isNearEscapeHome && MagicSystem.canCast(player, 'FLASH').allowed) {
+        if (shouldDisallowFreeze && MagicSystem.canCast(player, 'FLASH').allowed) {
           return {
             action: { type: 'MAGIC', magic: 'FLASH' },
-            description: '⚡ 緊急自衛: 前線基地近傍の危険敵をFLASHスタン（進入路封鎖抑止）',
+            description: '⚡ 緊急自衛: 前線基地近傍・方針に従いFLASHスタン（進入路封鎖抑止）',
             status: 'SUCCESS',
           };
         }
-        if (!isNearEscapeHome && MagicSystem.canCast(player, 'FREEZE').allowed) {
+        if (!shouldDisallowFreeze && MagicSystem.canCast(player, 'FREEZE').allowed) {
           return {
             action: { type: 'MAGIC', magic: 'FREEZE' },
             description: '❄️ 緊急自衛: 直角隣接の危険敵をFREEZE無力化',

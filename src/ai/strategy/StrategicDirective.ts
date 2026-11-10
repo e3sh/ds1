@@ -14,6 +14,11 @@ export type DirectiveType =
   | 'WANDER_SAFELY'          // 安全徘徊探索
   | 'GIVE_UP';               // 物理的・数学的詰みによる正式ギブアップ
 
+export interface TacticalPolicy {
+  /** 我が家進入路の封鎖を防ぐためFREEZEを抑止（FLASH優先） */
+  disallowFreezeNearHome?: boolean;
+}
+
 export interface StrategicDirective {
   /** 指令種別 */
   type: DirectiveType;
@@ -27,6 +32,8 @@ export interface StrategicDirective {
   pushBlockPos?: Position;
   /** 押し出し先座標 (SEAL_GRAVE_STEP 用) */
   pushDestPos?: Position;
+  /** 戦略方針ポリシー */
+  policy?: TacticalPolicy;
   /** 指令の優先度 (数値が大きいほど優先) */
   priority: number;
   /** デバッグ・テレメトリ用説明 */

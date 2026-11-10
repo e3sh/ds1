@@ -174,6 +174,7 @@ export class CrownEscapeMission implements IStrategicMission {
         type: 'NAVIGATE_TO_POSITION',
         targetPos: homePos,
         priority: 90,
+        policy: { disallowFreezeNearHome: true },
         reason: `👑 王冠所持: 我が家 (${homePos.x}, ${homePos.y}) へ最速脱出帰還`,
       };
     }
@@ -196,19 +197,20 @@ export class CrownEscapeMission implements IStrategicMission {
       if (nearbyDangerousEnemies.length > 0) {
         // 脱出・帰還先である前線基地（チェビシェフ<=2）では進入路封鎖を防ぐためFLASH優先！
         const isNearEscapeHome = map.getTorusDistance(curPos, map.realHomePos).chebyshev <= 2;
+        const hasAdjacentDangerous = nearbyDangerousEnemies.some(e => map.getTorusDistance(curPos, e.pos).chebyshev <= 1);
 
-        // FLASH 詠唱で全画面足止め（前線基地周辺なら最優先、またはFREEZE不可時）
-        if (isNearEscapeHome && player.magic > 0 && !player.hasDeath && MagicSystem.canCast(player, 'FLASH').allowed) {
+        // 1. 前線基地近傍、または周囲1マスに敵がいない（チェビシェフ2にいる）場合は FLASH
+        if ((isNearEscapeHome || !hasAdjacentDangerous) && player.magic > 0 && !player.hasDeath && MagicSystem.canCast(player, 'FLASH').allowed) {
           return {
             type: 'CAST_MAGIC',
             magicToCast: 'FLASH',
             priority: 98,
-            reason: '⚡ 前線基地近傍・王冠取得前安全確保FLASHスタン（進入路封鎖抑止）',
+            reason: '⚡ 王冠取得前安全確保FLASHスタン（全画面足止め）',
           };
         }
 
-        // FREEZE 詠唱で周囲の即死敵を一斉に凍結無力化（前線基地から離れている場合のみ）
-        if (!isNearEscapeHome && player.magic > 0 && !player.hasDeath && MagicSystem.canCast(player, 'FREEZE').allowed) {
+        // 2. 前線基地から離れており、周囲1マスに敵がいる場合は FREEZE
+        if (!isNearEscapeHome && hasAdjacentDangerous && player.magic > 0 && !player.hasDeath && MagicSystem.canCast(player, 'FREEZE').allowed) {
           return {
             type: 'CAST_MAGIC',
             magicToCast: 'FREEZE',
@@ -217,7 +219,7 @@ export class CrownEscapeMission implements IStrategicMission {
           };
         }
 
-        // FLASH 詠唱（FREEZEが使えなかった場合のフォールバック）
+        // 3. FLASH フォールバック
         if (player.magic > 0 && !player.hasDeath && MagicSystem.canCast(player, 'FLASH').allowed) {
           return {
             type: 'CAST_MAGIC',
@@ -279,36 +281,7 @@ export class CrownEscapeMission implements IStrategicMission {
       };
     }
 
-    // 2-B. 近傍の未凍結・未スタン危険敵への自衛対応
-    // ① 周囲1マス（チェビシェフ1）に危険敵がいる場合 -> FREEZE で永久凍結無力化
-    const adjFreezeTarget = enemies.find(e => {
-      if (!e.isAlive || e.isPermanentlyFrozen || (e.frozenTimer ?? 0) > 0) return false;
-      if (map.getTorusDistance(curPos, e.pos).chebyshev > 1) return false;
-      const details = ThreatEvaluator.evaluateThreatDetails(player, e);
-      return details.defenseThreat === 'LETHAL' || (details.defenseThreat === 'TAKES_DAMAGE' && details.attackThreat !== 'ONE_SHOT');
-    });
-
-    if (adjFreezeTarget && player.magic > 0 && !player.hasDeath) {
-      const isNearEscapeHome = map.getTorusDistance(curPos, map.realHomePos).chebyshev <= 2;
-      if (!isNearEscapeHome && MagicSystem.canCast(player, 'FREEZE').allowed) {
-        return {
-          type: 'CAST_MAGIC',
-          magicToCast: 'FREEZE',
-          priority: 97,
-          reason: `❄️ 緊急自衛FREEZE（周囲1マスの危険敵 ${adjFreezeTarget.name} を永久凍結）`,
-        };
-      }
-      if (MagicSystem.canCast(player, 'FLASH').allowed) {
-        return {
-          type: 'CAST_MAGIC',
-          magicToCast: 'FLASH',
-          priority: 96,
-          reason: '⚡ 緊急自衛FLASH',
-        };
-      }
-    }
-
-    // ② 周囲2〜3マスに即死敵（LETHAL）が接近している場合 -> 全画面 FLASH で足止め
+    // 2-B. 周囲2〜3マスに即死敵（LETHAL）が接近している場合 -> 全画面 FLASH で足止め（大局安全確保）
     const approachingLethal = enemies.find(e => {
       if (!e.isAlive || e.isPermanentlyFrozen || (e.frozenTimer ?? 0) > 0) return false;
       const d = map.getTorusDistance(curPos, e.pos);
