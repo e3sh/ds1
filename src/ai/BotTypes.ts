@@ -10,16 +10,12 @@ export type BotPhase =
   | 'DRAGON_SLAY'      // ドラゴン要塞進軍＆安全マス首討伐
   | 'CROWN_ESCAPE';    // 王冠4個運搬・脱出
 
-export type BotPhaseV2 = BotPhase;
-
 export type BotAction =
   | { type: 'MOVE'; dir: Direction }
   | { type: 'SPACE' }
   | { type: 'MAGIC'; magic: string }
   | { type: 'WAIT' }
   | { type: 'GIVE_UP' };
-
-export type BotActionV2 = BotAction;
 
 export type GraveSealPolicy = 'AUTO' | 'NONE' | 'NEAR_HOME' | 'ALL';
 export type GraveSealTiming = 'EARLY' | 'PRE_DRAGON' | 'IMMEDIATE';
@@ -79,6 +75,7 @@ export interface DynamicBotParameters {
   homeRelocateDistMin: number;
   homeRelocateDistMax: number;
   graveSealPolicy: GraveSealPolicy;
+  enableGiveUp?: boolean;
 }
 
 export interface AutoPlayBotOptions {
@@ -86,11 +83,7 @@ export interface AutoPlayBotOptions {
   maxTurnsLimit?: number;
   parameterOverrides?: Partial<DynamicBotParameters>;
   strategyTuning?: BotStrategyTuning;
+  enableGiveUp?: boolean;
 }
 
 export type AdaptiveBotOptions = AutoPlayBotOptions;
-
-export interface BehaviorResult {
-  action: BotAction;
-  description: string;
-}

@@ -411,13 +411,18 @@ console.log('Testing 6: Relaxed turn limit (exceeding 500 turns without terminat
   const engine = new GameEngine(null, { seed: 50505 });
   engine.startAutoPlayVerifyMode({ topology: 'STANDARD_ROOMS' });
 
-  // 途中で死亡してゲームオーバーにならないようHPを十分に確保
+  // 途中で死亡や詰みでゲームオーバーにならないようステータスを十分に確保
   engine.getPlayer().hp = 999999;
   engine.getPlayer().maxHp = 999999;
+  engine.getPlayer().strength = 500;
+  engine.getPlayer().experience = 20000;
+  engine.getPlayer().magic = 10;
 
-  // 520ターンまで進行（通常デモなら500ターンでTIME OVERになる）
-  for (let i = 0; i < 520; i++) {
+  // 500ターンを超えるまで進行（通常デモなら500ターンでTIME OVERになる）
+  // ※RETURN等の演出待機フレームを考慮し、demoTurnsが500を超えるか最大600ステップまで進行
+  for (let i = 0; i < 600; i++) {
     if (engine.getState() !== 'PLAYING') break;
+    if ((engine as any).demoTurns >= 505) break;
     engine.getPlayer().hp = 999999; // HP維持
     engine.stepDemo();
   }

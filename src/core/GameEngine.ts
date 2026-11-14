@@ -366,18 +366,6 @@ export class GameEngine {
     this.demoController.setDemoBot(bot);
   }
 
-  public isUsingV2Bot(): boolean {
-    return this.demoController.isUsingV2Bot();
-  }
-
-  public setUseV2Bot(val: boolean): void {
-    this.demoController.setUseV2Bot(val);
-  }
-
-  public toggleBotVersion(): boolean {
-    return this.demoController.toggleBotVersion();
-  }
-
   // ==========================================================================
   // ターン進行・魔法（TurnExecutionController 委譲）
   // ==========================================================================

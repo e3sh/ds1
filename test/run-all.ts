@@ -30,7 +30,8 @@ import './test-home-relocation-and-respawn.js';
 import './test-theme-block-allocator.js';
 import './test-theme-block-catalog.js';
 import './test-hierarchical-generator.js';
-import './test-autoplay-integration.js';
+import './test-ai-perception-strategy.js';
+import './test-autoplay-v2-integration.js';
 import './systems/MapProfiler.test.js';
 
 

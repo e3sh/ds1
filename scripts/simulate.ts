@@ -1,6 +1,6 @@
 import { SimulationRunner, SimulationConfig } from '../src/simulation/SimulationRunner.js';
 import { DungeonTopology, MapDifficulty, PlayPacingMode, RuleMode } from '../src/models/Types.js';
-import { BotSkillProfile, GraveSealPolicy, GraveSealTiming } from '../src/ai/BotTypes.js';
+import { BotSkillProfile, BotVersion, GraveSealPolicy, GraveSealTiming } from '../src/ai/BotTypes.js';
 
 function parseArgs(): SimulationConfig {
   const rawArgs = process.argv.slice(2).filter(a => a !== '--');
@@ -46,7 +46,7 @@ function parseArgs(): SimulationConfig {
       config.botProfile = val as BotSkillProfile;
       if (!raw.includes('=')) i++;
     } else if (key === '--botVersion' && val) {
-      config.botVersion = val as 'v1' | 'v2';
+      config.botVersion = val as BotVersion;
       if (!raw.includes('=')) i++;
     } else if (key === '--graveSealPolicy' && val) {
       config.strategyTuning!.graveSealPolicy = val as GraveSealPolicy;
@@ -132,4 +132,22 @@ console.log(`- Avg Spawns / Run       : CROSS: ${report.resourceAndGhostMetrics.
 console.log(`- Chest Cap Fallbacks    : ${report.resourceAndGhostMetrics.chestCapFallbackCount} times`);
 console.log(`- Ghost Items Transported: ${report.resourceAndGhostMetrics.ghostInteractions.itemsPickedUp}`);
 console.log(`- Ghost Player Steals    : ${report.resourceAndGhostMetrics.ghostInteractions.itemsStolenFromPlayer}`);
+
+if (report.pstMetrics) {
+  console.log('\n----------------------------------------------------------------');
+  console.log(' 5. PST ARCHITECTURE & PCG STRUCTURAL TELEMETRY');
+  console.log('----------------------------------------------------------------');
+  console.log(`- Avg Breach Shortcuts Opened: ${report.pstMetrics.avgBreachShortcutsUsed} per run`);
+  console.log('- Mission Turns Distribution :');
+  for (const [mid, avgTurns] of Object.entries(report.pstMetrics.avgMissionTurns)) {
+    const rate = report.pstMetrics.missionCompletionRates[mid];
+    const rateStr = rate ? `[Tries: ${rate.total}, ClearRate: ${(rate.rate * 100).toFixed(0)}%]` : '';
+    console.log(`    * ${mid.padEnd(24)}: ${avgTurns.toString().padStart(4)} turns  ${rateStr}`);
+  }
+  console.log('- Terminal Mission Breakdown :');
+  for (const [mid, count] of Object.entries(report.pstMetrics.terminalMissionBreakdown)) {
+    console.log(`    * ${mid.padEnd(24)}: ${count}`);
+  }
+}
+
 console.log('================================================================\n');
