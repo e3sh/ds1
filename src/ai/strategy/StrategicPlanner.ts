@@ -1,6 +1,7 @@
 import { GameEngine } from '../../core/GameEngine.js';
 import { TacticalSnapshot } from '../perception/TacticalSnapshot.js';
-import { IStrategicMission, MissionStatus } from './StrategicMission.js';
+import { MapSituationEvaluator } from '../perception/MapSituationEvaluator.js';
+import { IStrategicMission, MissionCompletionReason, MissionStatus } from './StrategicMission.js';
 import { StrategicDirective } from './StrategicDirective.js';
 import { EmergencyEvacuateMission } from './missions/EmergencyEvacuateMission.js';
 import { CrownEscapeMission } from './missions/CrownEscapeMission.js';
@@ -28,11 +29,12 @@ import { Position } from '../../models/Types.js';
  */
 export class StrategicPlanner {
   public activeMission: IStrategicMission | null = null;
-  public missionHistory: { missionId: string; status: MissionStatus; turns: number }[] = [];
+  public missionHistory: { missionId: string; status: MissionStatus; reason?: MissionCompletionReason; turns: number }[] = [];
   public totalGraveSealTurns: number = 0;
   public graveSealDone: boolean = false;
   public relocateDone: boolean = false;
   public defensePrepTurns: number = 0;
+  private missionCooldowns: Map<string, number> = new Map();
 
   // 要件2: 戦術フィードバック状態管理
   public lastTacticalStatus: TacticalExecutionStatus | null = null;
@@ -90,6 +92,9 @@ export class StrategicPlanner {
         // 現行ミッションを即座に ABORTED として別作戦・別ターゲットへ強制転進
         if (this.activeMission) {
           this.activeMission.status = 'ABORTED';
+          if (!this.activeMission.completionReason) {
+            this.activeMission.completionReason = 'NO_PROGRESS_BLOCKED';
+          }
           this.activeMission.onAborted?.(
             snapshot,
             `ターゲット(${target.x}, ${target.y})への経路遮断が${this.consecutiveBlockedTurns}回連続したためブラックリスト化`
@@ -119,7 +124,18 @@ export class StrategicPlanner {
     if (isAllHeadsDefeated) {
       if (!this.activeMission || this.activeMission.id !== 'CROWN_ESCAPE') {
         if (this.activeMission) {
-          this.activeMission.onCompleted?.(snapshot);
+          if (this.activeMission.id === 'SLAY_DRAGON') {
+            this.activeMission.status = 'COMPLETED';
+            this.activeMission.completionReason = 'OBJECTIVE_ACHIEVED';
+            this.activeMission.onCompleted?.(snapshot);
+            this.recordMissionHistory(this.activeMission, 'COMPLETED', 'OBJECTIVE_ACHIEVED', snapshot.totalTurns);
+          } else {
+            const reason = this.activeMission.completionReason ?? 'INTERRUPTED_BY_EMERGENCY';
+            this.activeMission.status = 'ABORTED';
+            this.activeMission.completionReason = reason;
+            this.activeMission.onAborted?.(snapshot, '全ドラゴン頭撃破による王冠脱出へ強制移行');
+            this.recordMissionHistory(this.activeMission, 'ABORTED', reason, snapshot.totalTurns);
+          }
         }
         this.activeMission = new CrownEscapeMission();
       }
@@ -127,20 +143,34 @@ export class StrategicPlanner {
       // 1-B. 緊急危機介入 (HPピンチまたは即死敵隣接 ※王冠脱出局面以外)
       if (!this.activeMission || this.activeMission.id !== 'EMERGENCY_EVACUATE') {
         if (this.activeMission) {
+          this.activeMission.status = 'ABORTED';
+          this.activeMission.completionReason = 'INTERRUPTED_BY_EMERGENCY';
           this.activeMission.onAborted?.(snapshot, '緊急退避による割り込み中断');
+          this.recordMissionHistory(this.activeMission, 'ABORTED', 'INTERRUPTED_BY_EMERGENCY', snapshot.totalTurns);
         }
         this.activeMission = new EmergencyEvacuateMission();
       }
     }
 
-    // 1-C. 決戦・準備移行割り込み: 育成・探索系ミッション中に適正戦力に到達したら準備または決戦へ移行
+    // 1-C. 決戦・準備移行割り込み: 育成・探索系ミッション中に適正戦力に到達または宝箱・石枯渇なら準備または決戦へ移行
     const player = engine.getPlayer();
-    const hasEnoughDefense = player.experience >= (snapshot.params.targetDefenseExp ?? 12000);
-    const canTransitionToPrep = MissionSelector.isReadyForDragon(snapshot, engine) || ((snapshot.milestones.isStrCapped || snapshot.milestones.hasTargetStr) && hasEnoughDefense);
-
-    if (canTransitionToPrep) {
+    const items = MapSituationEvaluator.get(snapshot, engine).items;
+    const canUnlockChestsCurrent =
+      (player.holdItem === 'KEY' || MissionSelector.hasReachableKey(snapshot.map, snapshot)) &&
+      MissionSelector.hasReachableChests(snapshot.map, snapshot);
+    const allChestsAndStonesExhausted =
+      !canUnlockChestsCurrent &&
+      items.powerStones.length === 0 &&
+      player.holdItem !== 'POWER_STONE';
+    const canDamageDragon = player.hasSword && player.strength >= snapshot.params.targetStr;
+    const hasDiagonal = player.experience >= 12000 || player.canDiagonal || snapshot.milestones.canDiagonal;
+    if (canDamageDragon && hasDiagonal) {
       this.defensePrepTurns++;
     }
+    const canTransitionToPrep =
+      MissionSelector.isReadyForDragon(snapshot, engine, this.defensePrepTurns) ||
+      canDamageDragon ||
+      (player.hasSword && allChestsAndStonesExhausted);
 
     if (
       canTransitionToPrep &&
@@ -150,46 +180,76 @@ export class StrategicPlanner {
       this.activeMission.id !== 'RELOCATE_HOME' &&
       this.activeMission.id !== 'CROWN_ESCAPE' &&
       this.activeMission.id !== 'EMERGENCY_EVACUATE' &&
+      this.activeMission.id !== 'CASH_IN_GOLD' &&
+      this.activeMission.id !== 'EARLY_BREAK_UNLOCK' &&
       player.holdItem !== 'POWER_STONE' &&
       !(player.holdItem === 'KEY' && MissionSelector.hasNearbyChest(player.pos, snapshot.map, 8, snapshot))
     ) {
-      this.activeMission.onCompleted?.(snapshot);
-      this.missionHistory.push({
-        missionId: this.activeMission.id,
-        status: 'COMPLETED',
-        turns: this.activeMission.turnsElapsed,
-      });
-
-      // 要件1: 5条件（攻撃力・斜め移動・BREAK・MP>=3・HP十分）を満たし、準備が完了またはタイムアウトしたら SlayDragonMission を起動
+      // 要件1: 5条件（攻撃力・斜め移動・BREAK・MP・HP十分）を満たし、準備が完了またはタイムアウトしたら SlayDragonMission を起動
       const assessment = ReadinessEvaluator.evaluateDragonReadiness(snapshot, engine, this.defensePrepTurns);
-      const readyForDragon = MissionSelector.isReadyForDragon(snapshot, engine);
+      const readyForDragon = MissionSelector.isReadyForDragon(snapshot, engine, this.defensePrepTurns);
+      const noReachablePotion = items.nearbyPotionCountWithin15 === 0 && items.nearestPotion === null;
+      const prepCooldownUntil = this.missionCooldowns.get('PREPARE_DRAGON_ASSAULT') ?? 0;
+      const slayCooldownUntil = this.missionCooldowns.get('SLAY_DRAGON') ?? 0;
+      const prepOnCooldown = prepCooldownUntil > snapshot.totalTurns;
+      const slayOnCooldown = slayCooldownUntil > snapshot.totalTurns;
 
-      if (readyForDragon && assessment.isFullyPrepared) {
-        this.activeMission = new SlayDragonMission();
+      let nextMission: IStrategicMission;
+      if (readyForDragon && (assessment.isFullyPrepared || prepOnCooldown) && !slayOnCooldown) {
+        nextMission = new SlayDragonMission();
       } else {
         // 事前準備優先起動
         if (player.experience < 12000 || !snapshot.milestones.canDiagonal || !snapshot.milestones.canBreak) {
-          if (player.gold > 0) {
-            this.activeMission = new CashInGoldMission(player.gold);
-          } else if (MissionSelector.hasSafeEnemyNearby(player, snapshot)) {
-            this.activeMission = new EarlyBreakUnlockMission(12000);
+          const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
+          const hitsBreak = player.experience < 4000 && player.experience + estimatedGainedExp >= 4000;
+          const earlyBreakCooldownUntil = this.missionCooldowns.get('EARLY_BREAK_UNLOCK') ?? 0;
+          const earlyBreakOnCooldown = earlyBreakCooldownUntil > snapshot.totalTurns;
+          const clearZoneCooldownUntil = this.missionCooldowns.get('CLEAR_TREASURE_ZONE') ?? 0;
+          const clearZoneOnCooldown = clearZoneCooldownUntil > snapshot.totalTurns;
+          const canUnlockChests =
+            MissionSelector.hasReachableKey(snapshot.map, snapshot) &&
+            MissionSelector.hasReachableChests(snapshot.map, snapshot);
+
+          if (player.gold > 0 && (player.experience + estimatedGainedExp >= 12000 || hitsBreak || player.gold >= 3)) {
+            nextMission = new CashInGoldMission(player.gold);
+          } else if (!prepOnCooldown && items.nearestCoin !== null) {
+            nextMission = new PrepareDragonAssaultMission();
+          } else if (player.gold > 0) {
+            nextMission = new CashInGoldMission(player.gold);
+          } else if (!clearZoneOnCooldown && canUnlockChests) {
+            nextMission = this.selectNextMission(snapshot, engine);
+          } else if (!earlyBreakOnCooldown && MissionSelector.hasSafeEnemyNearby(player, snapshot)) {
+            nextMission = new EarlyBreakUnlockMission(12000);
           } else {
-            this.activeMission = this.selectNextMission(snapshot, engine);
+            nextMission = this.selectNextMission(snapshot, engine);
           }
-        } else if (player.magic < 3 || assessment.needsPotionSweep) {
-          this.activeMission = new PrepareDragonAssaultMission();
+        } else if (
+          !prepOnCooldown &&
+          ((!noReachablePotion && player.magic < 3) || assessment.needsPotionSweep || assessment.needsCoinSweep)
+        ) {
+          nextMission = new PrepareDragonAssaultMission();
         } else if (assessment.needsGoldCashIn || player.gold > 0) {
-          this.activeMission = new CashInGoldMission(player.gold);
-        } else if (assessment.needsRelocation && !this.relocateDone) {
+          nextMission = new CashInGoldMission(player.gold);
+        } else if (assessment.needsRelocation && !this.relocateDone && (player.holdItem === 'RING' || ReadinessEvaluator.hasMapRing(snapshot.map, snapshot))) {
           const anchor = snapshot.spatial.recommendedRelocateAnchors[0] ?? { x: 32, y: 25 };
-          this.activeMission = new RelocateHomeMission(anchor);
-        } else if (player.hp < player.maxHp * 0.5 && player.hp < 15000) {
-          this.activeMission = new PrepareDragonAssaultMission();
-        } else if (readyForDragon) {
-          this.activeMission = new SlayDragonMission();
+          nextMission = new RelocateHomeMission(anchor);
+        } else if (!prepOnCooldown && player.hp < player.maxHp * 0.5 && player.hp < 15000) {
+          nextMission = new PrepareDragonAssaultMission();
+        } else if (!slayOnCooldown && readyForDragon) {
+          nextMission = new SlayDragonMission();
         } else {
-          this.activeMission = this.selectNextMission(snapshot, engine);
+          nextMission = this.selectNextMission(snapshot, engine);
         }
+      }
+
+      // 同じミッションを再生成してチャタリングを起こす場合は中断しない
+      if (nextMission.id !== this.activeMission.id) {
+        const reason: MissionCompletionReason =
+          this.activeMission.completionReason ??
+          (this.activeMission.turnsElapsed > 1 ? 'PARTIAL_PROGRESS' : 'INTERRUPTED_BY_EMERGENCY');
+        this.activeMission.onAborted?.(snapshot, '戦力準備・決戦移行のため作戦切替');
+        this.recordMissionHistory(this.activeMission, 'ABORTED', reason, snapshot.totalTurns);
+        this.activeMission = nextMission;
       }
     }
 
@@ -200,6 +260,7 @@ export class StrategicPlanner {
         if (this.totalGraveSealTurns >= 60) {
           this.graveSealDone = true;
           this.activeMission.status = 'ABORTED';
+          this.activeMission.completionReason = 'NO_PROGRESS_TIMEOUT';
         }
       }
 
@@ -223,11 +284,10 @@ export class StrategicPlanner {
         } else {
           this.activeMission.onAborted?.(snapshot, `Status: ${status}`);
         }
-        this.missionHistory.push({
-          missionId: this.activeMission.id,
-          status,
-          turns: this.activeMission.turnsElapsed,
-        });
+        const reason: MissionCompletionReason =
+          this.activeMission.completionReason ??
+          (status === 'COMPLETED' ? 'OBJECTIVE_ACHIEVED' : 'NO_PROGRESS_TIMEOUT');
+        this.recordMissionHistory(this.activeMission, status, reason, snapshot.totalTurns);
         this.activeMission = null;
       }
     }
@@ -240,10 +300,63 @@ export class StrategicPlanner {
   }
 
   /**
+   * 終了ミッションの履歴・完了理由記録および無進展ミッションへのクールダウン設定
+   */
+  private recordMissionHistory(
+    mission: IStrategicMission,
+    status: MissionStatus,
+    reason: MissionCompletionReason | undefined,
+    totalTurns: number
+  ): void {
+    this.missionHistory.push({
+      missionId: mission.id,
+      status,
+      reason,
+      turns: mission.turnsElapsed,
+    });
+
+    if (reason === 'NO_PROGRESS_TIMEOUT' || reason === 'NO_PROGRESS_BLOCKED') {
+      if (mission.id === 'PREPARE_DRAGON_ASSAULT') {
+        this.defensePrepTurns = Math.max(this.defensePrepTurns, 40);
+        this.missionCooldowns.set('PREPARE_DRAGON_ASSAULT', totalTurns + 30);
+      } else if (mission.id === 'RELOCATE_HOME') {
+        this.relocateDone = true;
+      } else if (mission.id === 'CLEAR_TREASURE_ZONE') {
+        this.missionCooldowns.set('CLEAR_TREASURE_ZONE', totalTurns + 20);
+      } else if (mission.id === 'SLAY_DRAGON') {
+        this.missionCooldowns.set('SLAY_DRAGON', totalTurns + 15);
+      } else if (mission.id === 'EARLY_BREAK_UNLOCK') {
+        this.missionCooldowns.set('EARLY_BREAK_UNLOCK', totalTurns + 50);
+      } else if (mission.id === 'HARVEST_POWER_STONE') {
+        this.missionCooldowns.set('HARVEST_POWER_STONE', totalTurns + 20);
+      } else if (mission.id === 'SEAL_GRAVE') {
+        this.missionCooldowns.set('SEAL_GRAVE', totalTurns + 80);
+      }
+    } else if (reason === 'PARTIAL_PROGRESS' && mission.id === 'EARLY_BREAK_UNLOCK') {
+      this.missionCooldowns.set('EARLY_BREAK_UNLOCK', totalTurns + 30);
+    }
+  }
+
+  /**
    * 次期ミッション選定（MissionSelectorへ委譲）
    */
   public selectNextMission(snapshot: TacticalSnapshot, engine: GameEngine): IStrategicMission {
-    return MissionSelector.selectNextMission(snapshot, engine, this.graveSealDone, this.relocateDone, this.defensePrepTurns);
+    const activeCooldowns = new Set<string>();
+    for (const [key, untilTurn] of this.missionCooldowns.entries()) {
+      if (untilTurn > snapshot.totalTurns) {
+        activeCooldowns.add(key);
+      } else {
+        this.missionCooldowns.delete(key);
+      }
+    }
+    return MissionSelector.selectNextMission(
+      snapshot,
+      engine,
+      this.graveSealDone,
+      this.relocateDone,
+      this.defensePrepTurns,
+      activeCooldowns
+    );
   }
 
   /**

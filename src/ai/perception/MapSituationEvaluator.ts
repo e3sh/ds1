@@ -16,6 +16,7 @@ import { DynamicBotParameters } from '../BotTypes.js';
 import { AdaptiveNavigator } from '../AdaptiveNavigator.js';
 import { EpisodicMemory } from './EpisodicMemory.js';
 import type { TacticalSnapshot } from './TacticalSnapshot.js';
+import type { SpatialKnowledge } from './SpatialKnowledge.js';
 
 export type HomeBlockingCause = 'NONE' | 'DANGEROUS_ENEMY' | 'BLOCK' | 'SEALED';
 
@@ -35,6 +36,7 @@ export interface CrownCandidate {
   dist: number;
   isReachable: boolean;
   firstDir: Direction | null;
+  canReturnHomeWithCrown?: boolean;
 }
 
 export interface CrownItemsSummary {
@@ -42,6 +44,12 @@ export interface CrownItemsSummary {
   reachableCrown: CrownCandidate | null;
   nearestCrown: CrownCandidate | null;
   ghostCarryingCrownPos: Position | null;
+}
+
+export interface OpportunisticItemCandidate {
+  pos: Position;
+  type: 'POTION' | 'COIN';
+  dist: number;
 }
 
 export interface ItemReachabilitySummary {
@@ -53,13 +61,24 @@ export interface ItemReachabilitySummary {
   potions: Position[];
   nearestPotion: Position | null;
   nearbyPotionCountWithin15: number;
+  coins: Position[];
+  nearestCoin: Position | null;
+  nearbyCoinCountWithin15: number;
   powerStones: Position[];
   nearestPowerStone: Position | null;
   rings: Position[];
   nearestRing: Position | null;
   chests: Position[];
   nearestChest: Position | null;
+  totalActualChests: number;
   hasChestWithin2To8: boolean;
+  nearbyChestCountWithin8: number;
+  nearbyPowerStoneCountWithin8: number;
+  activeTreasureZoneId: string | null;
+  activeZoneRemainingChests: number;
+  projectedStrFromNearbyStones: number;
+  shouldContinueChestChain: boolean;
+  bestOpportunisticItem: OpportunisticItemCandidate | null;
   getReachableChestsInZone: (zoneBounds: { x1: number; y1: number; x2: number; y2: number }) => Position[];
 }
 
@@ -88,6 +107,8 @@ export interface LocalSurroundingsSummary {
   adjacentAllEnemies: AdjacentEnemyInfo[];
   adjacentHomeEnemies: AdjacentHomeEnemyInfo[];
   nearbyDangerousEnemies: EnemyInstance[];
+  chebyshev1ActiveDangerousEnemies: EnemyInstance[];
+  canSafelyFreezeAdjacent: boolean;
   approachingLethalEnemies: EnemyInstance[];
   approachingLethalChebyshev3: EnemyInstance[];
   hasActiveDangerousEnemyOnFloor: boolean;
@@ -154,7 +175,8 @@ export class MapSituationEvaluator {
       snapshot.memory,
       snapshot.params,
       snapshot.totalTurns,
-      stateKey
+      stateKey,
+      snapshot.spatial
     );
   }
 
@@ -171,7 +193,8 @@ export class MapSituationEvaluator {
     memory: EpisodicMemory,
     params: DynamicBotParameters,
     totalTurns: number,
-    precomputedStateKey?: string
+    precomputedStateKey?: string,
+    spatial?: SpatialKnowledge
   ): MapSituationSummary {
     const resolvedParams = this.normalizeParams(params, player);
     const curPos = player.pos;
@@ -182,7 +205,7 @@ export class MapSituationEvaluator {
     );
 
     const items = this.evaluateItems(
-      curPos, player, map, enemies, dragon, ghosts, nav, memory, resolvedParams, totalTurns
+      curPos, player, map, enemies, dragon, ghosts, nav, memory, resolvedParams, totalTurns, spatial
     );
 
     const surroundings = this.evaluateSurroundings(
@@ -235,7 +258,7 @@ export class MapSituationEvaluator {
     }
 
     const playerWithCrown = this.clonePlayerWithHold(player, 'CROWN');
-    const dirWithCrown = nav.findPath(
+    const statsWithCrown = nav.executeBfs(
       curPos,
       bestHomePos,
       map,
@@ -244,7 +267,16 @@ export class MapSituationEvaluator {
       params,
       { dragon, isEscapePhase: true, ghosts }
     );
-    const canReachWithCrown = dirWithCrown !== null;
+    const statsStaticWithCrown = nav.executeBfs(
+      curPos,
+      bestHomePos,
+      map,
+      playerWithCrown,
+      [],
+      params,
+      { isEscapePhase: true }
+    );
+    const canReachWithCrown = this.isReasonableCrownRoute(statsWithCrown, statsStaticWithCrown);
 
     const playerHandsFree = this.clonePlayerWithHold(player, 'NONE');
     const canBreakHandsFree =
@@ -271,16 +303,7 @@ export class MapSituationEvaluator {
 
     if (!canReachWithCrown) {
       // 敵を除外した状態で王冠持ちで帰還できるか確認し、原因を切り分ける
-      const dirStaticWithCrown = nav.findPath(
-        curPos,
-        bestHomePos,
-        map,
-        playerWithCrown,
-        [],
-        params,
-        { isEscapePhase: true }
-      );
-      if (dirStaticWithCrown !== null) {
+      if (statsStaticWithCrown !== null) {
         blockingCause = 'DANGEROUS_ENEMY';
       } else {
         firstBlockingBlockPos = this.findFirstBlockingBlockOnPath(
@@ -308,6 +331,19 @@ export class MapSituationEvaluator {
       blockingCause,
       firstBlockingBlockPos,
     };
+  }
+
+  /**
+   * 敵による即死危険帯踏破や極端な大回りを除外した合理的な王冠帰還ルートか判定する
+   */
+  private static isReasonableCrownRoute(
+    withEnemies: { cost: number; steps: number } | null,
+    staticOnly: { cost: number; steps: number } | null
+  ): boolean {
+    if (!withEnemies) return false;
+    if (withEnemies.cost >= 5000) return false;
+    if (staticOnly !== null && withEnemies.steps > staticOnly.steps + 24) return false;
+    return true;
   }
 
   /**
@@ -420,18 +456,100 @@ export class MapSituationEvaluator {
     nav: AdaptiveNavigator,
     memory: EpisodicMemory,
     params: DynamicBotParameters,
-    totalTurns: number
+    totalTurns: number,
+    spatial?: SpatialKnowledge
   ): ItemReachabilitySummary {
     const rawCrowns: { pos: Position; dist: number }[] = [];
     const swordsWithDist: { pos: Position; dist: number }[] = [];
+    const fallbackSwordsWithDist: { pos: Position; dist: number }[] = [];
     const keysWithDist: { pos: Position; dist: number }[] = [];
     const potionsWithDist: { pos: Position; dist: number }[] = [];
     const stonesWithDist: { pos: Position; dist: number }[] = [];
     const ringsWithDist: { pos: Position; dist: number }[] = [];
     const chestsWithDist: { pos: Position; dist: number }[] = [];
+    const coinsForOpportunistic: { pos: Position; dist: number }[] = [];
 
     let nearbyPotionCountWithin15 = 0;
-    let hasChestWithin2To8 = false;
+    let nearbyCoinCountWithin15 = 0;
+    let nearbyChestCountWithin8 = 0;
+    let nearbyPowerStoneCountWithin8 = 0;
+    let totalActualChests = 0;
+
+    // 1-pass Dial法 BFS で現在位置から物理的に到達可能な実歩行距離を計算
+    // (!canBreak 時に BLOCK 壁奥を除外し、壁越しの近い金貨・壺へ大回りループするのを防止)
+    const canBreakNow = !player.hasDeath && player.experience >= 4000 && player.magic >= 1;
+    const canDiagNow = player.canDiagonal || player.experience >= 12000;
+    const bfsDist = new Int16Array(map.width * map.height);
+    bfsDist.fill(-1);
+    const bfsDirs: { dx: number; dy: number }[] = canDiagNow
+      ? [
+          { dx: 0, dy: -1 },
+          { dx: 1, dy: 0 },
+          { dx: 0, dy: 1 },
+          { dx: -1, dy: 0 },
+          { dx: 1, dy: -1 },
+          { dx: 1, dy: 1 },
+          { dx: -1, dy: 1 },
+          { dx: -1, dy: -1 },
+        ]
+      : [
+          { dx: 0, dy: -1 },
+          { dx: 1, dy: 0 },
+          { dx: 0, dy: 1 },
+          { dx: -1, dy: 0 },
+        ];
+    const startIdx = curPos.y * map.width + curPos.x;
+    if (startIdx >= 0 && startIdx < bfsDist.length) {
+      bfsDist[startIdx] = 0;
+      const buckets: Position[][] = [[{ x: curPos.x, y: curPos.y }]];
+      for (let dist = 0; dist < buckets.length; dist++) {
+        const bucket = buckets[dist];
+        if (!bucket || bucket.length === 0) continue;
+        for (let i = 0; i < bucket.length; i++) {
+          const cur = bucket[i];
+          const curIdx = cur.y * map.width + cur.x;
+          if (bfsDist[curIdx] < dist) continue;
+          for (const d of bfsDirs) {
+            const nextPos = map.wrapPosition({ x: cur.x + d.dx, y: cur.y + d.dy });
+            const nextIdx = nextPos.y * map.width + nextPos.x;
+
+            const base = map.getBaseTile(nextPos);
+            const obj = map.getObject(nextPos);
+            if (base === 'WALL_STATIC') continue;
+            if (base === 'GRAVE' && obj === 'NONE') continue;
+            if (obj === 'BLOCK') {
+              if (!canBreakNow || (d.dx !== 0 && d.dy !== 0) || AdaptiveNavigator.isProtectedGraveBlock(nextPos, map)) {
+                continue;
+              }
+            }
+
+            const stepCost = obj === 'BLOCK' ? 4 : 1;
+            const nextCost = dist + stepCost;
+            if (bfsDist[nextIdx] >= 0 && bfsDist[nextIdx] <= nextCost) continue;
+            bfsDist[nextIdx] = nextCost;
+
+            if (base === 'WARP') {
+              const warpDest = map.getWarpDestination(nextPos);
+              if (warpDest) {
+                const wIdx = warpDest.y * map.width + warpDest.x;
+                const wCost = dist + 2;
+                if (bfsDist[wIdx] < 0 || wCost < bfsDist[wIdx]) {
+                  bfsDist[wIdx] = wCost;
+                  if (!buckets[wCost]) buckets[wCost] = [];
+                  buckets[wCost].push({ x: warpDest.x, y: warpDest.y });
+                }
+              } else {
+                if (!buckets[nextCost]) buckets[nextCost] = [];
+                buckets[nextCost].push(nextPos);
+              }
+            } else {
+              if (!buckets[nextCost]) buckets[nextCost] = [];
+              buckets[nextCost].push(nextPos);
+            }
+          }
+        }
+      }
+    }
 
     for (let y = 0; y < map.height; y++) {
       for (let x = 0; x < map.width; x++) {
@@ -440,12 +558,17 @@ export class MapSituationEvaluator {
         const item = map.getItem(p);
 
         const isUnreachable = memory.isTargetUnreachable(p, totalTurns);
+        const tileBfsDist = bfsDist[y * map.width + x];
+        const isTileReachable = tileBfsDist >= 0;
 
-        if (obj === 'CHEST' && !isUnreachable) {
-          const d = map.getTorusDistance(curPos, p).manhattan;
-          chestsWithDist.push({ pos: p, dist: d });
-          if (d >= 2 && d <= 8) {
-            hasChestWithin2To8 = true;
+        if (obj === 'CHEST') {
+          totalActualChests++;
+          if (!isUnreachable && isTileReachable) {
+            const d = map.getTorusDistance(curPos, p).manhattan;
+            chestsWithDist.push({ pos: p, dist: d });
+            if (d >= 1 && d <= 8) {
+              nearbyChestCountWithin8++;
+            }
           }
         }
 
@@ -454,70 +577,109 @@ export class MapSituationEvaluator {
         const d = map.getTorusDistance(curPos, p).manhattan;
 
         if (item === 'SWORD') {
-          // 剣は序盤必須のため、ブラックリスト状態でも候補に含める（近い順）
-          swordsWithDist.push({ pos: p, dist: d });
+          // 剣は到達可能候補を優先しつつ、到達可能剣が皆無な特殊配置に備えてフォールバックも保持
+          fallbackSwordsWithDist.push({ pos: p, dist: d });
+          if (isTileReachable) {
+            swordsWithDist.push({ pos: p, dist: tileBfsDist });
+          }
           continue;
         }
 
-        if (isUnreachable) continue;
+        if (item === 'CROWN') {
+          if (!isUnreachable) {
+            rawCrowns.push({ pos: p, dist: d });
+          }
+          continue;
+        }
+
+        if (isUnreachable || !isTileReachable) continue;
 
         switch (item) {
-          case 'CROWN':
-            rawCrowns.push({ pos: p, dist: d });
-            break;
           case 'KEY':
-            keysWithDist.push({ pos: p, dist: d });
+            keysWithDist.push({ pos: p, dist: tileBfsDist });
             break;
           case 'POTION':
-            potionsWithDist.push({ pos: p, dist: d });
-            if (d <= 15) nearbyPotionCountWithin15++;
+            potionsWithDist.push({ pos: p, dist: tileBfsDist });
+            if (tileBfsDist <= 15) nearbyPotionCountWithin15++;
             break;
           case 'POWER_STONE':
-            stonesWithDist.push({ pos: p, dist: d });
+            stonesWithDist.push({ pos: p, dist: tileBfsDist });
+            if (d <= 8) nearbyPowerStoneCountWithin8++;
+            break;
+          case 'COIN':
+            coinsForOpportunistic.push({ pos: p, dist: tileBfsDist });
+            if (tileBfsDist <= 15) nearbyCoinCountWithin15++;
             break;
           case 'RING':
-            ringsWithDist.push({ pos: p, dist: d });
+            ringsWithDist.push({ pos: p, dist: tileBfsDist });
             break;
         }
       }
     }
 
+    const effectiveSwordsWithDist = swordsWithDist.length > 0 ? swordsWithDist : fallbackSwordsWithDist;
     const sortByDist = <T extends { dist: number }>(arr: T[]): T[] =>
       arr.sort((a, b) => a.dist - b.dist);
 
     sortByDist(rawCrowns);
-    sortByDist(swordsWithDist);
+    sortByDist(effectiveSwordsWithDist);
     sortByDist(keysWithDist);
     sortByDist(potionsWithDist);
     sortByDist(stonesWithDist);
     sortByDist(ringsWithDist);
     sortByDist(chestsWithDist);
+    sortByDist(coinsForOpportunistic);
 
-    // 王冠候補の実経路評価（上位8候補または全王冠に対して実施）
+    // 王冠候補の実経路評価（全王冠に対して到達性および王冠持帰り帰還可能性を評価）
+    const playerWithCrown = rawCrowns.length > 0 ? this.clonePlayerWithHold(player, 'CROWN') : player;
+    const homeTarget = { ...map.realHomePos };
     const crownCandidates: CrownCandidate[] = rawCrowns.map(rc => {
-      if (rc.dist === 0) {
-        return { pos: rc.pos, dist: 0, isReachable: true, firstDir: null };
+      const firstDir = rc.dist === 0
+        ? null
+        : nav.findPath(
+            curPos,
+            rc.pos,
+            map,
+            player,
+            enemies,
+            params,
+            { dragon, isEscapePhase: true, ghosts }
+          );
+      const isReachable = rc.dist === 0 || firstDir !== null;
+      let canReturnHomeWithCrown = false;
+      if (isReachable && rawCrowns.length <= 6) {
+        const crownStats = nav.executeBfs(
+          rc.pos,
+          homeTarget,
+          map,
+          playerWithCrown,
+          enemies,
+          params,
+          { dragon, isEscapePhase: true, ghosts }
+        );
+        const staticCrownStats = crownStats
+          ? nav.executeBfs(rc.pos, homeTarget, map, playerWithCrown, [], params, { isEscapePhase: true })
+          : null;
+        canReturnHomeWithCrown = this.isReasonableCrownRoute(crownStats, staticCrownStats);
       }
-      const firstDir = nav.findPath(
-        curPos,
-        rc.pos,
-        map,
-        player,
-        enemies,
-        params,
-        { dragon, isEscapePhase: true, ghosts }
-      );
       return {
         pos: rc.pos,
         dist: rc.dist,
-        isReachable: firstDir !== null,
+        isReachable,
         firstDir,
+        canReturnHomeWithCrown,
       };
     });
 
-    // 到達可能（isReachable === true）を優先しつつ距離順
+    // 到達可能を最優先。双方到達可能かつ（MP/能力不足で自力開拓不可、または距離差4以内）のときのみ帰還開通（canReturnHomeWithCrown）を優先し、距離差5以上なら近傍王冠を優先
+    const canClearReturnPath = !player.hasDeath && player.magic >= 2;
     crownCandidates.sort((a, b) => {
       if (a.isReachable !== b.isReachable) return a.isReachable ? -1 : 1;
+      if (a.isReachable && b.isReachable && a.canReturnHomeWithCrown !== b.canReturnHomeWithCrown) {
+        if (!canClearReturnPath || Math.abs(a.dist - b.dist) <= 4) {
+          return a.canReturnHomeWithCrown ? -1 : 1;
+        }
+      }
       return a.dist - b.dist;
     });
 
@@ -526,9 +688,10 @@ export class MapSituationEvaluator {
     const crownGhost = ghosts.find(g => g.carriedItem === 'CROWN');
     const ghostCarryingCrownPos = crownGhost ? { ...crownGhost.pos } : null;
 
-    const swords = swordsWithDist.map(s => s.pos);
+    const swords = effectiveSwordsWithDist.map(s => s.pos);
     const keys = keysWithDist.map(k => k.pos);
     const potions = potionsWithDist.map(p => p.pos);
+    const coins = coinsForOpportunistic.map(c => c.pos);
     const powerStones = stonesWithDist.map(s => s.pos);
     const rings = ringsWithDist.map(r => r.pos);
     const chests = chestsWithDist.map(c => c.pos);
@@ -553,6 +716,107 @@ export class MapSituationEvaluator {
       });
     };
 
+    // 宝物庫ゾーン知識（マップ生成時メタデータ）を用いた現在ゾーン・残存宝箱数評価
+    let activeTreasureZoneId: string | null = null;
+    let activeZoneRemainingChests = 0;
+    let bestZoneDist = Infinity;
+    const zoneCandidates: { id: string; bounds: { x1: number; y1: number; x2: number; y2: number } }[] = [];
+    if (spatial) {
+      for (const z of spatial.treasureZones.values()) {
+        zoneCandidates.push({ id: z.id, bounds: z.bounds });
+      }
+    } else if (map.tacticalMetadata?.treasureZoneHints) {
+      for (const z of map.tacticalMetadata.treasureZoneHints) {
+        zoneCandidates.push({ id: z.id, bounds: z.bounds });
+      }
+    }
+    for (const z of zoneCandidates) {
+      const minX = Math.min(z.bounds.x1, z.bounds.x2);
+      const maxX = Math.max(z.bounds.x1, z.bounds.x2);
+      const minY = Math.min(z.bounds.y1, z.bounds.y2);
+      const maxY = Math.max(z.bounds.y1, z.bounds.y2);
+      const spanX = maxX - minX;
+      const spanY = maxY - minY;
+      const normMinX = ((minX % mapW) + mapW) % mapW;
+      const normMinY = ((minY % mapH) + mapH) % mapH;
+      const normMaxX = ((maxX % mapW) + mapW) % mapW;
+      const normMaxY = ((maxY % mapH) + mapH) % mapH;
+      const wrapDx = ((curPos.x - normMinX) % mapW + mapW) % mapW;
+      const wrapDy = ((curPos.y - normMinY) % mapH + mapH) % mapH;
+      const dx = wrapDx <= spanX
+        ? 0
+        : Math.min(
+            map.getTorusDistance({ x: curPos.x, y: 0 }, { x: normMinX, y: 0 }).manhattan,
+            map.getTorusDistance({ x: curPos.x, y: 0 }, { x: normMaxX, y: 0 }).manhattan
+          );
+      const dy = wrapDy <= spanY
+        ? 0
+        : Math.min(
+            map.getTorusDistance({ x: 0, y: curPos.y }, { x: 0, y: normMinY }).manhattan,
+            map.getTorusDistance({ x: 0, y: curPos.y }, { x: 0, y: normMaxY }).manhattan
+          );
+      const zoneDist = dx + dy;
+      if (zoneDist <= 2) {
+        const rem = getReachableChestsInZone(z.bounds).length;
+        if (rem > 0 && (zoneDist < bestZoneDist || rem > activeZoneRemainingChests)) {
+          bestZoneDist = zoneDist;
+          activeTreasureZoneId = z.id;
+          activeZoneRemainingChests = rem;
+        } else if (!activeTreasureZoneId && zoneDist < bestZoneDist) {
+          bestZoneDist = zoneDist;
+          activeTreasureZoneId = z.id;
+          activeZoneRemainingChests = rem;
+        }
+      }
+    }
+
+    const hasChestWithin2To8 = nearbyChestCountWithin8 > 0;
+    let projectedStrFromNearbyStones = player.strength;
+    const stoneCountToProject = Math.min(20, stonesWithDist.length);
+    const progConfig = (player as Player).activeProgressionConfig;
+    for (let i = 0; i < stoneCountToProject; i++) {
+      projectedStrFromNearbyStones += Player.calculatePowerStoneGain(
+        projectedStrFromNearbyStones,
+        progConfig
+      );
+    }
+    const shouldContinueChestChain =
+      player.holdItem === 'KEY' &&
+      (nearbyChestCountWithin8 > 0 || activeZoneRemainingChests > 0) &&
+      projectedStrFromNearbyStones < params.targetStr &&
+      (player.stepCountSinceStone <= 7 ||
+        (player.stepCountSinceStone === 8 && map.getObject(curPos) === 'CHEST'));
+
+    // 動線上のついで拾い最良候補（S層の dy/dx 走査ループを廃し、P層で一括算出）
+    const isExpFarming =
+      (player.strength >= params.targetStr &&
+        player.experience < (params.targetDefenseExp ?? 35000)) ||
+      player.experience < 12000;
+    const maxOpportunisticDist = isExpFarming ? 4 : 2;
+    const isAdjacentLethal = enemies.some(e => {
+      if (!e.isAlive || e.isPermanentlyFrozen || (e.frozenTimer ?? 0) > 0) return false;
+      if (map.getTorusDistance(curPos, e.pos).manhattan !== 1) return false;
+      return ThreatEvaluator.evaluateThreatDetails(player, e).defenseThreat === 'LETHAL';
+    });
+    let bestOpportunisticItem: OpportunisticItemCandidate | null = null;
+    if (!isAdjacentLethal) {
+      let bestScore = Infinity;
+      const checkCandidate = (pos: Position, type: 'POTION' | 'COIN', dist: number): void => {
+        if (dist < 1 || dist > maxOpportunisticDist) return;
+        if (type === 'POTION' && player.magic >= params.maxTargetMagic) return;
+        if (map.getBaseTile(pos) === 'WALL_STATIC' || map.getObject(pos) === 'BLOCK') return;
+        const enemyOnSpot = enemies.some(e => e.isAlive && e.pos.x === pos.x && e.pos.y === pos.y);
+        if (enemyOnSpot) return;
+        const score = dist - (type === 'POTION' ? 0.5 : 0);
+        if (score < bestScore) {
+          bestScore = score;
+          bestOpportunisticItem = { pos, type, dist };
+        }
+      };
+      for (const p of potionsWithDist) checkCandidate(p.pos, 'POTION', p.dist);
+      for (const c of coinsForOpportunistic) checkCandidate(c.pos, 'COIN', c.dist);
+    }
+
     return {
       crowns: {
         allFloorCrowns: crownCandidates,
@@ -567,13 +831,24 @@ export class MapSituationEvaluator {
       potions,
       nearestPotion: potions[0] ?? null,
       nearbyPotionCountWithin15,
+      coins,
+      nearestCoin: coins[0] ?? null,
+      nearbyCoinCountWithin15,
       powerStones,
       nearestPowerStone: powerStones[0] ?? null,
       rings,
       nearestRing: rings[0] ?? null,
       chests,
       nearestChest: chests[0] ?? null,
+      totalActualChests,
       hasChestWithin2To8,
+      nearbyChestCountWithin8,
+      nearbyPowerStoneCountWithin8,
+      activeTreasureZoneId,
+      activeZoneRemainingChests,
+      projectedStrFromNearbyStones,
+      shouldContinueChestChain,
+      bestOpportunisticItem,
       getReachableChestsInZone,
     };
   }
@@ -591,6 +866,7 @@ export class MapSituationEvaluator {
     const curPos = player.pos;
     const floorItem = map.getItem(curPos);
     const allHomes = map.getAllHomePositions();
+    const isNearRealHome = map.getTorusDistance(curPos, map.realHomePos).chebyshev <= 2;
 
     const adjacentBlocks: AdjacentBlockInfo[] = [];
     const adjacentActiveEnemies: AdjacentEnemyInfo[] = [];
@@ -629,6 +905,7 @@ export class MapSituationEvaluator {
     }
 
     const nearbyDangerousEnemies: EnemyInstance[] = [];
+    const chebyshev1ActiveDangerousEnemies: EnemyInstance[] = [];
     const approachingLethalEnemies: EnemyInstance[] = [];
     const approachingLethalChebyshev3: EnemyInstance[] = [];
     let hasActiveDangerousEnemyOnFloor = false;
@@ -644,12 +921,21 @@ export class MapSituationEvaluator {
         nearbyDangerousEnemies.push(e);
       }
 
+      if (
+        dist.chebyshev <= 1 &&
+        (details.defenseThreat === 'LETHAL' ||
+          (details.defenseThreat === 'TAKES_DAMAGE' &&
+            (details.damageToPlayer >= player.hp * 0.35 || details.attackThreat !== 'ONE_SHOT')))
+      ) {
+        chebyshev1ActiveDangerousEnemies.push(e);
+      }
+
       const isDangerOrLethal =
         details.defenseThreat === 'LETHAL' || details.damageToPlayer >= player.hp * 0.40;
       if (
         dist.chebyshev <= 2 &&
         dist.manhattan >= 2 &&
-        dist.manhattan <= 3 &&
+        dist.manhattan <= 2 &&
         isDangerOrLethal &&
         details.attackThreat !== 'ONE_SHOT'
       ) {
@@ -673,6 +959,7 @@ export class MapSituationEvaluator {
       }
     }
 
+    const canSafelyFreezeAdjacent = !isNearRealHome && chebyshev1ActiveDangerousEnemies.length > 0;
     const safeEvadeDir = nav.findEvadeDirection(curPos, map, enemies, player, dragon);
     const desperateEscapeAction = this.findDesperateEscapeDir(curPos, map, enemies, player, dragon);
 
@@ -683,6 +970,8 @@ export class MapSituationEvaluator {
       adjacentAllEnemies,
       adjacentHomeEnemies,
       nearbyDangerousEnemies,
+      chebyshev1ActiveDangerousEnemies,
+      canSafelyFreezeAdjacent,
       approachingLethalEnemies,
       approachingLethalChebyshev3,
       hasActiveDangerousEnemyOnFloor,
@@ -800,7 +1089,7 @@ export class MapSituationEvaluator {
   }
 
   private static buildStateKey(
-    player: { pos: Position; holdItem: string; magic: number; hp: number; strength: number; experience: number; hasDeath: boolean; hasSword: boolean },
+    player: { pos: Position; holdItem: string; magic: number; hp: number; strength: number; experience: number; hasDeath: boolean; hasSword: boolean; stepCountSinceStone?: number },
     map: WorldMap,
     enemies: EnemyInstance[],
     totalTurns: number
@@ -808,6 +1097,6 @@ export class MapSituationEvaluator {
     const enemySig = enemies
       .map(e => `${e.id}:${e.pos.x},${e.pos.y}:${e.isAlive ? 1 : 0}:${e.isPermanentlyFrozen ? 1 : 0}:${e.frozenTimer ?? 0}`)
       .join(';');
-    return `${totalTurns}|${player.pos.x},${player.pos.y}|${player.holdItem}|${player.magic}|${player.hp}|${player.strength}|${player.experience}|${player.hasDeath ? 1 : 0}|${player.hasSword ? 1 : 0}|${map.realHomePos.x},${map.realHomePos.y}|${map.getItem(player.pos)}|${enemySig}`;
+    return `${totalTurns}|${player.pos.x},${player.pos.y}|${player.holdItem}|${player.magic}|${player.hp}|${player.strength}|${player.experience}|${player.hasDeath ? 1 : 0}|${player.hasSword ? 1 : 0}|${player.stepCountSinceStone ?? 0}|${map.realHomePos.x},${map.realHomePos.y}|${map.getItem(player.pos)}|${enemySig}`;
   }
 }

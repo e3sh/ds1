@@ -100,7 +100,8 @@ export class EightStepController {
           return [...cur.path, nextPos];
         }
 
-        if (map.getObject(nextPos) !== 'NONE') continue;
+        const nextObj = map.getObject(nextPos);
+        if (nextObj !== 'NONE' && nextObj !== 'CHEST') continue;
         if (!this.isSafeFloorForStepCycle(nextPos, map, enemies, dragon, player)) continue;
 
         visited.add(key);
@@ -129,6 +130,11 @@ export class EightStepController {
       return null;
     }
 
+    const remSteps = 7 - player.stepCountSinceStone;
+    if (remSteps < 1) {
+      return null;
+    }
+
     const diagonalOffsets = [
       { dx: 1, dy: 1 },
       { dx: 1, dy: -1 },
@@ -136,28 +142,37 @@ export class EightStepController {
       { dx: -1, dy: -1 },
     ];
 
-    for (const offset of diagonalOffsets) {
-      const chestPos = map.wrapPosition({ x: curPos.x + offset.dx, y: curPos.y + offset.dy });
-      if (map.getObject(chestPos) !== 'CHEST') continue;
-      if (!this.isSafeFloorForStepCycle(chestPos, map, enemies, dragon, player)) continue;
+    if (remSteps === 7) {
+      for (const offset of diagonalOffsets) {
+        const chestPos = map.wrapPosition({ x: curPos.x + offset.dx, y: curPos.y + offset.dy });
+        if (map.getObject(chestPos) !== 'CHEST') continue;
+        if (!this.isSafeFloorForStepCycle(chestPos, map, enemies, dragon, player)) continue;
 
-      const midPosA = map.wrapPosition({ x: curPos.x + offset.dx, y: curPos.y });
-      const midPosB = map.wrapPosition({ x: curPos.x, y: curPos.y + offset.dy });
+        const midPosA = map.wrapPosition({ x: curPos.x + offset.dx, y: curPos.y });
+        const midPosB = map.wrapPosition({ x: curPos.x, y: curPos.y + offset.dy });
+        const midObjA = map.getObject(midPosA);
+        const midObjB = map.getObject(midPosB);
+        const isPassableMid = (obj: string) => obj === 'NONE' || obj === 'CHEST';
 
-      let selectedPivot: Position | null = null;
-      if (map.getObject(midPosA) === 'NONE' && this.isSafeFloorForStepCycle(midPosA, map, enemies, dragon, player)) {
-        selectedPivot = midPosA;
-      } else if (map.getObject(midPosB) === 'NONE' && this.isSafeFloorForStepCycle(midPosB, map, enemies, dragon, player)) {
-        selectedPivot = midPosB;
-      }
+        let selectedPivot: Position | null = null;
+        if (midObjA === 'NONE' && this.isSafeFloorForStepCycle(midPosA, map, enemies, dragon, player)) {
+          selectedPivot = midPosA;
+        } else if (midObjB === 'NONE' && this.isSafeFloorForStepCycle(midPosB, map, enemies, dragon, player)) {
+          selectedPivot = midPosB;
+        } else if (isPassableMid(midObjA) && this.isSafeFloorForStepCycle(midPosA, map, enemies, dragon, player)) {
+          selectedPivot = midPosA;
+        } else if (isPassableMid(midObjB) && this.isSafeFloorForStepCycle(midPosB, map, enemies, dragon, player)) {
+          selectedPivot = midPosB;
+        }
 
-      if (selectedPivot) {
-        return {
-          chestPos,
-          pivotPos: selectedPivot,
-          waitPos: { ...curPos },
-          pathToPivot: [selectedPivot],
-        };
+        if (selectedPivot) {
+          return {
+            chestPos,
+            pivotPos: selectedPivot,
+            waitPos: { ...curPos },
+            pathToPivot: [selectedPivot],
+          };
+        }
       }
     }
 
@@ -186,23 +201,30 @@ export class EightStepController {
       const chestPos = candidate.pos;
       if (!this.isSafeFloorForStepCycle(chestPos, map, enemies, dragon, player)) continue;
 
-      for (const off of cardOffsets) {
-        const pivotPos = map.wrapPosition({ x: chestPos.x + off.dx, y: chestPos.y + off.dy });
-        if (map.getObject(pivotPos) !== 'NONE') continue;
-        if (!this.isSafeFloorForStepCycle(pivotPos, map, enemies, dragon, player)) continue;
+      for (const preferEmpty of [true, false]) {
+        for (const off of cardOffsets) {
+          const pivotPos = map.wrapPosition({ x: chestPos.x + off.dx, y: chestPos.y + off.dy });
+          const pivotObj = map.getObject(pivotPos);
+          if (preferEmpty) {
+            if (pivotObj !== 'NONE') continue;
+          } else {
+            if (pivotObj !== 'CHEST') continue;
+          }
+          if (!this.isSafeFloorForStepCycle(pivotPos, map, enemies, dragon, player)) continue;
 
-        const path = this.findSafePathForStepCycle(curPos, pivotPos, map, enemies, dragon, player);
-        if (!path || path.length === 0) continue;
+          const path = this.findSafePathForStepCycle(curPos, pivotPos, map, enemies, dragon, player);
+          if (!path || path.length === 0) continue;
 
-        const pathLen = path.length;
-        if (pathLen <= 7 && (7 - pathLen) % 2 === 0) {
-          const waitPos = pathLen === 1 ? { ...curPos } : { ...path[path.length - 2] };
-          return {
-            chestPos,
-            pivotPos,
-            waitPos,
-            pathToPivot: path,
-          };
+          const pathLen = path.length;
+          if (pathLen <= remSteps && (remSteps - pathLen) % 2 === 0) {
+            const waitPos = pathLen === 1 ? { ...curPos } : { ...path[path.length - 2] };
+            return {
+              chestPos,
+              pivotPos,
+              waitPos,
+              pathToPivot: path,
+            };
+          }
         }
       }
     }

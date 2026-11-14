@@ -6,7 +6,6 @@ import { EarlyBreakUnlockMission } from '../missions/EarlyBreakUnlockMission.js'
 import { HarvestPowerStoneMission } from '../missions/HarvestPowerStoneMission.js';
 import { ClearTreasureZoneMission } from '../missions/ClearTreasureZoneMission.js';
 import { CashInGoldMission } from '../missions/CashInGoldMission.js';
-import { SealGraveMission } from '../missions/SealGraveMission.js';
 import { SlayDragonMission } from '../missions/SlayDragonMission.js';
 import { PrepareDragonAssaultMission } from '../missions/PrepareDragonAssaultMission.js';
 import { RelocateHomeMission } from '../missions/RelocateHomeMission.js';
@@ -28,13 +27,19 @@ export class MissionSelector {
   public static selectNextMission(
     snapshot: TacticalSnapshot,
     engine: GameEngine,
-    graveSealDone: boolean,
+    _graveSealDone: boolean,
     relocateDone?: boolean,
-    prepTurns: number = 0
+    prepTurns: number = 0,
+    cooldownMissions?: Set<string>
   ): IStrategicMission {
     const player = engine.getPlayer();
     const map = snapshot.map;
     const dragon = engine.getDragon();
+    const clearZoneOnCooldown = cooldownMissions?.has('CLEAR_TREASURE_ZONE') ?? false;
+    const harvestOnCooldown = cooldownMissions?.has('HARVEST_POWER_STONE') ?? false;
+    const earlyBreakOnCooldown = cooldownMissions?.has('EARLY_BREAK_UNLOCK') ?? false;
+    const prepOnCooldown = cooldownMissions?.has('PREPARE_DRAGON_ASSAULT') ?? false;
+    const slayOnCooldown = cooldownMissions?.has('SLAY_DRAGON') ?? false;
 
     // ① ドラゴン全首撃破済み -> 王冠脱出
     if (dragon && (dragon.isAllHeadsDefeated || dragon.heads.every(h => !h.isAlive))) {
@@ -54,46 +59,57 @@ export class MissionSelector {
     const needStr = player.strength < snapshot.params.targetStr;
 
     // 足元にパワーストーンが存在する場合:
-    // STR未達時で8歩周期チェーン可能（KEY所持かつ8歩以内に未開封宝箱）なら開錠を継続し、そうでなければ回収奉納へ
+    // STR未達時で8歩周期チェーン継続可能（KEY所持かつ近傍宝箱あり＆既存石だけでSTR未到達＆歩数条件一致）なら開錠を継続し、そうでなければ回収奉納へ
     const floorItem = map.getItem(player.pos);
     if (floorItem === 'POWER_STONE' && needStr) {
-      const canChain = player.holdItem === 'KEY' && MapSituationEvaluator.get(snapshot).items.hasChestWithin2To8;
-      if (!canChain) {
+      if (!MapSituationEvaluator.get(snapshot, engine).items.shouldContinueChestChain) {
         return new HarvestPowerStoneMission(player.pos);
       }
     }
 
-    const canUnlockChests = this.hasReachableKey(map, snapshot) && this.hasReachableChests(map, snapshot);
+    const canUnlockChests =
+      (player.holdItem === 'KEY' || this.hasReachableKey(map, snapshot)) &&
+      this.hasReachableChests(map, snapshot);
+    const itemsAll = MapSituationEvaluator.get(snapshot, engine).items;
+    const allChestsAndStonesExhausted =
+      !canUnlockChests &&
+      itemsAll.powerStones.length === 0;
 
-    // ★重要: STR目標達成 かつ 防御EXP（DEF）目標達成 かつ 斜め移動解禁済みの場合は、
-    // 残存宝箱開錠や石集めを打ち切り、直ちに決戦準備評価へ直行！
+    // ★重要: STR目標達成後は宝箱開錠ループに留めず、直ちに決戦準備評価へ直行！
     const canDamageDragon = player.hasSword && !needStr;
-    const hasEnoughDefense = player.experience >= Math.max(25000, snapshot.params.targetDefenseExp);
-    const hasDiagonal = snapshot.milestones.canDiagonal;
 
-    if (!canDamageDragon || !hasEnoughDefense || !hasDiagonal) {
+    if (!canDamageDragon) {
+      // 序盤BREAK(EXP 4,000)解禁優先: 手ぶらで安全敵が近傍にいれば最速でBREAK習得へ
+      if (
+        player.experience < 4000 &&
+        player.holdItem === 'NONE' &&
+        !earlyBreakOnCooldown &&
+        this.hasSafeEnemyNearby(player, snapshot)
+      ) {
+        return new EarlyBreakUnlockMission(4000);
+      }
+
       // ④-A. コイン換金帰還トリガー:
-      // 1. STR達成後の防御EXP育成期 (canDamageDragon && !hasEnoughDefense && player.gold >= 4)
-      // 2. STR未達時でも、手持ちコインが多く (gold >= 8)、または換金で BREAK (4000) / 斜め移動 (12000) 解禁可能な場合
+      // STR未達時でも、手持ちコインが多く (gold >= 8)、または換金で BREAK (4000) / 斜め移動 (12000) 解禁可能な場合
       if (player.gold > 0) {
         const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
         const afterExp = player.experience + estimatedGainedExp;
         const reachesMilestone = (player.experience < 4000 && afterExp >= 4000) || (player.experience < 12000 && afterExp >= 12000);
-        const reachesTargetDefenseExp = afterExp >= snapshot.params.targetDefenseExp;
         const hasLargeGold = player.gold >= 8;
-        const isDefensePrep = canDamageDragon && !hasEnoughDefense && (player.gold >= 4 || reachesTargetDefenseExp);
 
-        if (reachesMilestone || hasLargeGold || isDefensePrep) {
+        if (reachesMilestone || hasLargeGold) {
           // 鍵を持って周辺宝箱を開錠中（チェーン中）でなければ、またはコインが12枚以上溜まっていれば即換金
-          const isActivelyChaining = player.holdItem === 'KEY' && MapSituationEvaluator.get(snapshot).items.hasChestWithin2To8;
-          if (!isActivelyChaining || player.gold >= 12 || reachesTargetDefenseExp) {
+          const isActivelyChaining =
+            player.holdItem === 'KEY' &&
+            (itemsAll.shouldContinueChestChain || itemsAll.hasChestWithin2To8);
+          if (!isActivelyChaining || player.gold >= 12) {
             return new CashInGoldMission(player.gold);
           }
         }
       }
 
       // ④-B. 鍵所持中（holdItem === 'KEY'）: 宝物庫ゾーン・残存宝箱の一括開錠を最優先
-      if (player.holdItem === 'KEY') {
+      if (!clearZoneOnCooldown && player.holdItem === 'KEY') {
         const nearestZone = snapshot.spatial.getNearestUnclearedTreasureZone(player.pos, map, snapshot.memory, snapshot.totalTurns);
         if (nearestZone) {
           return new ClearTreasureZoneMission(nearestZone.id);
@@ -109,43 +125,75 @@ export class MissionSelector {
         const distStone = nearestStone ? map.getTorusDistance(player.pos, nearestStone).manhattan : Infinity;
 
         // STR未達時かつ近傍（stoneSearchDist以内）に石がある場合のみ石回収・奉納を優先
-        if (needStr && nearestStone && distStone <= snapshot.params.stoneSearchDist) {
+        if (!harvestOnCooldown && needStr && nearestStone && distStone <= snapshot.params.stoneSearchDist) {
           return new HarvestPowerStoneMission(nearestStone);
         }
 
         // 未開封宝箱・鍵が存在する場合は宝箱攻略を最優先！
-        if (canUnlockChests) {
+        if (!clearZoneOnCooldown && canUnlockChests) {
           const nearestZone = snapshot.spatial.getNearestUnclearedTreasureZone(player.pos, map, snapshot.memory, snapshot.totalTurns);
           if (nearestZone) return new ClearTreasureZoneMission(nearestZone.id);
           return new ClearTreasureZoneMission('GLOBAL_ALL');
         }
 
         // 到達可能な宝箱が枯渇している場合のみ、残存石の回収へ
-        if (needStr && nearestStone) {
+        if (!harvestOnCooldown && needStr && nearestStone) {
           return new HarvestPowerStoneMission(nearestStone);
+        }
+      }
+
+      // ④-D. 到達可能な宝箱・鍵・石が無く、EXP < 4000 (BREAK未習得) の場合は床コイン回収・換金でBREAKを解禁
+      if (player.experience < 4000) {
+        if (player.gold > 0) {
+          return new CashInGoldMission(player.gold);
+        }
+        if (!prepOnCooldown && itemsAll.nearestCoin !== null) {
+          return new PrepareDragonAssaultMission();
         }
       }
     }
 
-    // ④ STR達成済みまたはカンスト時: 決戦準備評価（MP備蓄・コイン換金・移転）
+    // ④ STR達成済みまたは全宝箱・石枯渇時: 決戦準備評価（EXP育成・MP備蓄・コイン換金・移転）
     // ※要件1: 5条件（攻撃力・斜め移動・BREAK・MP>=3・HP十分）をすべて満たすまで絶対に SlayDragonMission を起動しない
-    const needAssaultPrep = canDamageDragon;
+    const needAssaultPrep = canDamageDragon || allChestsAndStonesExhausted;
     if (needAssaultPrep) {
       const assessment = ReadinessEvaluator.evaluateDragonReadiness(snapshot, engine, prepTurns);
-      const readyForDragon = this.isReadyForDragon(snapshot, engine);
+      const readyForDragon = this.isReadyForDragon(snapshot, engine, prepTurns);
 
-      // 1. EXP不足 (< 12,000 または BREAK未習得)
+      // 1. EXP不足 (< 12,000 または BREAK/斜め未習得)
       if (player.experience < 12000 || !snapshot.milestones.canDiagonal || !snapshot.milestones.canBreak) {
+        const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
+        const hitsBreak = player.experience < 4000 && player.experience + estimatedGainedExp >= 4000;
+        if (
+          player.gold > 0 &&
+          (player.experience + estimatedGainedExp >= 12000 || hitsBreak || player.gold >= 3)
+        ) {
+          return new CashInGoldMission(player.gold);
+        }
+        // 逃走敵追跡より確実な床コイン回収・一括換金を最優先
+        if (!prepOnCooldown && itemsAll.nearestCoin !== null) {
+          return new PrepareDragonAssaultMission();
+        }
         if (player.gold > 0) {
           return new CashInGoldMission(player.gold);
         }
-        if (this.hasSafeEnemyNearby(player, snapshot)) {
+        if (!clearZoneOnCooldown && canUnlockChests) {
+          const nearestZone = snapshot.spatial.getNearestUnclearedTreasureZone(player.pos, map, snapshot.memory, snapshot.totalTurns);
+          if (nearestZone) return new ClearTreasureZoneMission(nearestZone.id);
+          return new ClearTreasureZoneMission('GLOBAL_ALL');
+        }
+        if (!earlyBreakOnCooldown && this.hasSafeEnemyNearby(player, snapshot)) {
           return new EarlyBreakUnlockMission(12000);
         }
       }
 
-      // 2. MP不足 (< 3) または ポーション回収が必要
-      if (player.magic < 3 || assessment.needsPotionSweep) {
+      // 2. MP不足 (< 3) または ポーション/コイン回収が必要（枯渇またはクールダウン時はスキップ）
+      const noReachablePotion = itemsAll.nearbyPotionCountWithin15 === 0 && itemsAll.nearestPotion === null;
+
+      if (
+        !prepOnCooldown &&
+        ((!noReachablePotion && player.magic < 3) || assessment.needsPotionSweep || assessment.needsCoinSweep)
+      ) {
         return new PrepareDragonAssaultMission();
       }
 
@@ -161,12 +209,12 @@ export class MissionSelector {
       }
 
       // 5. HP十分性チェック
-      if (player.hp < player.maxHp * 0.5 && player.hp < 15000) {
+      if (!prepOnCooldown && player.hp < player.maxHp * 0.5 && player.hp < 15000) {
         return new PrepareDragonAssaultMission();
       }
 
       // 6. 全条件を満たした場合のみ決戦起動
-      if (readyForDragon && assessment.isFullyPrepared) {
+      if (!slayOnCooldown && readyForDragon && (assessment.isFullyPrepared || prepOnCooldown)) {
         return new SlayDragonMission();
       }
     }
@@ -176,6 +224,7 @@ export class MissionSelector {
       snapshot.milestones.hasTargetStr &&
       !snapshot.milestones.hasTargetDefenseExp &&
       player.holdItem !== 'KEY' &&
+      !earlyBreakOnCooldown &&
       this.hasSafeEnemyNearby(player, snapshot)
     ) {
       return new EarlyBreakUnlockMission(snapshot.params.targetDefenseExp);
@@ -183,7 +232,7 @@ export class MissionSelector {
 
     // ⑤ BREAK未習得 (EXP < 4000) かつ鍵未所持かつ近傍に安全な敵がいる -> 敵を狩って最速解禁
     // （※鍵所持中は宝箱開錠を最優先し、手ぶらの移動中のみEXP稼ぎを行う）
-    if (player.experience < 4000 && player.holdItem !== 'KEY' && this.hasSafeEnemyNearby(player, snapshot)) {
+    if (player.experience < 4000 && player.holdItem !== 'KEY' && !earlyBreakOnCooldown && this.hasSafeEnemyNearby(player, snapshot)) {
       return new EarlyBreakUnlockMission();
     }
 
@@ -206,24 +255,8 @@ export class MissionSelector {
       }
     }
 
-    // ⑦ 墓封鎖 (序盤ポリシーが有効かつSTRが基準値以上)
-    if (
-      !graveSealDone &&
-      snapshot.params.graveSealPolicy !== 'NONE' &&
-      player.strength >= snapshot.params.graveSealEarlyStr &&
-      (!dragon || dragon.defeatedHeadsCount === 0)
-    ) {
-      const unsealedPuzzles = snapshot.spatial.getUnsealedGravePuzzles();
-      const highPriority = unsealedPuzzles.find(
-        p => p.priority === 'HIGH' && !snapshot.memory.isTargetUnreachable(p.gravePos, snapshot.totalTurns)
-      );
-      if (highPriority) {
-        return new SealGraveMission(highPriority.gravePos);
-      }
-    }
-
-    // ⑧ 宝物庫ゾーン攻略 (未攻略かつ到達可能なゾーンがあり、鍵を所持しているか回収可能な場合)
-    if (canUnlockChests) {
+    // ⑦ 宝物庫ゾーン攻略 (未攻略かつ到達可能なゾーンがあり、鍵を所持しているか回収可能な場合)
+    if (!clearZoneOnCooldown && canUnlockChests) {
       const nearestZone = snapshot.spatial.getNearestUnclearedTreasureZone(player.pos, map, snapshot.memory, snapshot.totalTurns);
       if (nearestZone) {
         return new ClearTreasureZoneMission(nearestZone.id);
@@ -236,7 +269,7 @@ export class MissionSelector {
     }
 
     // ⑨ 孤立したパワーストーンの回収
-    const stonePos = this.findNearestPowerStone(player.pos, map, snapshot);
+    const stonePos = !harvestOnCooldown ? this.findNearestPowerStone(player.pos, map, snapshot) : null;
     if (stonePos) {
       return new HarvestPowerStoneMission(stonePos);
     }
@@ -249,9 +282,10 @@ export class MissionSelector {
     return MapSituationEvaluator.get(snapshot).items.chests.length > 0;
   }
 
-  public static hasSafeEnemyNearby(player: any, snapshot: TacticalSnapshot): boolean {
+  public static hasSafeEnemyNearby(player: any, snapshot: TacticalSnapshot, maxDistOverride?: number): boolean {
     const map = snapshot.map;
-    const maxDist = snapshot.milestones.hasTargetStr ? 30 : 16;
+    const canDiag = snapshot.milestones?.canDiagonal || player.canDiagonal;
+    const maxDist = maxDistOverride ?? (!canDiag ? 8 : (snapshot.milestones.hasTargetStr ? 45 : 18));
     return snapshot.livingEnemies.some(enemy => {
       if (!enemy.isAlive || enemy.isPermanentlyFrozen) return false;
       if (snapshot.memory.isTargetUnreachable(enemy.pos, snapshot.totalTurns)) return false;
@@ -318,7 +352,7 @@ export class MissionSelector {
     return nearest;
   }
 
-  public static isReadyForDragon(snapshot: TacticalSnapshot, engine: GameEngine): boolean {
+  public static isReadyForDragon(snapshot: TacticalSnapshot, engine: GameEngine, prepTurns: number = 0): boolean {
     const player = engine.getPlayer();
     const dragon = engine.getDragon();
     const hasSword = player.hasSword;
@@ -332,12 +366,16 @@ export class MissionSelector {
     );
     const canDiagonal = player.experience >= 12000 || player.canDiagonal || snapshot.milestones.canDiagonal;
     const canBreak = !player.hasDeath && player.magic >= 1 && player.experience >= 4000;
-    const hasDragonAssaultMagic = player.magic >= 3;
+    const items = MapSituationEvaluator.get(snapshot).items;
+    const noReachablePotion = items.nearbyPotionCountWithin15 === 0 && items.nearestPotion === null;
+    const hasDragonAssaultMagic = player.magic >= 3 || (noReachablePotion && player.magic >= 1);
     const hasEnoughHp = player.hp >= player.maxHp * 0.50 || player.hp >= 15000;
 
     // 防御力（EXP）の適正判定: ドラゴン決戦で即死しないための十分なEXP
     const requiredDefenseExp = snapshot.params.targetDefenseExp ?? 12000;
-    const hasEnoughDefense = player.experience >= requiredDefenseExp;
+    const hasEnoughDefense =
+      player.experience >= requiredDefenseExp ||
+      (canDiagonal && (prepTurns >= 25 || snapshot.totalTurns >= 600 || (noReachablePotion && player.gold === 0)));
 
     return canDamageAllHeads && canDiagonal && canBreak && hasDragonAssaultMagic && hasEnoughHp && hasEnoughDefense;
   }

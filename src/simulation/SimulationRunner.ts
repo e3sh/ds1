@@ -1,7 +1,7 @@
 import { GameEngine } from '../core/GameEngine.js';
 import { SeedRandom } from '../core/SeedRandom.js';
 import { GameEventBus } from '../core/GameEventBus.js';
-import { AutoPlayBot, BotSkillProfile, BotStrategyTuning, BotVersion } from '../ai/AutoPlayBot.js';
+import { AutoPlayBot, BotSkillProfile, BotStrategyTuning } from '../ai/AutoPlayBot.js';
 import { SimulationTelemetry, SimulationSummaryReport } from './SimulationTelemetry.js';
 import {
   DungeonTopology,
@@ -20,7 +20,6 @@ export interface SimulationConfig {
   botProfile?: BotSkillProfile;
   baseSeed?: number;
   strategyTuning?: BotStrategyTuning;
-  botVersion?: BotVersion;
 }
 
 /**
@@ -31,7 +30,7 @@ export interface SimulationConfig {
 export class SimulationRunner {
   public static runBatch(config: SimulationConfig = {}): SimulationSummaryReport {
     const runs = config.runs ?? 10;
-    const maxTurnsLimit = config.maxTurnsLimit ?? 1500;
+    const maxTurnsLimit = config.maxTurnsLimit ?? 3000;
     const topology = config.topology ?? 'STANDARD_ROOMS';
     const difficulty = config.difficulty ?? 'NORMAL';
     const pacing = config.pacing ?? 'STANDARD';
@@ -67,20 +66,57 @@ export class SimulationRunner {
         profile: botProfile,
         maxTurnsLimit,
         strategyTuning: config.strategyTuning,
-        botVersion: config.botVersion,
       });
 
       let turns = 0;
+      let redundantFlashCount = 0;
+      let crownPickupDropLoops = 0;
+      let lastFlashTurn = -100;
+      let lastFlashPos: { x: number; y: number } | null = null;
+      let lastCrownPickupTurn = -100;
+      let lastCrownPickupDeliveryCount = 0;
+
       while (turns < maxTurnsLimit && engine.getState() === 'PLAYING') {
         turns++;
         // リアルタイムタイマー更新（フレーム進行）
         engine.stepFrame(100);
 
+        const prevPlayer = engine.getPlayer();
+        const prevPos = { x: prevPlayer.pos.x, y: prevPlayer.pos.y };
+        const prevHold = prevPlayer.holdItem;
+        const prevCrowns = prevPlayer.crowns;
+        const hadUnfrozenEnemy = engine.getEnemies().some(e => e.isAlive && !e.isPermanentlyFrozen && e.frozenTimer <= 0);
+
         // Bot による自律手番行動
-        bot.step(engine);
+        const action = bot.step(engine);
+
+        const afterPlayer = engine.getPlayer();
+        if (action.type === 'MAGIC' && action.magic === 'FLASH') {
+          const samePosRecent =
+            lastFlashPos !== null &&
+            lastFlashPos.x === prevPos.x &&
+            lastFlashPos.y === prevPos.y &&
+            turns - lastFlashTurn <= 8;
+          if (!hadUnfrozenEnemy || samePosRecent) {
+            redundantFlashCount++;
+          }
+          lastFlashTurn = turns;
+          lastFlashPos = { x: prevPos.x, y: prevPos.y };
+        }
+        if (prevHold !== 'CROWN' && afterPlayer.holdItem === 'CROWN') {
+          lastCrownPickupTurn = turns;
+          lastCrownPickupDeliveryCount = prevCrowns;
+        } else if (
+          prevHold === 'CROWN' &&
+          afterPlayer.holdItem !== 'CROWN' &&
+          afterPlayer.crowns === lastCrownPickupDeliveryCount &&
+          turns - lastCrownPickupTurn <= 3
+        ) {
+          crownPickupDropLoops++;
+        }
 
         // スナップショット記録
-        const player = engine.getPlayer();
+        const player = afterPlayer;
         telemetry.recordTurnSnapshot(turns, player.experience, player.strength, player.hasSword);
 
         // Botが物理的詰みを検知してGiveUPした場合は3,000ターンを待たずに即座に終了
@@ -100,11 +136,14 @@ export class SimulationRunner {
       const won = engine.getState() === 'STAGECLEAR';
       const player = engine.getPlayer();
 
-      // PST 3層アーキテクチャテレメトリ情報の収集 (PST版)
+      // PST 3層アーキテクチャテレメトリ情報の収集
       let pstMetrics: any = undefined;
-      if (bot.botVersion === 'pst') {
+      {
         const missionTurns: Record<string, number> = {};
         const missionOutcomes: Record<string, { completed: number; aborted: number; failed: number }> = {};
+        const missionCompletionReasons: Record<string, Record<string, number>> = {};
+        let objectiveAchievedCount = 0;
+        let noProgressSwitchCount = 0;
 
         for (const h of bot.strategicPlanner.missionHistory) {
           missionTurns[h.missionId] = (missionTurns[h.missionId] || 0) + h.turns;
@@ -114,6 +153,19 @@ export class SimulationRunner {
           if (h.status === 'COMPLETED') missionOutcomes[h.missionId].completed++;
           else if (h.status === 'ABORTED') missionOutcomes[h.missionId].aborted++;
           else if (h.status === 'FAILED') missionOutcomes[h.missionId].failed++;
+
+          const reasonKey = h.reason ?? (h.status === 'COMPLETED' ? 'OBJECTIVE_ACHIEVED' : 'UNKNOWN');
+          if (!missionCompletionReasons[h.missionId]) {
+            missionCompletionReasons[h.missionId] = {};
+          }
+          missionCompletionReasons[h.missionId][reasonKey] =
+            (missionCompletionReasons[h.missionId][reasonKey] || 0) + 1;
+
+          if (reasonKey === 'OBJECTIVE_ACHIEVED') {
+            objectiveAchievedCount++;
+          } else if (reasonKey === 'NO_PROGRESS_TIMEOUT' || reasonKey === 'NO_PROGRESS_BLOCKED') {
+            noProgressSwitchCount++;
+          }
         }
 
         // 現在実行中だったアクティブミッションのターンも加算
@@ -122,6 +174,10 @@ export class SimulationRunner {
           missionTurns[active.id] = (missionTurns[active.id] || 0) + active.turnsElapsed;
         }
 
+        const totalMissionSwitches = bot.strategicPlanner.missionHistory.length;
+        const objectiveAchievedRate = totalMissionSwitches > 0
+          ? Math.round((objectiveAchievedCount / totalMissionSwitches) * 1000) / 1000
+          : 0;
         const breachShortcutsUsed = bot.spatialKnowledge?.breachShortcuts.filter(s => s.isBreached).length ?? 0;
         const terminalMissionId = active?.id ?? 'NONE';
         const terminalZoneId = active && 'zoneId' in active ? (active as any).zoneId : undefined;
@@ -129,6 +185,12 @@ export class SimulationRunner {
         pstMetrics = {
           missionTurns,
           missionOutcomes,
+          missionCompletionReasons,
+          objectiveAchievedRate,
+          totalMissionSwitches,
+          noProgressSwitchCount,
+          redundantFlashCount,
+          crownPickupDropLoops,
           breachShortcutsUsed,
           terminalMissionId,
           terminalZoneId,
@@ -235,11 +297,23 @@ export class SimulationRunner {
     if (pstRecords.length > 0) {
       const avgMissionTurns: Record<string, number> = {};
       const outcomeAgg: Record<string, { total: number; completed: number }> = {};
+      const missionCompletionReasons: Record<string, Record<string, number>> = {};
       const terminalBreakdown: Record<string, number> = {};
       let totalShortcuts = 0;
+      let sumObjectiveRate = 0;
+      let sumMissionSwitches = 0;
+      let sumNoProgressSwitches = 0;
+      let sumRedundantFlash = 0;
+      let sumCrownLoops = 0;
 
       for (const m of pstRecords) {
         totalShortcuts += m.breachShortcutsUsed;
+        sumObjectiveRate += m.objectiveAchievedRate ?? 0;
+        sumMissionSwitches += m.totalMissionSwitches ?? 0;
+        sumNoProgressSwitches += m.noProgressSwitchCount ?? 0;
+        sumRedundantFlash += m.redundantFlashCount ?? 0;
+        sumCrownLoops += m.crownPickupDropLoops ?? 0;
+
         if (m.terminalMissionId) {
           const key = m.terminalZoneId ? `${m.terminalMissionId} [Zone:${m.terminalZoneId}]` : m.terminalMissionId;
           terminalBreakdown[key] = (terminalBreakdown[key] || 0) + 1;
@@ -254,6 +328,15 @@ export class SimulationRunner {
           const tries = out.completed + out.aborted + out.failed;
           outcomeAgg[mid].total += tries;
           outcomeAgg[mid].completed += out.completed;
+        }
+
+        if (m.missionCompletionReasons) {
+          for (const [mid, reasons] of Object.entries(m.missionCompletionReasons)) {
+            if (!missionCompletionReasons[mid]) missionCompletionReasons[mid] = {};
+            for (const [reason, count] of Object.entries(reasons)) {
+              missionCompletionReasons[mid][reason] = (missionCompletionReasons[mid][reason] || 0) + count;
+            }
+          }
         }
       }
 
@@ -270,9 +353,21 @@ export class SimulationRunner {
         };
       }
 
+      const killedAllRuns = records.filter(r => r.reachedMilestones.killedAllHeads || r.won);
+      const crownEscapeSuccessRate = killedAllRuns.length > 0
+        ? Math.round((killedAllRuns.filter(r => r.won).length / killedAllRuns.length) * 1000) / 1000
+        : 0;
+
       pstSummary = {
         avgMissionTurns,
         missionCompletionRates,
+        missionCompletionReasons,
+        avgObjectiveAchievedRate: Math.round((sumObjectiveRate / pstRecords.length) * 1000) / 1000,
+        avgMissionSwitches: Math.round((sumMissionSwitches / pstRecords.length) * 10) / 10,
+        avgNoProgressSwitches: Math.round((sumNoProgressSwitches / pstRecords.length) * 10) / 10,
+        avgRedundantFlashCount: Math.round((sumRedundantFlash / pstRecords.length) * 10) / 10,
+        avgCrownPickupDropLoops: Math.round((sumCrownLoops / pstRecords.length) * 10) / 10,
+        crownEscapeSuccessRate,
         avgBreachShortcutsUsed: Math.round((totalShortcuts / pstRecords.length) * 10) / 10,
         terminalMissionBreakdown: terminalBreakdown,
       };

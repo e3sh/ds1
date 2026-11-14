@@ -32,10 +32,10 @@ export class ItemSwapTactics {
   ): { action: BotAction; description: string } | null {
     const curPos = player.pos;
 
-    // 1. スワップ中タイムアウト防止 (10ターン以上スタックした場合は状態リセット)
+    // 1. スワップ中タイムアウト防止 (16ターン以上スタックした場合は状態リセット)
     if (swapState.itemToPickupPos !== null || swapState.tempDroppedKeyPos !== null) {
       swapState.swapTurns++;
-      if (swapState.swapTurns > 10) {
+      if (swapState.swapTurns > 16) {
         swapState.itemToPickupPos = null;
         swapState.tempDroppedKeyPos = null;
         swapState.swapTurns = 0;
@@ -51,7 +51,8 @@ export class ItemSwapTactics {
                       map.getObject(curPos) === 'NONE' &&
                       map.getBaseTile(curPos) !== 'WALL_STATIC' &&
                       map.getBaseTile(curPos) !== 'WARP' &&
-                      map.getBaseTile(curPos) !== 'GRAVE';
+                      map.getBaseTile(curPos) !== 'GRAVE' &&
+                      map.getBaseTile(curPos) !== 'HOME';
 
       if (canDrop && player.holdItem === 'KEY') {
         swapState.tempDroppedKeyPos = { ...curPos };
@@ -60,8 +61,10 @@ export class ItemSwapTactics {
           description: `🔄 鍵一時置き退避 [足元に鍵を配置]`,
         };
       } else {
-        // 退避可能な隣接マスへ移動
-        const dropDir = this.findAdjacentDropTile(curPos, map, enemies, dragon, player, nav);
+        // 退避可能な隣接マスまたは最寄り空き床（距離8以内）へ移動
+        const dropDir =
+          this.findAdjacentDropTile(curPos, map, enemies, dragon, player, nav) ??
+          this.findNearestDropTileStep(curPos, map, enemies, dragon, player, params, nav);
         if (dropDir) {
           return {
             action: { type: 'MOVE', dir: dropDir },
@@ -121,6 +124,22 @@ export class ItemSwapTactics {
     return null;
   }
 
+  public static isValidDropTile(
+    np: Position,
+    map: WorldMap,
+    enemies: EnemyInstance[],
+    dragon: Dragon | undefined,
+    nav: AdaptiveNavigator
+  ): boolean {
+    const base = map.getBaseTile(np);
+    if (base === 'WALL_STATIC' || base === 'WARP' || base === 'GRAVE' || base === 'HOME') return false;
+    if (map.getObject(np) !== 'NONE') return false;
+    if (map.getItem(np) !== 'NONE') return false;
+    if (dragon && (dragon.getPartAt(np) || nav.isDragonFireLine(np, dragon, map))) return false;
+    if (enemies.some(e => e.isAlive && e.pos.x === np.x && e.pos.y === np.y)) return false;
+    return true;
+  }
+
   public static findAdjacentDropTile(
     pos: Position,
     map: WorldMap,
@@ -132,16 +151,40 @@ export class ItemSwapTactics {
     const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
     for (const dir of cardDirs) {
       const np = map.wrapPosition(MovementSystem.getNextPosition(pos, dir));
-      if (map.getBaseTile(np) === 'WALL_STATIC') continue;
-      if (map.getObject(np) !== 'NONE') continue;
-      if (map.getItem(np) !== 'NONE') continue;
-      if (map.getBaseTile(np) === 'WARP' || map.getBaseTile(np) === 'GRAVE' || map.getBaseTile(np) === 'HOME') continue;
-      if (dragon && nav.isDragonFireLine(np, dragon, map)) continue;
-
-      const hasEnemy = enemies.some(e => e.isAlive && e.pos.x === np.x && e.pos.y === np.y);
-      if (hasEnemy) continue;
-
+      if (!this.isValidDropTile(np, map, enemies, dragon, nav)) continue;
       return dir;
+    }
+    return null;
+  }
+
+  /**
+   * 隣接4方向に空き床がない場合、マンハッタン距離 1..8 以内の最寄り安全空き床へ至る1歩目を探索
+   */
+  public static findNearestDropTileStep(
+    pos: Position,
+    map: WorldMap,
+    enemies: EnemyInstance[],
+    dragon: Dragon | undefined,
+    player: Player,
+    params: DynamicBotParameters,
+    nav: AdaptiveNavigator
+  ): Direction | null {
+    const candidates: { pos: Position; dist: number }[] = [];
+    for (let dy = -8; dy <= 8; dy++) {
+      for (let dx = -8; dx <= 8; dx++) {
+        const dist = Math.abs(dx) + Math.abs(dy);
+        if (dist < 1 || dist > 8) continue;
+        const np = map.wrapPosition({ x: pos.x + dx, y: pos.y + dy });
+        if (!this.isValidDropTile(np, map, enemies, dragon, nav)) continue;
+        candidates.push({ pos: np, dist });
+      }
+    }
+    candidates.sort((a, b) => a.dist - b.dist);
+
+    const maxAttempts = Math.min(candidates.length, 16);
+    for (let i = 0; i < maxAttempts; i++) {
+      const dir = nav.findPath(pos, candidates[i].pos, map, player, enemies, params, { dragon });
+      if (dir) return dir;
     }
     return null;
   }

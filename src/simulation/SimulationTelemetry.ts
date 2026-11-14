@@ -47,6 +47,12 @@ export interface SingleRunRecord {
   pstMetrics?: {
     missionTurns: Record<string, number>;
     missionOutcomes: Record<string, { completed: number; aborted: number; failed: number }>;
+    missionCompletionReasons?: Record<string, Record<string, number>>;
+    objectiveAchievedRate?: number;
+    totalMissionSwitches?: number;
+    noProgressSwitchCount?: number;
+    redundantFlashCount?: number;
+    crownPickupDropLoops?: number;
     breachShortcutsUsed: number;
     terminalMissionId?: string;
     terminalZoneId?: string;
@@ -111,6 +117,13 @@ export interface SimulationSummaryReport {
   pstMetrics?: {
     avgMissionTurns: Record<string, number>;
     missionCompletionRates: Record<string, { total: number; completed: number; rate: number }>;
+    missionCompletionReasons?: Record<string, Record<string, number>>;
+    avgObjectiveAchievedRate?: number;
+    avgMissionSwitches?: number;
+    avgNoProgressSwitches?: number;
+    avgRedundantFlashCount?: number;
+    avgCrownPickupDropLoops?: number;
+    crownEscapeSuccessRate?: number;
     avgBreachShortcutsUsed: number;
     terminalMissionBreakdown: Record<string, number>;
   };

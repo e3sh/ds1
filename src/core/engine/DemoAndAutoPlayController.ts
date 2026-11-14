@@ -12,7 +12,6 @@ export class DemoAndAutoPlayController {
   private autoPlaySpeed: number = 1;
   private isAutoPlayPaused: boolean = false;
   private demoBot: AutoPlayBot | null = null;
-  private useV2Bot: boolean = true;
   private demoIntervalId: number | null = null;
   private demoEndDelayFrames: number = 0;
   private demoTurns: number = 0;
@@ -85,27 +84,8 @@ export class DemoAndAutoPlayController {
     this.demoStuckFrames = val;
   }
 
-  public setUseV2Bot(val: boolean): void {
-    this.useV2Bot = val;
-    if (this.demoBot !== null) {
-      this.demoBot = this.createBotInstance();
-    }
-  }
-
-  public isUsingV2Bot(): boolean {
-    return this.useV2Bot;
-  }
-
-  public toggleBotVersion(): boolean {
-    this.useV2Bot = !this.useV2Bot;
-    if (this.demoBot !== null) {
-      this.demoBot = this.createBotInstance();
-    }
-    return this.useV2Bot;
-  }
-
   private createBotInstance(profile: 'NOVICE' | 'STANDARD' | 'EXPERT' = 'STANDARD'): AutoPlayBot {
-    return new AutoPlayBot({ profile, botVersion: this.useV2Bot ? 'pst' : 'behavior' });
+    return new AutoPlayBot({ profile });
   }
 
   public getDemoBot(): AutoPlayBot | null {

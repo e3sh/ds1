@@ -1,7 +1,7 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
 import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
-import { IStrategicMission, MissionStatus } from '../StrategicMission.js';
+import { IStrategicMission, MissionCompletionReason, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 
 /**
@@ -15,13 +15,17 @@ export class BootstrapSwordMission implements IStrategicMission {
   public readonly maxTurns = 120;
   public turnsElapsed = 0;
   public status: MissionStatus = 'ACTIVE';
+  public completionReason?: MissionCompletionReason;
+  public subMode: 'APPROACHING_SWORD' | 'PICKING_UP_SWORD' = 'APPROACHING_SWORD';
 
-  public evaluateStatus(_snapshot: TacticalSnapshot, engine: GameEngine): MissionStatus {
+  public evaluateStatus(snapshot: TacticalSnapshot, engine: GameEngine): MissionStatus {
     const player = engine.getPlayer();
     if (player.hasSword) {
+      this.completionReason = 'OBJECTIVE_ACHIEVED';
       return 'COMPLETED';
     }
     if (this.turnsElapsed >= this.maxTurns) {
+      this.completionReason = snapshot.stagnation?.isEarlySwordTrapped ? 'NO_PROGRESS_BLOCKED' : 'NO_PROGRESS_TIMEOUT';
       return 'FAILED';
     }
     return 'ACTIVE';
@@ -30,6 +34,7 @@ export class BootstrapSwordMission implements IStrategicMission {
   public generateDirective(snapshot: TacticalSnapshot, engine: GameEngine): StrategicDirective {
     // 序盤の剣回収前ハマり（物理的詰み）検知
     if (snapshot.stagnation.isEarlySwordTrapped) {
+      this.completionReason = 'NO_PROGRESS_BLOCKED';
       this.status = 'FAILED';
       return {
         type: 'GIVE_UP',
@@ -43,6 +48,7 @@ export class BootstrapSwordMission implements IStrategicMission {
 
     // 足元に剣がある場合は拾う
     if (map.getItem(player.pos) === 'SWORD') {
+      this.subMode = 'PICKING_UP_SWORD';
       return {
         type: 'PICKUP_ITEM',
         targetItemType: 'SWORD',
@@ -54,6 +60,7 @@ export class BootstrapSwordMission implements IStrategicMission {
     // マップ上の剣を探す (認知層のマップサマリを参照)
     const swordPos = MapSituationEvaluator.get(snapshot, engine).items.nearestSword;
     if (swordPos) {
+      this.subMode = 'APPROACHING_SWORD';
       return {
         type: 'NAVIGATE_TO_POSITION',
         targetPos: swordPos,

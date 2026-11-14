@@ -295,6 +295,7 @@ export class SpatialKnowledge {
     for (const d of deltas) {
       const spot = map.wrapPosition({ x: head.pos.x + d.dx, y: head.pos.y + d.dy });
       if (map.getBaseTile(spot) === 'WALL_STATIC') continue;
+      if (map.getBaseTile(spot) === 'GRAVE' && map.getObject(spot) === 'NONE') continue;
       if (dragon.getPartAt(spot)) continue;
 
       // 生存首のいずれかと直角隣接していないこと（ブレス直撃防止）

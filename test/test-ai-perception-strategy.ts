@@ -14,6 +14,8 @@ import { DynamicBotParameters } from '../src/ai/BotTypes.js';
 import { AdaptiveNavigator } from '../src/ai/AdaptiveNavigator.js';
 import { HarvestPowerStoneMission } from '../src/ai/strategy/missions/HarvestPowerStoneMission.js';
 import { CrownEscapeMission } from '../src/ai/strategy/missions/CrownEscapeMission.js';
+import { CashInGoldMission } from '../src/ai/strategy/missions/CashInGoldMission.js';
+import { PrepareDragonAssaultMission } from '../src/ai/strategy/missions/PrepareDragonAssaultMission.js';
 import { TacticalExecutor } from '../src/ai/tactics/TacticalExecutor.js';
 import { EightStepController } from '../src/ai/EightStepController.js';
 
@@ -961,6 +963,310 @@ console.log('Testing 9: CrownEscapeMission pre-pickup FLASH, safe temporary drop
   }
 
   console.log('✓ 9. CrownEscapeMission pre-pickup FLASH, safe temporary drop & evade verified successfully.');
+}
+
+// -------------------------------------------------------------
+// Test 10: HarvestPowerStoneMission の偽完了防止とステータス検証
+// -------------------------------------------------------------
+console.log('Testing 10: HarvestPowerStoneMission fake completion guard & STR delta verification...');
+{
+  const e10 = new GameEngine();
+  const m10 = createEmptyMap();
+  for (const h of m10.getAllHomePositions()) {
+    m10.setBaseTile(h, 'EMPTY');
+  }
+  const home10 = { x: 8, y: 8 };
+  m10.setBaseTile(home10, 'HOME');
+  m10.homePos = { ...home10 };
+  m10.setRealHomePos(home10);
+  m10.spawnHomePos = { ...home10 };
+
+  const p10 = e10.getPlayer();
+  p10.pos = { x: 15, y: 15 };
+  p10.strength = 500;
+  p10.holdItem = 'POWER_STONE';
+
+  const spatial10 = new SpatialKnowledge(m10);
+  const memory10 = new EpisodicMemory();
+  const makeSnap10 = (turn: number): TacticalSnapshot => ({
+    spatial: spatial10,
+    milestones: SituationalPerception.evaluateMilestones(p10, mockParams),
+    threats: SituationalPerception.evaluateThreats(p10, m10, [], undefined, mockParams),
+    player: {
+      pos: { ...p10.pos },
+      hp: p10.hp,
+      maxHp: p10.maxHp,
+      strength: p10.strength,
+      experience: p10.experience,
+      magic: p10.magic,
+      gold: p10.gold,
+      holdItem: p10.holdItem,
+      hasSword: p10.hasSword,
+      isFlying: p10.isFlying,
+      canDiagonal: p10.canDiagonal,
+      hasDeath: p10.hasDeath,
+      stepCountSinceStone: p10.stepCountSinceStone,
+    },
+    livingEnemies: [],
+    memory: memory10,
+    params: mockParams,
+    map: m10,
+    totalTurns: turn,
+  });
+
+  const mission10 = new HarvestPowerStoneMission({ x: 15, y: 15 });
+  assert.strictEqual(mission10.evaluateStatus(makeSnap10(1), e10), 'ACTIVE');
+  assert.strictEqual(mission10.subMode, 'DELIVERING_TO_HOME');
+
+  // 納品せずに道中でドロップ（strength = 500 のまま増加していない）
+  p10.pos = { x: 12, y: 12 };
+  p10.holdItem = 'NONE';
+  m10.setItem({ x: 12, y: 12 }, 'POWER_STONE');
+  assert.strictEqual(mission10.evaluateStatus(makeSnap10(2), e10), 'ACTIVE', '道中ドロップ時に偽の COMPLETED にならないこと');
+  assert.strictEqual(mission10.subMode, 'APPROACHING_STONE', '石再回収サブモードに戻ること');
+
+  // STR未増加のまま HOME に立っても石がマップに残っていれば再回収継続
+  p10.pos = { ...home10 };
+  assert.strictEqual(mission10.evaluateStatus(makeSnap10(3), e10), 'ACTIVE', 'strength未増加のままHOMEに居ても偽完了しないこと');
+
+  // 石がゴースト等に奪われてマップからも消失した場合
+  m10.setItem({ x: 12, y: 12 }, 'NONE');
+  assert.strictEqual(mission10.evaluateStatus(makeSnap10(4), e10), 'FAILED', '石消失時は FAILED になること');
+  assert.strictEqual(mission10.completionReason, 'TARGET_LOST', '石消失時の理由は TARGET_LOST であること');
+
+  // 正常に HOME で納品して strength が増加した場合のみ COMPLETED (OBJECTIVE_ACHIEVED)
+  const p10b = e10.getPlayer();
+  p10b.pos = { x: 15, y: 15 };
+  p10b.strength = 500;
+  p10b.holdItem = 'POWER_STONE';
+  const mission10b = new HarvestPowerStoneMission({ x: 15, y: 15 });
+  assert.strictEqual(mission10b.evaluateStatus(makeSnap10(5), e10), 'ACTIVE');
+  p10b.pos = { ...home10 };
+  p10b.holdItem = 'NONE';
+  p10b.strength = 1000;
+  assert.strictEqual(mission10b.evaluateStatus(makeSnap10(6), e10), 'COMPLETED', 'STR増加確認時のみ COMPLETED になること');
+  assert.strictEqual(mission10b.completionReason, 'OBJECTIVE_ACHIEVED');
+
+  console.log('✓ 10. HarvestPowerStoneMission fake completion guard & STR delta verified.');
+}
+
+// -------------------------------------------------------------
+// Test 11: StrategicPlanner の canTransitionToPrep チャタリング防止
+// -------------------------------------------------------------
+console.log('Testing 11: StrategicPlanner maintains CashInGold & PrepareDragonAssault without chattering...');
+{
+  const e11 = new GameEngine();
+  const m11 = createEmptyMap();
+  for (const h of m11.getAllHomePositions()) {
+    m11.setBaseTile(h, 'EMPTY');
+  }
+  const home11 = { x: 8, y: 8 };
+  m11.setBaseTile(home11, 'HOME');
+  m11.homePos = { ...home11 };
+  m11.setRealHomePos(home11);
+  m11.spawnHomePos = { ...home11 };
+
+  const p11 = e11.getPlayer();
+  p11.hasSword = true;
+  p11.strength = 30000;
+  p11.experience = 25000; // canTransitionToPrep = true
+  p11.canDiagonal = true;
+  p11.magic = 5;
+  p11.hp = 25000;
+  p11.maxHp = 25000;
+  p11.gold = 5;
+  p11.pos = { x: 20, y: 20 };
+  p11.holdItem = 'NONE';
+
+  const spatial11 = new SpatialKnowledge(m11);
+  const memory11 = new EpisodicMemory();
+  const makeSnap11 = (turn: number): TacticalSnapshot => ({
+    spatial: spatial11,
+    milestones: SituationalPerception.evaluateMilestones(p11, mockParams),
+    threats: SituationalPerception.evaluateThreats(p11, m11, [], undefined, mockParams),
+    player: {
+      pos: { ...p11.pos },
+      hp: p11.hp,
+      maxHp: p11.maxHp,
+      strength: p11.strength,
+      experience: p11.experience,
+      magic: p11.magic,
+      gold: p11.gold,
+      holdItem: p11.holdItem,
+      hasSword: p11.hasSword,
+      isFlying: p11.isFlying,
+      canDiagonal: p11.canDiagonal,
+      hasDeath: p11.hasDeath,
+      stepCountSinceStone: p11.stepCountSinceStone,
+    },
+    livingEnemies: [],
+    memory: memory11,
+    params: mockParams,
+    map: m11,
+    totalTurns: turn,
+  });
+
+  const planner11 = new StrategicPlanner();
+  const cashMission = new CashInGoldMission(5);
+  planner11.activeMission = cashMission;
+  planner11.planTurn(makeSnap11(1), e11);
+  assert.strictEqual(planner11.activeMission, cashMission, '1ターン目で CASH_IN_GOLD が強制終了されないこと');
+
+  p11.pos = { x: 19, y: 20 };
+  planner11.planTurn(makeSnap11(2), e11);
+  assert.strictEqual(planner11.activeMission, cashMission, '2ターン目も同一の CASH_IN_GOLD インスタンスが維持されること');
+  assert.strictEqual(cashMission.turnsElapsed, 2);
+  assert.strictEqual(planner11.missionHistory.length, 0);
+
+  // 換金達成 (gold = 0, experience 増加) で初めて COMPLETED (OBJECTIVE_ACHIEVED) になる
+  p11.pos = { ...home11 };
+  p11.gold = 0;
+  p11.experience = 28000;
+  planner11.planTurn(makeSnap11(3), e11);
+  assert.ok(
+    planner11.missionHistory.some(
+      h => h.missionId === 'CASH_IN_GOLD' && h.status === 'COMPLETED' && h.reason === 'OBJECTIVE_ACHIEVED'
+    ),
+    '換金達成時に OBJECTIVE_ACHIEVED として履歴記録されること'
+  );
+
+  // PrepareDragonAssaultMission もポーション回収完了まで強制リセットされないこと
+  m11.setItem({ x: 15, y: 8 }, 'POTION');
+  p11.pos = { x: 20, y: 20 };
+  p11.magic = 2;
+  const planner11b = new StrategicPlanner();
+  const prepMission = new PrepareDragonAssaultMission();
+  planner11b.activeMission = prepMission;
+  planner11b.planTurn(makeSnap11(1), e11);
+  assert.strictEqual(planner11b.activeMission, prepMission);
+  planner11b.planTurn(makeSnap11(2), e11);
+  assert.strictEqual(planner11b.activeMission, prepMission, 'PREPARE_DRAGON_ASSAULT が毎ターン強制リセットされないこと');
+  assert.strictEqual(prepMission.turnsElapsed, 2);
+
+  console.log('✓ 11. StrategicPlanner mission continuity without chattering verified.');
+}
+
+// -------------------------------------------------------------
+// Test 12: CrownEscapeMission の !canReachWithCrown 時ループ根絶
+// -------------------------------------------------------------
+console.log('Testing 12: CrownEscapeMission prevents FLASH-pickup-drop MP depletion loop when blocked...');
+{
+  // 12-A: 岩(BLOCK)閉塞時は FLASH を誤射せず BREAK 開削を維持、開通まで再拾得しない
+  const e12 = new GameEngine();
+  const d12 = e12.getDragon();
+  if (d12) {
+    d12.defeatedHeadsCount = 3;
+    d12.heads.forEach(h => (h.isAlive = false));
+  }
+  const m12 = createEmptyMap();
+  for (const h of m12.getAllHomePositions()) {
+    m12.setBaseTile(h, 'EMPTY');
+  }
+  const home12 = { x: 5, y: 10 };
+  m12.setBaseTile(home12, 'HOME');
+  m12.homePos = { ...home12 };
+  m12.setRealHomePos(home12);
+  m12.spawnHomePos = { ...home12 };
+
+  for (let y = 9; y <= 11; y++) {
+    m12.setBaseTile({ x: 4, y }, 'WALL_STATIC');
+  }
+  for (let x = 5; x <= 7; x++) {
+    m12.setBaseTile({ x, y: 9 }, 'WALL_STATIC');
+    m12.setBaseTile({ x, y: 11 }, 'WALL_STATIC');
+  }
+  m12.setObject({ x: 7, y: 10 }, 'BLOCK');
+  m12.setItem({ x: 10, y: 10 }, 'CROWN');
+
+  const p12 = e12.getPlayer();
+  p12.pos = { x: 10, y: 10 };
+  p12.holdItem = 'NONE';
+  p12.hasSword = true;
+  p12.experience = 20000;
+  p12.magic = 2; // BREAK保護下限付近
+  p12.hp = 5000;
+  p12.maxHp = 5000;
+
+  const spatial12 = new SpatialKnowledge(m12);
+  const memory12 = new EpisodicMemory();
+  const makeSnap12 = (turn: number, enemies: EnemyInstance[] = []): TacticalSnapshot => ({
+    spatial: spatial12,
+    milestones: SituationalPerception.evaluateMilestones(p12, mockParams),
+    threats: SituationalPerception.evaluateThreats(p12, m12, enemies, undefined, mockParams),
+    player: {
+      pos: { ...p12.pos },
+      hp: p12.hp,
+      maxHp: p12.maxHp,
+      strength: p12.strength,
+      experience: p12.experience,
+      magic: p12.magic,
+      gold: p12.gold,
+      holdItem: p12.holdItem,
+      hasSword: p12.hasSword,
+      isFlying: p12.isFlying,
+      canDiagonal: true,
+      hasDeath: false,
+      stepCountSinceStone: 0,
+    },
+    livingEnemies: enemies,
+    memory: memory12,
+    params: mockParams,
+    map: m12,
+    totalTurns: turn,
+  });
+
+  const mission12 = new CrownEscapeMission();
+  for (let t = 1; t <= 3; t++) {
+    const dir = mission12.generateDirective(makeSnap12(t), e12);
+    assert.notStrictEqual(dir.type, 'PICKUP_ITEM', 'BLOCK閉塞中に王冠を再拾得しないこと');
+    assert.ok(
+      !(dir.type === 'CAST_MAGIC' && dir.magicToCast === 'FLASH'),
+      'BLOCK閉塞時に無意味な FLASH を誤射しないこと'
+    );
+    assert.strictEqual(mission12.subMode, 'CLEARING_RETURN_BLOCK');
+  }
+
+  // 12-B: 危険敵閉塞時も同一座標での連続 FLASH 乱射 ＆ 拾う⇄落とすループを起こさない
+  m12.setObject({ x: 7, y: 10 }, 'NONE');
+  const blockingDemon: EnemyInstance = {
+    id: 'e-gate-demon',
+    name: 'Gate Demon',
+    type: 'SUPER_DEMON',
+    pos: { x: 6, y: 10 }, // HOME (5,10) への一本道を塞ぐ
+    hp: 1000000,
+    maxHp: 1000000,
+    atk: 30000,
+    def: 1000,
+    exp: 1000,
+    isAlive: true,
+    isPermanentlyFrozen: false,
+    frozenTimer: 0,
+  } as any;
+
+  p12.pos = { x: 10, y: 10 };
+  p12.holdItem = 'NONE';
+  p12.magic = 3;
+  const mission12b = new CrownEscapeMission();
+  const dTurn1 = mission12b.generateDirective(makeSnap12(1, [blockingDemon]), e12);
+  assert.strictEqual(dTurn1.type, 'CAST_MAGIC');
+  assert.strictEqual(dTurn1.magicToCast, 'FLASH');
+  p12.magic--; // 消費を反映
+
+  // 万一まだ未開通のまま同座標に居ても2ターン目に連続 FLASH を撃たず、王冠も誤拾得しない
+  const dTurn2 = mission12b.generateDirective(makeSnap12(2, [blockingDemon]), e12);
+  assert.ok(
+    !(dTurn2.type === 'CAST_MAGIC' && dTurn2.magicToCast === 'FLASH'),
+    '同一座標で連続 FLASH 空撃ちを行わないこと'
+  );
+  assert.notStrictEqual(dTurn2.type, 'PICKUP_ITEM', '帰還路未開通のまま王冠を拾わないこと');
+
+  // 王冠所持状態で同座標・DANGEROUS_ENEMY閉塞でも FLASH クールダウン中は無意味ドロップしない
+  p12.holdItem = 'CROWN';
+  m12.setItem({ x: 10, y: 10 }, 'NONE');
+  const dTurn3 = mission12b.generateDirective(makeSnap12(3, [blockingDemon]), e12);
+  assert.notStrictEqual(dTurn3.type, 'DROP_HOLD_ITEM', 'FLASHクールダウン中に拾う⇄落とすループへ入らないこと');
+
+  console.log('✓ 12. CrownEscapeMission anti-loop gate & FLASH cooldown verified.');
 }
 
 console.log('================================================================');

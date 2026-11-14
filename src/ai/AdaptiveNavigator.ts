@@ -119,6 +119,13 @@ export class AdaptiveNavigator {
           isLooping = true;
         }
       }
+
+      if (!isPingPong && !isLooping && rLen >= 5) {
+        const prev4 = this.recentPositions[rLen - 5];
+        if (playerPos.x === prev4.x && playerPos.y === prev4.y) {
+          isLooping = true;
+        }
+      }
     }
 
     if (isPingPong) {

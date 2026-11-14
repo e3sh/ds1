@@ -19,6 +19,11 @@ export class DirectiveArbiter {
     engine: GameEngine,
     activeMission: IStrategicMission | null
   ): StrategicDirective {
+    // 0-A. 王冠脱出モードでは内部の帰還閉塞開拓/敵スタンサブモードを尊重し、汎用ハマり調停を割り込ませない
+    if (activeMission?.id === 'CROWN_ESCAPE') {
+      return rawDirective;
+    }
+
     // 0. 袋小路拘束・孤立ハマりの能動脱出判定（最優先打開: priority 94〜99 / GIVE_UP 100）
     const incarcerationDirective = TacticalStallResolver.resolveIncarceration(snapshot, engine);
     if (incarcerationDirective) {
@@ -28,7 +33,6 @@ export class DirectiveArbiter {
     // 1. 調停をスキップすべきクリティカル状況
     if (
       activeMission?.id === 'EMERGENCY_EVACUATE' ||
-      activeMission?.id === 'CROWN_ESCAPE' ||
       activeMission?.id === 'SLAY_DRAGON' ||
       snapshot.threats.isLethalDanger ||
       rawDirective.type === 'UNLOCK_CHEST_8STEP' ||

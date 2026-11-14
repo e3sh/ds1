@@ -55,36 +55,11 @@ export class TacticalExecutor {
     const dragon = engine.getDragon();
     const params = snapshot.params;
 
-    // 0. スワップ中の処理があれば最優先で継続
-    if (this.swapState.itemToPickupPos !== null || this.swapState.tempDroppedKeyPos !== null) {
-      const swapRes = ItemSwapTactics.execute(player, map, enemies, dragon, this.nav, params, this.swapState);
-      if (swapRes) {
-        return {
-          action: this.resolveMoveOrBreak(swapRes.action, player, map),
-          description: swapRes.description,
-          status: 'SUCCESS',
-        };
-      }
-    }
-
-    // 0-A. 8歩周期チェーン実行中の処理（最優先で同期移動を継続）
-    if (this.eightStepController.eightStepTargetChestPos !== null) {
-      const targetChestPos = { ...this.eightStepController.eightStepTargetChestPos };
-      const eightStepAction = this.eightStepController.handleEightStepCycle(player, map, enemies, dragon);
-      if (eightStepAction) {
-        return {
-          action: this.resolveMoveOrBreak(eightStepAction, player, map),
-          description: `📦 8歩周期調整 [歩数:${player.stepCountSinceStone}/8] -> 宝箱(${targetChestPos.x}, ${targetChestPos.y})`,
-          status: 'SUCCESS',
-        };
-      }
-    }
-
-    if (player.holdItem === 'POWER_STONE') {
+    if (player.holdItem === 'POWER_STONE' || directive.type !== 'UNLOCK_CHEST_8STEP') {
       this.eightStepController.clearEightStepState();
     }
 
-    // 0-A. アイテム一時置きスワップの継続（最優先実行）
+    // 0. アイテム一時置きスワップの継続（最優先実行）
     if (this.swapState.itemToPickupPos !== null || this.swapState.tempDroppedKeyPos !== null) {
       if (player.holdItem === 'POWER_STONE') {
         // パワーストーン回収完了時はスワップを終了して我家奉納へ
@@ -103,21 +78,46 @@ export class TacticalExecutor {
       }
     }
 
+    // 0-A. 8歩周期チェーン実行中の処理（同期移動を継続）
+    if (this.eightStepController.eightStepTargetChestPos !== null) {
+      const targetChestPos = { ...this.eightStepController.eightStepTargetChestPos };
+      const eightStepAction = this.eightStepController.handleEightStepCycle(player, map, enemies, dragon);
+      if (eightStepAction) {
+        return {
+          action: this.resolveMoveOrBreak(eightStepAction, player, map),
+          description: `📦 8歩周期調整 [歩数:${player.stepCountSinceStone}/8] -> 宝箱(${targetChestPos.x}, ${targetChestPos.y})`,
+          status: 'SUCCESS',
+        };
+      }
+    }
+
     // 0-B. 直角隣接の即死・危険敵に対する緊急自衛FREEZE / FLASH
     // ※前線基地近傍（チェビシェフ<=2）またはディレクティブ方針では進入路封鎖を防ぐためFLASHを優先し、FREEZEは抑止
     // ※BREAK用 MP=1 温存: BREAK解禁済み(EXP>=4000)では MP>1 の時のみ自衛魔法を許可（退避方向がなく即死する場合を除く）
+    const targetPos = directive.type === 'ATTACK_TARGET' ? directive.targetPos : undefined;
+    const isDirectOneShotAttack =
+      targetPos !== undefined &&
+      map.getTorusDistance(player.pos, targetPos).manhattan === 1 &&
+      enemies.some(enemy => {
+        if (!enemy.isAlive || enemy.pos.x !== targetPos.x || enemy.pos.y !== targetPos.y) return false;
+        return ThreatEvaluator.evaluateThreatDetails(player, enemy).attackThreat === 'ONE_SHOT';
+      });
     const evadeDirForSelfDefense = this.nav.findEvadeDirection(player.pos, map, enemies, player, dragon);
     const canSpendForSelfDefense = !player.hasDeath && (player.magic > 1 || (player.experience < 4000 && player.magic > 0) || !evadeDirForSelfDefense);
     if (canSpendForSelfDefense) {
       const isNearEscapeHome = map.getTorusDistance(player.pos, map.realHomePos).chebyshev <= 2;
       const shouldDisallowFreeze = directive.policy?.disallowFreezeNearHome || isNearEscapeHome;
       const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
+
       const hasAdjacentDangerous = cardDirs.some(d => {
         const np = map.wrapPosition(MovementSystem.getNextPosition(player.pos, d));
         const e = enemies.find(
           enemy => enemy.isAlive && !enemy.isPermanentlyFrozen && (enemy.frozenTimer ?? 0) <= 0 && enemy.pos.x === np.x && enemy.pos.y === np.y
         );
         if (!e) return false;
+        if (isDirectOneShotAttack && targetPos && e.pos.x === targetPos.x && e.pos.y === targetPos.y) {
+          return false;
+        }
         const details = ThreatEvaluator.evaluateThreatDetails(player, e);
         return details.defenseThreat === 'LETHAL' || (details.defenseThreat === 'TAKES_DAMAGE' && (details.damageToPlayer >= player.hp * 0.35 || details.attackThreat !== 'ONE_SHOT'));
       });
@@ -127,28 +127,32 @@ export class TacticalExecutor {
           return {
             action: { type: 'MAGIC', magic: 'FLASH' },
             description: '⚡ 緊急自衛: 前線基地近傍・方針に従いFLASHスタン（進入路封鎖抑止）',
-            status: 'SUCCESS',
+            status: 'STALLED',
           };
         }
         if (!shouldDisallowFreeze && MagicSystem.canCast(player, 'FREEZE').allowed) {
           return {
             action: { type: 'MAGIC', magic: 'FREEZE' },
             description: '❄️ 緊急自衛: 直角隣接の危険敵をFREEZE無力化',
-            status: 'SUCCESS',
+            status: 'STALLED',
           };
         }
         if (MagicSystem.canCast(player, 'FLASH').allowed) {
           return {
             action: { type: 'MAGIC', magic: 'FLASH' },
             description: '⚡ 緊急自衛: 直角隣接の危険敵をFLASHスタン',
-            status: 'SUCCESS',
+            status: 'STALLED',
           };
         }
       }
     }
 
-    // 0-C. 膠着・周回（カルーセルループ）の能動打開（王冠脱出中は除外）
-    if (this.nav.oscillationCount >= 2 || snapshot.memory.pingPongCount >= 2) {
+    // 0-C. 膠着・周回（カルーセルループ）の能動打開（王冠脱出フェーズおよび致死敵への一撃必殺攻撃中は除外）
+    const isCrownEscapePhase =
+      Boolean(dragon && (dragon.isAllHeadsDefeated || dragon.heads.every(h => !h.isAlive))) ||
+      player.holdItem === 'CROWN' ||
+      map.getItem(player.pos) === 'CROWN';
+    if (!isCrownEscapePhase && !isDirectOneShotAttack && (this.nav.oscillationCount >= 2 || snapshot.memory.pingPongCount >= 2)) {
       const circlingAction = TacticalCombat.tryBreakCirclingLoop(player, map, enemies, dragon, this.nav, params);
       if (circlingAction) {
         return {
@@ -187,7 +191,7 @@ export class TacticalExecutor {
         return this.executeDropItem(player, map, enemies, dragon, params);
 
       case 'SWAP_KEY_FOR_ITEM':
-        return this.initiateSwap(directive, player, map, enemies, dragon, params);
+        return this.initiateSwap(directive, player, map, enemies, dragon, params, snapshot);
 
       case 'SEAL_GRAVE_STEP':
         return this.executeSealGraveStep(directive, player, map, enemies, dragon, params, snapshot);
@@ -206,7 +210,7 @@ export class TacticalExecutor {
             return {
               action: this.resolveMoveOrBreak(wander, player, map),
               description: `🛡️ MP=1リザーブ保護（BREAK維持）のため詠唱見送り: ${directive.reason}`,
-              status: 'SUCCESS',
+              status: 'STALLED',
             };
           }
 
@@ -302,6 +306,42 @@ export class TacticalExecutor {
       };
     }
 
+    // 王冠運搬帰還時フォールバック: 近傍（Chebyshev <= 3）以外の遠方敵の脅威制限を緩めて接近経路を確保（接近後にFLASH突破）
+    if (isTargetHome && player.holdItem === 'CROWN') {
+      const nearEnemies = enemies.filter(
+        e => e.isAlive && map.getTorusDistance(player.pos, e.pos).chebyshev <= 3
+      );
+      const relaxDir = this.nav.findPath(player.pos, targetPos, map, player, nearEnemies, params, {
+        dragon,
+        isEscapePhase,
+      });
+      if (relaxDir) {
+        const dist = map.getTorusDistance(player.pos, targetPos).manhattan;
+        const action = this.resolveMoveOrBreak({ type: 'MOVE', dir: relaxDir }, player, map);
+        return {
+          action,
+          description: `👑 近傍脅威回避帰還 -> (${targetPos.x}, ${targetPos.y}) [距離:${dist}]: ${directive.reason}`,
+          status: 'SUCCESS',
+        };
+      }
+    }
+
+    // ドラゴン要塞突入フォールバック: 入口が火線と交差して火線回避経路がない場合は火線制限を外して再探索
+    const isDragonAssaultTarget =
+      Boolean(snapshot.dragon?.heads.some(h => h.isAlive && h.attackSpots.some(s => s.x === targetPos.x && s.y === targetPos.y))) ||
+      Boolean(directive.reason?.includes('ドラゴン'));
+    if (isDragonAssaultTarget) {
+      const fallbackDir = this.nav.findPath(player.pos, targetPos, map, player, enemies, params);
+      if (fallbackDir) {
+        const dist = map.getTorusDistance(player.pos, targetPos).manhattan;
+        return {
+          action: this.resolveMoveOrBreak({ type: 'MOVE', dir: fallbackDir }, player, map),
+          description: `🐉 火線突破アプローチ -> (${targetPos.x}, ${targetPos.y}) [距離:${dist}]: ${directive.reason}`,
+          status: 'SUCCESS',
+        };
+      }
+    }
+
     // 我が家への徒歩経路が完全に塞がれている場合のみ緊急RETURNで脱出
     if (isTargetHome && player.holdItem !== 'CROWN') {
       if (MagicSystem.canCast(player, 'RETURN').allowed && !player.isFlying) {
@@ -316,10 +356,10 @@ export class TacticalExecutor {
 
     // 経路が見つからない場合:
     // 我が家(HOME)は最終帰還先であるため絶対にブラックリスト化しない。
-    // 王冠(CROWN)は岩開削や敵移動で数ターン後に到達可能になる可能性があるため短期(6T)に留める。
+    // 王冠(CROWN)は岩開削や敵移動で数ターン後に到達可能になる可能性があるため短期(6T)、その他も早期再試行のため15Tに留める。
     if (!isTargetHome) {
       const isTargetCrown = directive.targetItemType === 'CROWN' || map.getItem(targetPos) === 'CROWN';
-      const blacklistTurns = isTargetCrown ? 6 : 120;
+      const blacklistTurns = isTargetCrown ? 6 : (player.experience < 4000 ? 80 : 45);
       this.nav.markTargetUnreachable(targetPos, blacklistTurns);
       snapshot.memory.markTargetUnreachable(targetPos, blacklistTurns, snapshot.totalTurns);
     }
@@ -443,13 +483,34 @@ export class TacticalExecutor {
   ): TacticalExecutionResult {
     const chestPos = directive.targetPos!;
     const curPos = player.pos;
+
+    // 0. 8歩周期同期コントローラによる最優先チェイン判定（0 <= stepCountSinceStone <= 6）
+    if (player.holdItem === 'KEY' && player.stepCountSinceStone <= 6 && dragon && !this.eightStepController.eightStepTargetChestPos) {
+      const cycleTarget = this.eightStepController.findNearbyChestForEightStepCycle(curPos, map, enemies, dragon, player);
+      if (cycleTarget) {
+        this.eightStepController.eightStepTargetChestPos = { ...cycleTarget.chestPos };
+        this.eightStepController.eightStepOriginPos = { ...curPos };
+        this.eightStepController.eightStepPivotPos = { ...cycleTarget.pivotPos };
+        this.eightStepController.eightStepWaitPos = { ...cycleTarget.waitPos };
+        this.eightStepController.eightStepPathToPivot = cycleTarget.pathToPivot.map(p => ({ ...p }));
+        const eightStepAction = this.eightStepController.handleEightStepCycle(player, map, enemies, dragon);
+        if (eightStepAction) {
+          return {
+            action: this.resolveMoveOrBreak(eightStepAction, player, map),
+            description: `📦 8歩周期同期開始 [歩数:${player.stepCountSinceStone}/8] -> 宝箱(${cycleTarget.chestPos.x}, ${cycleTarget.chestPos.y})`,
+            status: 'SUCCESS',
+          };
+        }
+      }
+    }
+
     const isAtChest = curPos.x === chestPos.x && curPos.y === chestPos.y;
     const dist = map.getTorusDistance(curPos, chestPos).manhattan;
 
     // 1. 宝箱マスにいる場合
     if (isAtChest) {
       const S = player.stepCountSinceStone;
-      if (S >= 8 || this.pivotTurns >= 8) {
+      if (S >= 8 || this.pivotTurns >= 8 || (8 - S) % 2 !== 0) {
         this.pivotTurns = 0;
         const note = S === 8 ? '8/8 確定' : `${S}歩`;
         return {
@@ -459,7 +520,7 @@ export class TacticalExecutor {
         };
       }
 
-      // 歩数不足 (S < 8): 隣接安全ピボット移動
+      // 歩数不足 (S < 8 かつパリティ一致: 残り偶数歩): 隣接安全ピボット移動
       const safePivotDir = this.findAdjacentSafePivot(curPos, map, enemies, dragon, player);
       if (safePivotDir) {
         this.pivotTurns++;
@@ -495,8 +556,8 @@ export class TacticalExecutor {
         }
       }
 
-      if (S < 7) {
-        // 歩数稼ぎピボット往復
+      if (S < 7 && (7 - S) % 2 === 0) {
+        // パリティが合う場合 (S = 1, 3, 5) のみ歩数稼ぎピボット往復
         const safePivotDir = this.findAdjacentSafePivot(curPos, map, enemies, dragon, player, chestPos);
         if (safePivotDir) {
           this.nav.resetPingPong();
@@ -508,7 +569,7 @@ export class TacticalExecutor {
         }
       }
 
-      // S >= 8 の場合は躊躇せず宝箱マスへ進入
+      // S >= 8 またはパリティ不一致 (S = 0, 2, 4, 6) の場合は躊躇せず宝箱マスへ進入
       const dir = this.nav.getAdjacentDirection(curPos, chestPos, map);
       if (dir) {
         return {
@@ -605,7 +666,7 @@ export class TacticalExecutor {
     map: WorldMap,
     enemies: EnemyInstance[],
     dragon: Dragon | undefined,
-    _params: DynamicBotParameters
+    params: DynamicBotParameters
   ): TacticalExecutionResult {
     const curPos = player.pos;
     const isFireLine = dragon && this.nav.isDragonFireLine(curPos, dragon, map);
@@ -614,7 +675,8 @@ export class TacticalExecutor {
                         map.getObject(curPos) === 'NONE' &&
                         map.getBaseTile(curPos) !== 'WALL_STATIC' &&
                         map.getBaseTile(curPos) !== 'WARP' &&
-                        map.getBaseTile(curPos) !== 'GRAVE';
+                        map.getBaseTile(curPos) !== 'GRAVE' &&
+                        map.getBaseTile(curPos) !== 'HOME';
 
     if (canDropHere) {
       return {
@@ -624,10 +686,12 @@ export class TacticalExecutor {
       };
     }
 
-    const safeDir = ItemSwapTactics.findAdjacentDropTile(curPos, map, enemies, dragon, player, this.nav);
+    const safeDir =
+      ItemSwapTactics.findAdjacentDropTile(curPos, map, enemies, dragon, player, this.nav) ??
+      ItemSwapTactics.findNearestDropTileStep(curPos, map, enemies, dragon, player, params, this.nav);
     if (safeDir) {
       return {
-        action: { type: 'MOVE', dir: safeDir },
+        action: this.resolveMoveOrBreak({ type: 'MOVE', dir: safeDir }, player, map),
         description: `📦 所持品を置くため安全マスへ移動 [${player.holdItem}]`,
         status: 'SUCCESS',
       };
@@ -636,7 +700,7 @@ export class TacticalExecutor {
     return {
       action: { type: 'WAIT' },
       description: '所持品を置く安全マスを待機',
-      status: 'SUCCESS',
+      status: 'STALLED',
     };
   }
 
@@ -649,7 +713,8 @@ export class TacticalExecutor {
     map: WorldMap,
     enemies: EnemyInstance[],
     dragon: Dragon | undefined,
-    params: DynamicBotParameters
+    params: DynamicBotParameters,
+    snapshot?: TacticalSnapshot
   ): TacticalExecutionResult {
     if (this.swapState.itemToPickupPos === null) {
       this.swapState.itemToPickupPos = { ...player.pos };
@@ -666,7 +731,9 @@ export class TacticalExecutor {
       };
     }
 
-    // スワップ不能（隣接空き床不在等）の場合は無効なSPACE連打を防ぐためリセットして安全移動
+    // スワップ不能（空き床不在・経路遮断等）の場合は2マス往復ループを防ぐため到達不能登録しリセットして安全移動
+    this.nav.markTargetUnreachable(player.pos, 20);
+    snapshot?.memory.markTargetUnreachable(player.pos, 20, snapshot.totalTurns);
     this.swapState.itemToPickupPos = null;
     this.swapState.tempDroppedKeyPos = null;
     this.swapState.swapTurns = 0;
@@ -751,12 +818,21 @@ export class TacticalExecutor {
   ): TacticalExecutionResult {
     const targetPos = directive.targetPos!;
 
-    // 1. 直角隣接または斜め隣接している場合 -> Bump Attack 実行！
-    const adj8Dir = this.nav.get8WayAdjacentDirection(player.pos, targetPos, map);
-    if (adj8Dir) {
+    // 1. 隣接（ドラゴンの首に対して斜め解禁時のみ8方向、一般敵は直交4方向のみ）している場合 -> Bump Attack 実行！
+    // ※一般敵への斜め移動による攻撃は仕様上不可（return false で空振りになる）のため、直交隣接マスへ回り込む。
+    const dragonPart = dragon?.getPartAt(targetPos);
+    const isDragonHead =
+      dragonPart !== null &&
+      dragonPart !== undefined &&
+      (dragonPart.type === 'LEFT_HEAD' || dragonPart.type === 'CENTER_HEAD' || dragonPart.type === 'RIGHT_HEAD');
+    const allowDiagAttack = isDragonHead && (player.canDiagonal || player.experience >= 12000);
+    const adjDir = allowDiagAttack
+      ? this.nav.get8WayAdjacentDirection(player.pos, targetPos, map)
+      : this.nav.getAdjacentDirection(player.pos, targetPos, map);
+    if (adjDir) {
       return {
-        action: { type: 'MOVE', dir: adj8Dir },
-        description: `⚔️ 隣接・斜め攻撃実行 -> (${targetPos.x}, ${targetPos.y}) [${adj8Dir}]: ${directive.reason}`,
+        action: { type: 'MOVE', dir: adjDir },
+        description: `⚔️ 隣接・斜め攻撃実行 -> (${targetPos.x}, ${targetPos.y}) [${adjDir}]: ${directive.reason}`,
         status: 'SUCCESS',
       };
     }
@@ -824,12 +900,23 @@ export class TacticalExecutor {
     for (const d of cardDirs) {
       const np = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
       if (excludePos && np.x === excludePos.x && np.y === excludePos.y) continue;
-      if (map.getBaseTile(np) === 'WALL_STATIC') continue;
-      if (map.getObject(np) === 'BLOCK') continue;
-      if (dragon && this.nav.isDragonFireLine(np, dragon, map)) continue;
+      const baseTile = map.getBaseTile(np);
+      if (baseTile === 'WALL_STATIC' || baseTile === 'HOME') continue;
+      const obj = map.getObject(np);
+      if (obj === 'BLOCK' || obj === 'GRAVE' || obj === 'WARP') continue;
+      if (dragon && (this.nav.isDragonFireLine(np, dragon, map) || dragon.getPartAt(np))) continue;
 
       const hasEnemy = enemies.some(e => e.isAlive && e.pos.x === np.x && e.pos.y === np.y);
       if (hasEnemy) continue;
+
+      const hasDangerAdj = enemies.some(e => {
+        if (!e.isAlive || e.isPermanentlyFrozen || e.frozenTimer > 0) return false;
+        const dist = map.getTorusDistance(np, e.pos).manhattan;
+        if (dist > 1) return false;
+        const details = ThreatEvaluator.evaluateThreatDetails(_player, e);
+        return details.defenseThreat === 'LETHAL' || details.damageToPlayer >= _player.hp * 0.35;
+      });
+      if (hasDangerAdj) continue;
 
       return d;
     }

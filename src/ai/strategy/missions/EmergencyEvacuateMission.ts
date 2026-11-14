@@ -1,6 +1,6 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
-import { IStrategicMission, MissionStatus } from '../StrategicMission.js';
+import { IStrategicMission, MissionCompletionReason, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 import { MagicSystem } from '../../../systems/MagicSystem.js';
 
@@ -15,14 +15,18 @@ export class EmergencyEvacuateMission implements IStrategicMission {
   public readonly maxTurns = 30;
   public turnsElapsed = 0;
   public status: MissionStatus = 'ACTIVE';
+  public completionReason?: MissionCompletionReason;
+  public subMode: 'CASTING_ESCAPE' | 'EVADING_DANGER' = 'EVADING_DANGER';
 
   public evaluateStatus(snapshot: TacticalSnapshot, _engine: GameEngine): MissionStatus {
     // 致命的危機が解除されたか判定
     if (!snapshot.threats.isLethalDanger && !snapshot.threats.isPinchHp) {
+      this.completionReason = 'OBJECTIVE_ACHIEVED';
       return 'COMPLETED';
     }
 
     if (this.turnsElapsed >= this.maxTurns) {
+      this.completionReason = 'NO_PROGRESS_TIMEOUT';
       return 'ABORTED';
     }
 
@@ -44,6 +48,7 @@ export class EmergencyEvacuateMission implements IStrategicMission {
 
     if (isTrappedOrMultiLethal && player.holdItem !== 'CROWN') {
       if (distToNearestHome > 2 && MagicSystem.canCast(player, 'RETURN').allowed && !player.isFlying) {
+        this.subMode = 'CASTING_ESCAPE';
         return {
           type: 'CAST_MAGIC',
           magicToCast: 'RETURN',
@@ -52,6 +57,7 @@ export class EmergencyEvacuateMission implements IStrategicMission {
         };
       }
       if (MagicSystem.canCast(player, 'JUMP').allowed) {
+        this.subMode = 'CASTING_ESCAPE';
         return {
           type: 'CAST_MAGIC',
           magicToCast: 'JUMP',
@@ -62,6 +68,7 @@ export class EmergencyEvacuateMission implements IStrategicMission {
     }
 
     // 2. 危険マスからの離脱・戦術層自衛（FREEZE/KICK/回避/BREAK徒歩帰還）へ委譲
+    this.subMode = 'EVADING_DANGER';
     return {
       type: 'EVADE_DANGER',
       priority: 95,

@@ -1,8 +1,8 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
 import { StrategicDirective } from '../StrategicDirective.js';
-import { Position } from '../../../models/Types.js';
 import { ThreatEvaluator } from '../../../systems/ThreatEvaluator.js';
+import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
 
 /**
  * OpportunisticEvaluator (並行基本行動評価モジュール)
@@ -42,59 +42,17 @@ export class OpportunisticEvaluator {
       };
     }
 
-    // B. 近傍にあるアイテム（STR達成後のEXP育成期は探索半径を拡大）
-    let bestItemPos: Position | null = null;
-    let bestItemType: string | null = null;
-    let bestDist = Infinity;
-
-    const isExpFarming = player.strength >= snapshot.params.targetStr && player.experience < (snapshot.params.targetDefenseExp ?? 35000);
-    const maxSearchDist = isExpFarming ? Math.min(8, snapshot.params.coinSearchDist ?? 8) : 3;
-    for (let dy = -maxSearchDist; dy <= maxSearchDist; dy++) {
-      for (let dx = -maxSearchDist; dx <= maxSearchDist; dx++) {
-        const manhattan = Math.abs(dx) + Math.abs(dy);
-        if (manhattan < 1 || manhattan > maxSearchDist) continue;
-
-        const checkPos = map.wrapPosition({ x: pPos.x + dx, y: pPos.y + dy });
-        if (snapshot.memory.isTargetUnreachable(checkPos, snapshot.totalTurns)) continue;
-
-        const item = map.getItem(checkPos);
-        if (item !== 'COIN' && item !== 'POTION') continue;
-        if (item === 'POTION' && player.magic >= snapshot.params.maxTargetMagic) continue;
-
-        // 安全性チェック: 敵が重なっていないか
-        const enemyOnSpot = snapshot.livingEnemies.some(
-          e => e.isAlive && e.pos.x === checkPos.x && e.pos.y === checkPos.y
-        );
-        if (enemyOnSpot) continue;
-
-        // 安全性チェック: 即死級敵の直角隣接でないか
-        const isNearLethal = snapshot.threats.adjacentLethalEnemies.length > 0;
-        if (isNearLethal) continue;
-
-        // 壁や岩で塞がれていないか
-        if (map.getBaseTile(checkPos) === 'WALL_STATIC' || map.getObject(checkPos) === 'BLOCK') continue;
-
-        // POTION を COIN より優先（POTIONならスコアボーナス）
-        const score = manhattan - (item === 'POTION' ? 0.5 : 0);
-        if (score < bestDist) {
-          bestDist = score;
-          bestItemPos = checkPos;
-          bestItemType = item;
-        }
-      }
-    }
-
-    if (bestItemPos && bestItemType) {
-      // 手ぶら歩行時は至近のPOTION/COINを主作戦移動(85)より優先して確実に回収
-      // 距離1=88, 距離2=87, 距離3=86
-      const integerDist = Math.ceil(bestDist);
-      const priority = 89 - integerDist;
+    // B. 近傍にあるアイテム（認知層の P 層観測結果を参照し、S 層での空間走査ループを排除）
+    const bestCandidate = MapSituationEvaluator.get(snapshot, engine).items.bestOpportunisticItem;
+    if (bestCandidate) {
+      const integerDist = Math.ceil(bestCandidate.dist);
+      const priority = 90 - integerDist;
       return {
         type: 'NAVIGATE_TO_POSITION',
-        targetPos: bestItemPos,
-        targetItemType: bestItemType,
+        targetPos: bestCandidate.pos,
+        targetItemType: bestCandidate.type,
         priority,
-        reason: `動線近傍の [${bestItemType === 'POTION' ? '魔法の壺(MP回復)' : '金貨'}] (${bestItemPos.x}, ${bestItemPos.y}) を能動回収 [距離:${integerDist}]`,
+        reason: `動線近傍の [${bestCandidate.type === 'POTION' ? '魔法の壺(MP回復)' : '金貨'}] (${bestCandidate.pos.x}, ${bestCandidate.pos.y}) を能動回収 [距離:${integerDist}]`,
       };
     }
 

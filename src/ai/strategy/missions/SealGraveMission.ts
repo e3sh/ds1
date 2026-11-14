@@ -1,6 +1,6 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
-import { IStrategicMission, MissionStatus } from '../StrategicMission.js';
+import { IStrategicMission, MissionCompletionReason, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 import { Position } from '../../../models/Types.js';
 
@@ -16,6 +16,8 @@ export class SealGraveMission implements IStrategicMission {
   public readonly maxTurns = 60;
   public turnsElapsed = 0;
   public status: MissionStatus = 'ACTIVE';
+  public completionReason?: MissionCompletionReason;
+  public subMode: 'PUSHING_BLOCK' | 'MOVING_TO_CHOKE' = 'PUSHING_BLOCK';
 
   constructor(private readonly gravePos: Position) {
     this.name = `🪦 墓パズル封鎖作戦 (${gravePos.x}, ${gravePos.y})`;
@@ -27,20 +29,39 @@ export class SealGraveMission implements IStrategicMission {
     );
 
     if (!puzzle || puzzle.isSealed) {
+      this.completionReason = 'OBJECTIVE_ACHIEVED';
       return 'COMPLETED';
+    }
+
+    const map = snapshot.map;
+    const hasExecutablePush = puzzle.recommendedPushes.some(
+      push =>
+        map.getObject(push.blockPos) === 'BLOCK' &&
+        !snapshot.memory.isTargetUnreachable(push.blockPos, snapshot.totalTurns)
+    );
+    if (!hasExecutablePush) {
+      snapshot.memory.markTargetUnreachable(this.gravePos, 300, snapshot.totalTurns);
+      this.completionReason = 'NO_PROGRESS_BLOCKED';
+      return 'ABORTED';
     }
 
     // 墓そのもの、または封鎖ターゲットへの経路が遮断されている場合は早期アボート
     if (snapshot.memory.isTargetUnreachable(this.gravePos, snapshot.totalTurns)) {
+      this.completionReason = 'NO_PROGRESS_BLOCKED';
       return 'ABORTED';
     }
 
     if (this.turnsElapsed >= this.maxTurns) {
       snapshot.memory.markTargetUnreachable(this.gravePos, 300, snapshot.totalTurns);
+      this.completionReason = 'NO_PROGRESS_TIMEOUT';
       return 'ABORTED';
     }
 
     return 'ACTIVE';
+  }
+
+  public onAborted(snapshot: TacticalSnapshot): void {
+    snapshot.memory.markTargetUnreachable(this.gravePos, 300, snapshot.totalTurns);
   }
 
   public generateDirective(snapshot: TacticalSnapshot, _engine: GameEngine): StrategicDirective {
@@ -58,6 +79,7 @@ export class SealGraveMission implements IStrategicMission {
     for (const push of puzzle.recommendedPushes) {
       const currentObj = map.getObject(push.blockPos);
       if (currentObj === 'BLOCK') {
+        this.subMode = 'PUSHING_BLOCK';
         return {
           type: 'SEAL_GRAVE_STEP',
           pushBlockPos: push.blockPos,
@@ -69,24 +91,13 @@ export class SealGraveMission implements IStrategicMission {
       }
     }
 
-    // 2. 封鎖ターゲットマス（開口部）への移動
-    for (const targetPos of puzzle.sealTargetPositions) {
-      const obj = map.getObject(targetPos);
-      const base = map.getBaseTile(targetPos);
-      if (obj !== 'BLOCK' && base !== 'WALL_STATIC') {
-        return {
-          type: 'NAVIGATE_TO_POSITION',
-          targetPos,
-          priority: 80,
-          reason: `墓封鎖チョークポイントへ移動 (${targetPos.x}, ${targetPos.y})`,
-        };
-      }
-    }
-
+    // 3. 実行可能なプッシュ対象ブロックがない場合は早期アボート
+    this.completionReason = 'NO_PROGRESS_BLOCKED';
+    this.status = 'ABORTED';
     return {
       type: 'WANDER_SAFELY',
       priority: 10,
-      reason: '墓封鎖ターゲットを探索中',
+      reason: '実行可能な墓封鎖ブロックが存在しないため作戦中断',
     };
   }
 }
