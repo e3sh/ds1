@@ -1,5 +1,6 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
+import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
 import { IStrategicMission, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 import { Direction, Position } from '../../../models/Types.js';
@@ -53,7 +54,7 @@ export class RelocateHomeMission implements IStrategicMission {
 
     // 2. RINGを持っていない場合、RINGを拾いに行く
     if (player.holdItem !== 'RING') {
-      const ringPos = this.findNearestRing(player.pos, map, snapshot);
+      const ringPos = MapSituationEvaluator.get(snapshot, engine).items.nearestRing;
       if (ringPos) {
         if (player.pos.x === ringPos.x && player.pos.y === ringPos.y) {
           return {
@@ -105,23 +106,7 @@ export class RelocateHomeMission implements IStrategicMission {
     };
   }
 
-  private findNearestRing(from: Position, map: WorldMap, snapshot: TacticalSnapshot): Position | null {
-    let nearest: Position | null = null;
-    let minDist = Infinity;
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        const p = { x, y };
-        if (map.getItem(p) === 'RING' && !snapshot.memory.isTargetUnreachable(p, snapshot.totalTurns)) {
-          const d = map.getTorusDistance(from, p).manhattan;
-          if (d < minDist) {
-            minDist = d;
-            nearest = p;
-          }
-        }
-      }
-    }
-    return nearest;
-  }
+
 
   private calculatePushDir(home: Position, anchor: Position, map: WorldMap): Direction | null {
     let dx = anchor.x - home.x;

@@ -14,6 +14,8 @@ import { DynamicBotParameters } from '../src/ai/BotTypes.js';
 import { AdaptiveNavigator } from '../src/ai/AdaptiveNavigator.js';
 import { HarvestPowerStoneMission } from '../src/ai/strategy/missions/HarvestPowerStoneMission.js';
 import { CrownEscapeMission } from '../src/ai/strategy/missions/CrownEscapeMission.js';
+import { TacticalExecutor } from '../src/ai/tactics/TacticalExecutor.js';
+import { EightStepController } from '../src/ai/EightStepController.js';
 
 console.log('================================================================');
 console.log('  Testing PST Step 1: Perception & Strategic Planner Units     ');
@@ -714,6 +716,249 @@ console.log('Testing 9: CrownEscapeMission pre-pickup FLASH, safe temporary drop
   };
   const evadeDir = escapeMission.generateDirective(adjacentLethalSnapshot, engine);
   assert.strictEqual(evadeDir.type, 'EVADE_DANGER', '隣接即死敵に対して自殺ドロップを絶対防止し緊急退避すること');
+
+  // 9-5. 遠方岩開削ロックによるピンポン防止
+  {
+    const e95 = new GameEngine();
+    const d95 = e95.getDragon();
+    if (d95) {
+      d95.defeatedHeadsCount = 3;
+      d95.heads.forEach(h => (h.isAlive = false));
+    }
+    const m95 = createEmptyMap();
+    for (const h of m95.getAllHomePositions()) {
+      m95.setBaseTile(h, 'EMPTY');
+    }
+    const home95 = { x: 5, y: 10 };
+    m95.setBaseTile(home95, 'HOME');
+    m95.homePos = { ...home95 };
+    m95.setRealHomePos(home95);
+    m95.spawnHomePos = { ...home95 };
+
+    // (5,10) と (6,10) を WALL_STATIC で囲み、唯一の入口 (7,10) にのみ BLOCK を配置
+    for (let y = 9; y <= 11; y++) {
+      m95.setBaseTile({ x: 4, y }, 'WALL_STATIC');
+    }
+    for (let x = 5; x <= 7; x++) {
+      m95.setBaseTile({ x, y: 9 }, 'WALL_STATIC');
+      m95.setBaseTile({ x, y: 11 }, 'WALL_STATIC');
+    }
+    m95.setObject({ x: 7, y: 10 }, 'BLOCK');
+    m95.setItem({ x: 10, y: 10 }, 'CROWN');
+
+    const p95 = e95.getPlayer();
+    p95.pos = { x: 10, y: 10 };
+    p95.holdItem = 'NONE';
+    p95.hasSword = true;
+    p95.experience = 20000;
+    p95.magic = 5;
+    p95.hp = 1000;
+    p95.maxHp = 1000;
+
+    const spatial95 = new SpatialKnowledge(m95);
+    const memory95 = new EpisodicMemory();
+    const mission95 = new CrownEscapeMission();
+
+    const makeSnap95 = (turn: number): TacticalSnapshot => ({
+      spatial: spatial95,
+      milestones: SituationalPerception.evaluateMilestones(p95, mockParams),
+      threats: SituationalPerception.evaluateThreats(p95, m95, [], undefined, mockParams),
+      player: {
+        pos: { ...p95.pos },
+        hp: p95.hp,
+        maxHp: p95.maxHp,
+        strength: p95.strength,
+        experience: p95.experience,
+        magic: p95.magic,
+        gold: p95.gold,
+        holdItem: p95.holdItem,
+        hasSword: p95.hasSword,
+        isFlying: p95.isFlying,
+        canDiagonal: true,
+        hasDeath: false,
+        stepCountSinceStone: 0,
+      },
+      livingEnemies: [],
+      memory: memory95,
+      params: mockParams,
+      map: m95,
+      totalTurns: turn,
+    });
+
+    const dirTurn1 = mission95.generateDirective(makeSnap95(1), e95);
+    assert.strictEqual(dirTurn1.type, 'BREACH_SHORTCUT', '直通路がない場合は王冠の上で BREACH_SHORTCUT を指示すること');
+    assert.deepStrictEqual(dirTurn1.targetPos, { x: 7, y: 10 }, '開削対象が (7, 10) であること');
+
+    // 次ターン: プレイヤーが (9, 10) へ 1歩前進（王冠から離脱、まだ岩は未破壊）
+    p95.pos = { x: 9, y: 10 };
+    const dirTurn2 = mission95.generateDirective(makeSnap95(2), e95);
+    assert.strictEqual(dirTurn2.type, 'BREACH_SHORTCUT', '王冠から離れても clearingBlockPos ロックにより BREACH_SHORTCUT を維持すること');
+    assert.deepStrictEqual(dirTurn2.targetPos, { x: 7, y: 10 }, '王冠 (10, 10) に引き返さず (7, 10) へ進み続けること');
+  }
+
+  // 9-6. 四方包囲時の王冠自殺ドロップ根絶と決死的突破 MOVE
+  {
+    const e96 = new GameEngine();
+    const d96 = e96.getDragon();
+    if (d96) {
+      d96.defeatedHeadsCount = 3;
+      d96.heads.forEach(h => (h.isAlive = false));
+    }
+    const m96 = createEmptyMap();
+    const p96 = e96.getPlayer();
+    p96.pos = { x: 10, y: 10 };
+    p96.holdItem = 'CROWN';
+    p96.hasSword = true;
+    p96.strength = 500000;
+    p96.experience = 20000;
+    p96.magic = 5;
+    p96.hasDeath = false;
+    p96.hp = 500;
+    p96.maxHp = 1000;
+
+    const wallNeighbors = [
+      { x: 9, y: 9 }, { x: 10, y: 9 }, { x: 11, y: 9 },
+      { x: 9, y: 10 },                 { x: 11, y: 10 },
+      { x: 9, y: 11 },                 { x: 11, y: 11 },
+    ];
+    for (const w of wallNeighbors) {
+      m96.setBaseTile(w, 'WALL_STATIC');
+    }
+
+    const trapEnemy: EnemyInstance = {
+      id: 'e-trap',
+      name: 'TrapDemon',
+      type: 'SUPER_DEMON',
+      pos: { x: 10, y: 11 },
+      hp: 10000,
+      maxHp: 10000,
+      atk: 30000,
+      def: 1000,
+      exp: 1000,
+      isAlive: true,
+      isPermanentlyFrozen: false,
+      frozenTimer: 0,
+    } as any;
+
+    const snap96: TacticalSnapshot = {
+      spatial: new SpatialKnowledge(m96),
+      milestones: SituationalPerception.evaluateMilestones(p96, mockParams),
+      threats: SituationalPerception.evaluateThreats(p96, m96, [trapEnemy], undefined, mockParams),
+      player: {
+        pos: { ...p96.pos },
+        hp: p96.hp,
+        maxHp: p96.maxHp,
+        strength: p96.strength,
+        experience: p96.experience,
+        magic: p96.magic,
+        gold: p96.gold,
+        holdItem: p96.holdItem,
+        hasSword: p96.hasSword,
+        isFlying: p96.isFlying,
+        canDiagonal: true,
+        hasDeath: false,
+        stepCountSinceStone: 0,
+      },
+      livingEnemies: [trapEnemy],
+      memory: new EpisodicMemory(),
+      params: mockParams,
+      map: m96,
+      totalTurns: 5,
+    };
+
+    const nav96 = new AdaptiveNavigator();
+    const executor96 = new TacticalExecutor(nav96, new EightStepController(nav96));
+    const execRes96 = executor96.execute(
+      { type: 'EVADE_DANGER', priority: 100, reason: '四方包囲テスト' },
+      snap96,
+      e96
+    );
+    assert.strictEqual(execRes96.action.type, 'MOVE', '四方包囲時でも王冠保持のまま決死的突破 MOVE を返すこと');
+    assert.notStrictEqual(execRes96.action.type, 'SPACE', '王冠の自殺ドロップ SPACE を絶対に返さないこと');
+  }
+
+  // 9-7. 我が家(HOME)遮断時のブラックリスト化防止と CROWN_ESCAPE 維持
+  {
+    const e97 = new GameEngine();
+    const d97 = e97.getDragon();
+    if (d97) {
+      d97.defeatedHeadsCount = 3;
+      d97.heads.forEach(h => (h.isAlive = false));
+    }
+    const m97 = createEmptyMap();
+    for (const h of m97.getAllHomePositions()) {
+      m97.setBaseTile(h, 'EMPTY');
+    }
+    const home97 = { x: 5, y: 10 };
+    m97.setBaseTile(home97, 'HOME');
+    m97.homePos = { ...home97 };
+    m97.setRealHomePos(home97);
+    m97.spawnHomePos = { ...home97 };
+
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        m97.setBaseTile({ x: home97.x + dx, y: home97.y + dy }, 'WALL_STATIC');
+      }
+    }
+
+    const p97 = e97.getPlayer();
+    p97.pos = { x: 10, y: 10 };
+    p97.holdItem = 'CROWN';
+    p97.hasSword = true;
+    p97.experience = 20000;
+    p97.magic = 5;
+    p97.hp = 1000;
+    p97.maxHp = 1000;
+
+    const memory97 = new EpisodicMemory();
+    const snap97: TacticalSnapshot = {
+      spatial: new SpatialKnowledge(m97),
+      milestones: SituationalPerception.evaluateMilestones(p97, mockParams),
+      threats: SituationalPerception.evaluateThreats(p97, m97, [], undefined, mockParams),
+      player: {
+        pos: { ...p97.pos },
+        hp: p97.hp,
+        maxHp: p97.maxHp,
+        strength: p97.strength,
+        experience: p97.experience,
+        magic: p97.magic,
+        gold: p97.gold,
+        holdItem: p97.holdItem,
+        hasSword: p97.hasSword,
+        isFlying: p97.isFlying,
+        canDiagonal: true,
+        hasDeath: false,
+        stepCountSinceStone: 0,
+      },
+      livingEnemies: [],
+      memory: memory97,
+      params: mockParams,
+      map: m97,
+      totalTurns: 10,
+    };
+
+    const nav97 = new AdaptiveNavigator();
+    const executor97 = new TacticalExecutor(nav97, new EightStepController(nav97));
+    const navDirective97 = {
+      type: 'NAVIGATE_TO_POSITION' as const,
+      targetPos: { ...m97.realHomePos },
+      priority: 100,
+      reason: '王冠帰還',
+    };
+    const res97 = executor97.execute(navDirective97, snap97, e97);
+    assert.strictEqual(res97.status, 'PATH_BLOCKED', '完全封鎖された HOME への移動は PATH_BLOCKED を返すこと');
+    assert.strictEqual(memory97.isTargetUnreachable(m97.realHomePos, 10), false, 'EpisodicMemory に realHomePos がブラックリスト登録されないこと');
+    assert.strictEqual(nav97.isTargetUnreachable(m97.realHomePos), false, 'AdaptiveNavigator に realHomePos がブラックリスト登録されないこと');
+
+    const planner97 = new StrategicPlanner();
+    planner97.planTurn(snap97, e97);
+    assert.strictEqual(planner97.activeMission?.id, 'CROWN_ESCAPE');
+    planner97.recordExecutionResult(navDirective97, res97, snap97);
+    planner97.recordExecutionResult(navDirective97, res97, snap97);
+    assert.strictEqual(planner97.activeMission?.status, 'ACTIVE', 'CROWN_ESCAPE は PATH_BLOCKED が連続しても ABORTED にならないこと');
+    assert.strictEqual(memory97.isTargetUnreachable(m97.realHomePos, 10), false, 'Planner でも realHomePos はブラックリスト化されないこと');
+  }
 
   console.log('✓ 9. CrownEscapeMission pre-pickup FLASH, safe temporary drop & evade verified successfully.');
 }

@@ -1,5 +1,6 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
+import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
 import { IStrategicMission, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 import { Position } from '../../../models/Types.js';
@@ -122,7 +123,7 @@ export class ClearTreasureZoneMission implements IStrategicMission {
 
     // 2-A. パワーストーン
     if (floorItem === 'POWER_STONE' && needStr) {
-      const hasNearbyChest = this.hasNearbyChest(player.pos, map, 8);
+      const hasNearbyChest = MapSituationEvaluator.get(snapshot, engine).items.hasChestWithin2To8;
       const canChain = player.holdItem === 'KEY' && hasNearbyChest;
       if (!canChain) {
         if (player.holdItem === 'KEY') {
@@ -293,50 +294,26 @@ export class ClearTreasureZoneMission implements IStrategicMission {
     };
   }
 
-  private countReachableChestsInZone(zone: any, map: WorldMap, snapshot: TacticalSnapshot): number {
-    let count = 0;
-    const minX = Math.min(zone.bounds.x1, zone.bounds.x2);
-    const maxX = Math.max(zone.bounds.x1, zone.bounds.x2);
-    const minY = Math.min(zone.bounds.y1, zone.bounds.y2);
-    const maxY = Math.max(zone.bounds.y1, zone.bounds.y2);
-
-    for (let y = minY; y <= maxY; y++) {
-      for (let x = minX; x <= maxX; x++) {
-        const p = map.wrapPosition({ x, y });
-        if (map.getObject(p) === 'CHEST' && !snapshot.memory.isTargetUnreachable(p, snapshot.totalTurns)) {
-          count++;
-        }
-      }
-    }
-    return count;
+  private countReachableChestsInZone(zone: any, _map: WorldMap, snapshot: TacticalSnapshot): number {
+    return MapSituationEvaluator.get(snapshot).items.getReachableChestsInZone(zone.bounds).length;
   }
 
-  private countReachableChestsGlobal(map: WorldMap, snapshot: TacticalSnapshot): number {
-    let count = 0;
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        const p = { x, y };
-        if (map.getObject(p) === 'CHEST' && !snapshot.memory.isTargetUnreachable(p, snapshot.totalTurns)) {
-          count++;
-        }
-      }
-    }
-    return count;
+  private countReachableChestsGlobal(_map: WorldMap, snapshot: TacticalSnapshot): number {
+    return MapSituationEvaluator.get(snapshot).items.chests.length;
   }
 
   private findNearestChestGlobal(fromPos: Position, map: WorldMap, snapshot: TacticalSnapshot): Position | null {
+    const items = MapSituationEvaluator.get(snapshot).items;
+    if (fromPos.x === snapshot.player.pos.x && fromPos.y === snapshot.player.pos.y) {
+      return items.nearestChest;
+    }
     let nearest: Position | null = null;
     let minDist = Infinity;
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        const p = { x, y };
-        if (map.getObject(p) === 'CHEST' && !snapshot.memory.isTargetUnreachable(p, snapshot.totalTurns)) {
-          const d = map.getTorusDistance(fromPos, p).manhattan;
-          if (d < minDist) {
-            minDist = d;
-            nearest = p;
-          }
-        }
+    for (const p of items.chests) {
+      const d = map.getTorusDistance(fromPos, p).manhattan;
+      if (d < minDist) {
+        minDist = d;
+        nearest = p;
       }
     }
     return nearest;
@@ -360,19 +337,17 @@ export class ClearTreasureZoneMission implements IStrategicMission {
   }
 
   private findNearestAvailableKey(fromPos: Position, map: WorldMap, snapshot: TacticalSnapshot): Position | null {
+    const items = MapSituationEvaluator.get(snapshot).items;
+    if (fromPos.x === snapshot.player.pos.x && fromPos.y === snapshot.player.pos.y) {
+      return items.nearestKey;
+    }
     let nearest: Position | null = null;
     let minDist = Infinity;
-
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        const p = { x, y };
-        if (map.getItem(p) === 'KEY' && !snapshot.memory.isTargetUnreachable(p, snapshot.totalTurns)) {
-          const d = map.getTorusDistance(fromPos, p).manhattan;
-          if (d < minDist) {
-            minDist = d;
-            nearest = p;
-          }
-        }
+    for (const p of items.keys) {
+      const d = map.getTorusDistance(fromPos, p).manhattan;
+      if (d < minDist) {
+        minDist = d;
+        nearest = p;
       }
     }
     return nearest;
@@ -384,43 +359,17 @@ export class ClearTreasureZoneMission implements IStrategicMission {
     map: WorldMap,
     snapshot?: TacticalSnapshot
   ): Position | null {
-    const minX = Math.min(zone.bounds.x1, zone.bounds.x2);
-    const maxX = Math.max(zone.bounds.x1, zone.bounds.x2);
-    const minY = Math.min(zone.bounds.y1, zone.bounds.y2);
-    const maxY = Math.max(zone.bounds.y1, zone.bounds.y2);
-
+    if (!snapshot) return null;
+    const inZone = MapSituationEvaluator.get(snapshot).items.getReachableChestsInZone(zone.bounds);
     let nearest: Position | null = null;
     let minDist = Infinity;
-
-    for (let y = minY; y <= maxY; y++) {
-      for (let x = minX; x <= maxX; x++) {
-        const p = map.wrapPosition({ x, y });
-        if (map.getObject(p) === 'CHEST') {
-          if (snapshot && snapshot.memory.isTargetUnreachable(p, snapshot.totalTurns)) {
-            continue;
-          }
-          const d = map.getTorusDistance(fromPos, p).manhattan;
-          if (d < minDist) {
-            minDist = d;
-            nearest = p;
-          }
-        }
+    for (const p of inZone) {
+      const d = map.getTorusDistance(fromPos, p).manhattan;
+      if (d < minDist) {
+        minDist = d;
+        nearest = p;
       }
     }
     return nearest;
-  }
-
-  private hasNearbyChest(pos: Position, map: WorldMap, maxDist: number): boolean {
-    for (let dy = -maxDist; dy <= maxDist; dy++) {
-      for (let dx = -maxDist; dx <= maxDist; dx++) {
-        const manhattan = Math.abs(dx) + Math.abs(dy);
-        if (manhattan < 2 || manhattan > maxDist) continue;
-        const p = map.wrapPosition({ x: pos.x + dx, y: pos.y + dy });
-        if (map.getObject(p) === 'CHEST') {
-          return true;
-        }
-      }
-    }
-    return false;
   }
 }

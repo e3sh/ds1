@@ -5,6 +5,7 @@ import { DynamicBotParameters } from '../BotTypes.js';
 import { SpatialKnowledge } from './SpatialKnowledge.js';
 import { GrowthMilestones, ThreatDistribution, StagnationState } from './SituationalPerception.js';
 import { EpisodicMemory } from './EpisodicMemory.js';
+import type { MapSituationSummary } from './MapSituationEvaluator.js';
 
 export interface TacticalDragonHead {
   type: string;
@@ -63,4 +64,6 @@ export interface TacticalSnapshot {
   map: WorldMap;
   /** 総経過ターン */
   totalTurns: number;
+  /** 認知層による毎ターンのマップ状況一括要約 */
+  situation?: MapSituationSummary;
 }

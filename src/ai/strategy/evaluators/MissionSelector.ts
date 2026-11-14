@@ -16,6 +16,7 @@ import { ExploreWanderMission } from '../missions/ExploreWanderMission.js';
 import { Position } from '../../../models/Types.js';
 import { WorldMap } from '../../../models/WorldMap.js';
 import { ThreatEvaluator } from '../../../systems/ThreatEvaluator.js';
+import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
 
 /**
  * MissionSelector (大局的ミッション選定モジュール)
@@ -56,7 +57,7 @@ export class MissionSelector {
     // STR未達時で8歩周期チェーン可能（KEY所持かつ8歩以内に未開封宝箱）なら開錠を継続し、そうでなければ回収奉納へ
     const floorItem = map.getItem(player.pos);
     if (floorItem === 'POWER_STONE' && needStr) {
-      const canChain = player.holdItem === 'KEY' && this.hasNearbyChest(player.pos, map, 8);
+      const canChain = player.holdItem === 'KEY' && MapSituationEvaluator.get(snapshot).items.hasChestWithin2To8;
       if (!canChain) {
         return new HarvestPowerStoneMission(player.pos);
       }
@@ -84,7 +85,7 @@ export class MissionSelector {
 
         if (reachesMilestone || hasLargeGold || isDefensePrep) {
           // 鍵を持って周辺宝箱を開錠中（チェーン中）でなければ、またはコインが12枚以上溜まっていれば即換金
-          const isActivelyChaining = player.holdItem === 'KEY' && this.hasNearbyChest(player.pos, map, 8);
+          const isActivelyChaining = player.holdItem === 'KEY' && MapSituationEvaluator.get(snapshot).items.hasChestWithin2To8;
           if (!isActivelyChaining || player.gold >= 12 || reachesTargetDefenseExp) {
             return new CashInGoldMission(player.gold);
           }
@@ -244,16 +245,8 @@ export class MissionSelector {
     return new ExploreWanderMission();
   }
 
-  public static hasReachableChests(map: WorldMap, snapshot: TacticalSnapshot): boolean {
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        const p = { x, y };
-        if (map.getObject(p) === 'CHEST' && !snapshot.memory.isTargetUnreachable(p, snapshot.totalTurns)) {
-          return true;
-        }
-      }
-    }
-    return false;
+  public static hasReachableChests(_map: WorldMap, snapshot: TacticalSnapshot): boolean {
+    return MapSituationEvaluator.get(snapshot).items.chests.length > 0;
   }
 
   public static hasSafeEnemyNearby(player: any, snapshot: TacticalSnapshot): boolean {
@@ -276,63 +269,50 @@ export class MissionSelector {
   }
 
   public static findNearestPowerStone(fromPos: Position, map: WorldMap, snapshot: TacticalSnapshot): Position | null {
+    const items = MapSituationEvaluator.get(snapshot).items;
+    if (fromPos.x === snapshot.player.pos.x && fromPos.y === snapshot.player.pos.y) {
+      return items.nearestPowerStone;
+    }
     let nearest: Position | null = null;
     let minDist = Infinity;
-
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        const p = { x, y };
-        if (map.getItem(p) === 'POWER_STONE' && !snapshot.memory.isTargetUnreachable(p, snapshot.totalTurns)) {
-          const d = map.getTorusDistance(fromPos, p).manhattan;
-          if (d < minDist) {
-            minDist = d;
-            nearest = p;
-          }
-        }
+    for (const p of items.powerStones) {
+      const d = map.getTorusDistance(fromPos, p).manhattan;
+      if (d < minDist) {
+        minDist = d;
+        nearest = p;
       }
     }
     return nearest;
   }
 
-  public static hasNearbyChest(pos: Position, map: WorldMap, maxDist: number): boolean {
-    for (let dy = -maxDist; dy <= maxDist; dy++) {
-      for (let dx = -maxDist; dx <= maxDist; dx++) {
-        const manhattan = Math.abs(dx) + Math.abs(dy);
-        if (manhattan < 2 || manhattan > maxDist) continue;
-        const p = map.wrapPosition({ x: pos.x + dx, y: pos.y + dy });
-        if (map.getObject(p) === 'CHEST') {
-          return true;
-        }
-      }
+  public static hasNearbyChest(pos: Position, map: WorldMap, maxDist: number, snapshot?: TacticalSnapshot): boolean {
+    if (!snapshot) return false;
+    const items = MapSituationEvaluator.get(snapshot).items;
+    if (pos.x === snapshot.player.pos.x && pos.y === snapshot.player.pos.y && maxDist === 8) {
+      return items.hasChestWithin2To8;
     }
-    return false;
+    return items.chests.some(c => {
+      const d = map.getTorusDistance(pos, c).manhattan;
+      return d >= 2 && d <= maxDist;
+    });
   }
 
-  public static hasReachableKey(map: WorldMap, snapshot: TacticalSnapshot): boolean {
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        const p = { x, y };
-        if (map.getItem(p) === 'KEY' && !snapshot.memory.isTargetUnreachable(p, snapshot.totalTurns)) {
-          return true;
-        }
-      }
-    }
-    return false;
+  public static hasReachableKey(_map: WorldMap, snapshot: TacticalSnapshot): boolean {
+    return MapSituationEvaluator.get(snapshot).items.keys.length > 0;
   }
 
   public static findNearestAvailableKey(fromPos: Position, map: WorldMap, snapshot: TacticalSnapshot): Position | null {
+    const items = MapSituationEvaluator.get(snapshot).items;
+    if (fromPos.x === snapshot.player.pos.x && fromPos.y === snapshot.player.pos.y) {
+      return items.nearestKey;
+    }
     let minDist = Infinity;
     let nearest: Position | null = null;
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        const p = { x, y };
-        if (map.getItem(p) === 'KEY' && !snapshot.memory.isTargetUnreachable(p, snapshot.totalTurns)) {
-          const d = map.getTorusDistance(fromPos, p).manhattan;
-          if (d < minDist) {
-            minDist = d;
-            nearest = p;
-          }
-        }
+    for (const p of items.keys) {
+      const d = map.getTorusDistance(fromPos, p).manhattan;
+      if (d < minDist) {
+        minDist = d;
+        nearest = p;
       }
     }
     return nearest;

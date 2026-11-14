@@ -1,8 +1,8 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
+import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
 import { IStrategicMission, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
-import { Position } from '../../../models/Types.js';
 import { ReadinessEvaluator } from '../evaluators/ReadinessEvaluator.js';
 
 /**
@@ -66,8 +66,8 @@ export class PrepareDragonAssaultMission implements IStrategicMission {
       };
     }
 
-    // 4. マップ全域の安全な最寄りポーションを探索して回収
-    const potionPos = this.findNearestReachablePotion(player.pos, map, snapshot);
+    // 4. マップ全域の安全な最寄りポーションを探索して回収 (認知層のマップサマリを参照)
+    const potionPos = MapSituationEvaluator.get(snapshot, engine).items.nearestPotion;
     if (potionPos) {
       return {
         type: 'NAVIGATE_TO_POSITION',
@@ -96,22 +96,5 @@ export class PrepareDragonAssaultMission implements IStrategicMission {
     };
   }
 
-  private findNearestReachablePotion(from: Position, map: any, snapshot: TacticalSnapshot): Position | null {
-    let nearest: Position | null = null;
-    let minDist = Infinity;
 
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        const p = { x, y };
-        if (map.getItem(p) === 'POTION' && !snapshot.memory.isTargetUnreachable(p, snapshot.totalTurns)) {
-          const d = map.getTorusDistance(from, p).manhattan;
-          if (d < minDist) {
-            minDist = d;
-            nearest = p;
-          }
-        }
-      }
-    }
-    return nearest;
-  }
 }

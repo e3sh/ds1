@@ -1,5 +1,6 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
+import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
 import { IStrategicMission, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 import { Position } from '../../../models/Types.js';
@@ -105,7 +106,7 @@ export class SlayDragonMission implements IStrategicMission {
           reason: '最終首決戦前のMP補給（足元のポーション取得）',
         };
       }
-      const nearestPotion = this.findNearestPotion(player.pos, map, snapshot);
+      const nearestPotion = MapSituationEvaluator.get(snapshot, engine).items.nearestPotion;
       if (nearestPotion) {
         return {
           type: 'NAVIGATE_TO_POSITION',
@@ -191,21 +192,5 @@ export class SlayDragonMission implements IStrategicMission {
     return dx === 1 && dy === 1;
   }
 
-  private findNearestPotion(from: Position, map: WorldMap, snapshot: TacticalSnapshot): Position | null {
-    let nearest: Position | null = null;
-    let minDist = Infinity;
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        const p = { x, y };
-        if (map.getItem(p) === 'POTION' && !snapshot.memory.isTargetUnreachable(p, snapshot.totalTurns)) {
-          const d = map.getTorusDistance(from, p).manhattan;
-          if (d < minDist) {
-            minDist = d;
-            nearest = p;
-          }
-        }
-      }
-    }
-    return nearest;
-  }
+
 }

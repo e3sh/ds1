@@ -10,6 +10,7 @@ import { EightStepController } from '../EightStepController.js';
 import { ItemSwapTactics, SwapState } from './ItemSwapTactics.js';
 import { StrategicDirective } from '../strategy/StrategicDirective.js';
 import { TacticalSnapshot } from '../perception/TacticalSnapshot.js';
+import { MapSituationEvaluator } from '../perception/MapSituationEvaluator.js';
 import { MagicSystem } from '../../systems/MagicSystem.js';
 import { MovementSystem } from '../../systems/MovementSystem.js';
 import { ThreatEvaluator } from '../../systems/ThreatEvaluator.js';
@@ -313,9 +314,15 @@ export class TacticalExecutor {
       }
     }
 
-    // 経路が見つからない場合: 到達不能マーク (長期ブラックリスト化してピンポンを完全防止)
-    this.nav.markTargetUnreachable(targetPos, 120);
-    snapshot.memory.markTargetUnreachable(targetPos, 120, snapshot.totalTurns);
+    // 経路が見つからない場合:
+    // 我が家(HOME)は最終帰還先であるため絶対にブラックリスト化しない。
+    // 王冠(CROWN)は岩開削や敵移動で数ターン後に到達可能になる可能性があるため短期(6T)に留める。
+    if (!isTargetHome) {
+      const isTargetCrown = directive.targetItemType === 'CROWN' || map.getItem(targetPos) === 'CROWN';
+      const blacklistTurns = isTargetCrown ? 6 : 120;
+      this.nav.markTargetUnreachable(targetPos, blacklistTurns);
+      snapshot.memory.markTargetUnreachable(targetPos, blacklistTurns, snapshot.totalTurns);
+    }
     const wander = this.nav.wanderSafe(player, map, enemies, dragon);
     return {
       action: this.resolveMoveOrBreak(wander, player, map),
@@ -883,10 +890,13 @@ export class TacticalExecutor {
           status: 'SUCCESS',
         };
       }
-      if (player.magic > 0 && !player.hasDeath && map.getItem(curPos) === 'NONE') {
+      // 認知層の「四方包囲時の決死的突破アクション（敵を殴り倒してでも活路を開くMOVE）」を使用
+      // 自殺的な王冠一時ドロップ(SPACE)は完全禁止（次ターン再拾得ループ・即死・回収不能を招くため）
+      const desperate = MapSituationEvaluator.get(snapshot).surroundings.desperateEscapeAction;
+      if (desperate) {
         return {
-          action: { type: 'SPACE' },
-          description: '👑 魔法自衛のため王冠一時ドロップ',
+          action: { type: 'MOVE', dir: desperate.dir },
+          description: `👑 王冠保持のまま決死的突破: ${desperate.reason}`,
           status: 'SUCCESS',
         };
       }

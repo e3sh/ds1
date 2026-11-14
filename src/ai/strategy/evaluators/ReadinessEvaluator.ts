@@ -1,4 +1,5 @@
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
+import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
 import { GameEngine } from '../../../core/GameEngine.js';
 
 export interface DragonReadinessAssessment {
@@ -43,18 +44,7 @@ export class ReadinessEvaluator {
 
     // 2. マップ上のポーション残存数とMPプール評価
     // 近傍（距離 <= 15）にある安全なポーションのみをカウントし、遠方ポーションのための全マップ横断を防止
-    let nearbyReachablePotionCount = 0;
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        const p = { x, y };
-        if (map.getItem(p) === 'POTION' && !snapshot.memory.isTargetUnreachable(p, snapshot.totalTurns)) {
-          const d = map.getTorusDistance(player.pos, p).manhattan;
-          if (d <= 15) {
-            nearbyReachablePotionCount++;
-          }
-        }
-      }
-    }
+    const nearbyReachablePotionCount = MapSituationEvaluator.get(snapshot).items.nearbyPotionCountWithin15;
 
     // MP が minDragonMagic (3) 未満の場合は必須。すでに MP >= 3 あれば近傍ポーションのみ集め、遠くのポーション探索はスキップ
     const targetMagic = nearbyReachablePotionCount > 0 ? Math.min(snapshot.params.maxTargetMagic, 6) : snapshot.params.minDragonMagic;
@@ -90,15 +80,7 @@ export class ReadinessEvaluator {
     };
   }
 
-  public static hasMapRing(map: any, snapshot: TacticalSnapshot): boolean {
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        const p = { x, y };
-        if (map.getItem(p) === 'RING' && !snapshot.memory.isTargetUnreachable(p, snapshot.totalTurns)) {
-          return true;
-        }
-      }
-    }
-    return false;
+  public static hasMapRing(_map: any, snapshot: TacticalSnapshot): boolean {
+    return MapSituationEvaluator.get(snapshot).items.rings.length > 0;
   }
 }

@@ -30,6 +30,7 @@ import { DragonSlayBehavior } from './behaviors/DragonSlayBehavior.js';
 import { EscapeBehavior } from './behaviors/EscapeBehavior.js';
 import { SpatialKnowledge } from './perception/SpatialKnowledge.js';
 import { SituationalPerception } from './perception/SituationalPerception.js';
+import { MapSituationEvaluator } from './perception/MapSituationEvaluator.js';
 import { EpisodicMemory } from './perception/EpisodicMemory.js';
 import { TacticalSnapshot } from './perception/TacticalSnapshot.js';
 import { StrategicPlanner } from './strategy/StrategicPlanner.js';
@@ -764,6 +765,7 @@ export class AutoPlayBot {
     const map = engine.getMap ? engine.getMap() : (engine as any).getWorldMap();
     const enemies = engine.getEnemies().filter(e => e.isAlive);
     const dragon = engine.getDragon();
+    const ghosts: Ghost[] = engine.getGhosts ? engine.getGhosts() : [];
     const tuning = typeof engine.getActiveTuningParams === 'function' ? engine.getActiveTuningParams() : undefined;
 
     // 0. コンテキストと動的パラメータの更新
@@ -809,12 +811,24 @@ export class AutoPlayBot {
       dragon,
       this.params
     );
+    const situation = MapSituationEvaluator.evaluate(
+      player,
+      map,
+      enemies,
+      dragon,
+      ghosts,
+      this.nav,
+      this.episodicMemory,
+      this.params,
+      this.totalTurns
+    );
 
     const snapshot: TacticalSnapshot = {
       spatial: this.spatialKnowledge,
       milestones,
       threats,
       stagnation,
+      situation,
       player: {
         pos: { ...player.pos },
         hp: player.hp,

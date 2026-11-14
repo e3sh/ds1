@@ -59,6 +59,17 @@ export class StrategicPlanner {
     // 経路遮断（PATH_BLOCKED）の監視とブラックリスト化
     if (result.status === 'PATH_BLOCKED' && directive.targetPos) {
       const target = directive.targetPos;
+      const isHomeTarget =
+        snapshot.map.getBaseTile(target) === 'HOME' ||
+        snapshot.map.getAllHomePositions().some(h => h.x === target.x && h.y === target.y);
+
+      // 王冠脱出ミッション中、および我が家(HOME)ターゲットは絶対放棄・ブラックリスト化しない
+      if (this.activeMission?.id === 'CROWN_ESCAPE' || isHomeTarget) {
+        this.lastBlockedTarget = null;
+        this.consecutiveBlockedTurns = 0;
+        return;
+      }
+
       const isSameTarget =
         this.lastBlockedTarget !== null &&
         this.lastBlockedTarget.x === target.x &&
@@ -98,24 +109,27 @@ export class StrategicPlanner {
    * 毎ターンの戦略判断ルーチン
    */
   public planTurn(snapshot: TacticalSnapshot, engine: GameEngine): StrategicDirective {
-    // 1. 緊急危機介入 (HPピンチまたは即死敵隣接)
-    if (snapshot.threats.isLethalDanger || snapshot.threats.isPinchHp) {
-      if (!this.activeMission || this.activeMission.id !== 'EMERGENCY_EVACUATE') {
-        if (this.activeMission) {
-          this.activeMission.onAborted?.(snapshot, '緊急退避による割り込み中断');
-        }
-        this.activeMission = new EmergencyEvacuateMission();
-      }
-    }
-
-    // 1-B. ドラゴン討伐完了 -> 即座に王冠脱出ミッションへ切り替え
     const dragon = engine.getDragon();
-    if (dragon && (dragon.isAllHeadsDefeated || dragon.heads.every(h => !h.isAlive))) {
+    const isAllHeadsDefeated = Boolean(
+      dragon && (dragon.isAllHeadsDefeated || dragon.heads.every(h => !h.isAlive))
+    );
+
+    // 1. ドラゴン討伐完了 -> 即座に王冠脱出ミッションへ切り替え＆絶対維持
+    // (HPピンチや即死敵隣接を理由に EmergencyEvacuateMission へ毎ターン上書きして状態リセットされるのを防ぐ)
+    if (isAllHeadsDefeated) {
       if (!this.activeMission || this.activeMission.id !== 'CROWN_ESCAPE') {
         if (this.activeMission) {
           this.activeMission.onCompleted?.(snapshot);
         }
         this.activeMission = new CrownEscapeMission();
+      }
+    } else if (snapshot.threats.isLethalDanger || snapshot.threats.isPinchHp) {
+      // 1-B. 緊急危機介入 (HPピンチまたは即死敵隣接 ※王冠脱出局面以外)
+      if (!this.activeMission || this.activeMission.id !== 'EMERGENCY_EVACUATE') {
+        if (this.activeMission) {
+          this.activeMission.onAborted?.(snapshot, '緊急退避による割り込み中断');
+        }
+        this.activeMission = new EmergencyEvacuateMission();
       }
     }
 
@@ -137,7 +151,7 @@ export class StrategicPlanner {
       this.activeMission.id !== 'CROWN_ESCAPE' &&
       this.activeMission.id !== 'EMERGENCY_EVACUATE' &&
       player.holdItem !== 'POWER_STONE' &&
-      !(player.holdItem === 'KEY' && MissionSelector.hasNearbyChest(player.pos, snapshot.map, 8))
+      !(player.holdItem === 'KEY' && MissionSelector.hasNearbyChest(player.pos, snapshot.map, 8, snapshot))
     ) {
       this.activeMission.onCompleted?.(snapshot);
       this.missionHistory.push({

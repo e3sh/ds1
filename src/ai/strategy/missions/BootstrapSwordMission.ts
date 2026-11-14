@@ -1,5 +1,6 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
+import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
 import { IStrategicMission, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 
@@ -50,20 +51,16 @@ export class BootstrapSwordMission implements IStrategicMission {
       };
     }
 
-    // マップ上の剣を探す
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        const p = { x, y };
-        if (map.getItem(p) === 'SWORD') {
-          return {
-            type: 'NAVIGATE_TO_POSITION',
-            targetPos: p,
-            targetItemType: 'SWORD',
-            priority: 95,
-            reason: `剣への最短ナビゲーション (${x}, ${y})`,
-          };
-        }
-      }
+    // マップ上の剣を探す (認知層のマップサマリを参照)
+    const swordPos = MapSituationEvaluator.get(snapshot, engine).items.nearestSword;
+    if (swordPos) {
+      return {
+        type: 'NAVIGATE_TO_POSITION',
+        targetPos: swordPos,
+        targetItemType: 'SWORD',
+        priority: 95,
+        reason: `剣への最短ナビゲーション (${swordPos.x}, ${swordPos.y})`,
+      };
     }
 
     return {

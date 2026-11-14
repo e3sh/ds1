@@ -217,4 +217,33 @@ const forbiddenImportsInLogic = [
   console.log('✓ 4. Passive View design verified: No view components depend on GameEngine.');
 }
 
+// 7. 戦略層（src/ai/strategy）からの全マップ走査ループ禁止ルール (Behavior-style raw loop 根絶)
+{
+  const strategyDir = path.join(baseDir, 'src', 'ai', 'strategy');
+  const strategyFiles = getTsFiles(strategyDir);
+  const violations: string[] = [];
+
+  for (const filePath of strategyFiles) {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const withoutBlockComments = content.replace(/\/\*[\s\S]*?\*\//g, match =>
+      match.replace(/[^\n]/g, '')
+    );
+    const lines = withoutBlockComments.split(/\r?\n/);
+    lines.forEach((line, idx) => {
+      const activeCode = line.replace(/\/\/.*$/, '');
+      if (/\bfor\s*\(\s*let\s+[xy]\b/.test(activeCode)) {
+        const rel = path.relative(baseDir, filePath).replace(/\\/g, '/');
+        violations.push(`${rel}:${idx + 1}: ${activeCode.trim()}`);
+      }
+    });
+  }
+
+  assert.strictEqual(
+    violations.length,
+    0,
+    `Strategy layer must not contain raw map scan loops (for let x/y):\n${violations.join('\n')}`
+  );
+  console.log('✓ 7. Strategy layer purity verified: No raw map loops (for let x/y) in src/ai/strategy.');
+}
+
 console.log('--- ✓ All Architecture & Dependency Rules Passed Successfully! ---');
