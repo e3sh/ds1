@@ -103,20 +103,15 @@ src/
 │   ├── ThreatEvaluator.ts # 攻防2軸タクティカル脅威度評価
 │   ├── ProceduralMapGenerator.ts # 全域9セクター動的配置・6大トポロジープロシージャル生成
 │   └── ChestSystem.ts     # 宝箱開封・8歩周期パワーストーン判定
-├── ai/                    # 自律攻略ボット
-│   ├── AutoPlayBot.ts         # 状況適応型攻略ボット本体 (オーケストレータ)
-│   ├── AdaptiveNavigator.ts   # トーラスBFS探索・一元化スタック追跡・訪問ヒートマップ
+├── ai/                    # 自律攻略ボット (PST 3層アーキテクチャ)
+│   ├── AutoPlayBot.ts         # PSTオーケストレータ本体 (AdaptiveAutoPlayBot互換)
+│   ├── AdaptiveNavigator.ts   # トーラスBFS探索・スタック追跡・訪問ヒートマップ
 │   ├── TacticalContext.ts     # 幾何スケール連動・動的戦術パラメータ導出
 │   ├── EightStepController.ts # 8歩周期確定開錠チェーン制御
 │   ├── BotTypes.ts            # ボットフェーズ・動的パラメータ型定義
-│   └── behaviors/             # フェーズ別 Behavior モジュール群
-│       ├── BootstrapBehavior.ts     # 序盤装備回収・物理的詰み早期判定
-│       ├── GraveSealBehavior.ts     # チョークポイント墓封鎖・Sokoban岩押し・氷像
-│       ├── ResourceFarmBehavior.ts  # 8歩周期開錠・石奉納・コイン換金スワップ
-│       ├── RelocateBehavior.ts      # ドラゴン要塞外縁への我が家前線基地移転
-│       ├── CombatBehavior.ts        # 安全迎撃・ヒートマップ周回ループ打開
-│       ├── DragonSlayBehavior.ts    # 首ブレス射線回避・斜め安全マス討伐
-│       └── EscapeBehavior.ts        # 魔法封印下王冠運搬・スタン時露払い脱出
+│   ├── perception/            # 認知層 (SpatialKnowledge, SituationalPerception, MapSituationEvaluator, EpisodicMemory, TacticalSnapshot)
+│   ├── strategy/              # 戦略層 (StrategicPlanner, MissionSelector, ReadinessEvaluator, DirectiveArbiter, missions/)
+│   └── tactics/               # 戦術層 (TacticalExecutor, TacticalCombat, ItemSwapTactics)
 ├── simulation/            # ヘッドレスシミュレーション基盤
 │   ├── SimulationRunner.ts    # 高速バッチ実行オーケストレータ
 │   └── SimulationTelemetry.ts # イベント駆動型定量KPI集約・レポート生成
@@ -405,9 +400,9 @@ stateDiagram-v2
 
 詳細なアルゴリズム仕様・全パラメータ表・運用知見については、決定版ドキュメントである [自律攻略ボット (AutoPlayBot) ＆ ヘッドレスシミュレーション仕様書 (`docs/autoplay_and_simulation_spec.md`)](../autoplay_and_simulation_spec.md) を参照。
 
-### 8.1 AutoPlayBot のモジュール設計
+### 8.1 AutoPlayBot のモジュール設計 (PST 3層アーキテクチャ)
 
-`AutoPlayBot` は、完全ヘッドレスな自律探索ボットとして設計されており、ゲームエンジンのインターフェース（`GameEngine`）のみを通じて盤面情報を取得し、手番アクション（`BotAction`）を返却する。
+`AutoPlayBot` は、完全ヘッドレスな自律探索ボットとして設計されており、ゲームエンジンのインターフェース（`GameEngine`）のみを通じて盤面情報を取得し、**Perception（認知）→ Strategy（戦略）→ Tactics（戦術）** の3層パイプラインで手番アクション（`BotAction`）を返却する。
 
 ```mermaid
 classDiagram
@@ -417,6 +412,9 @@ classDiagram
         +AdaptiveNavigator nav
         +EightStepController eightStepController
         +TacticalContext context
+        +StrategicPlanner strategicPlanner
+        +TacticalExecutor tacticalExecutor
+        +EpisodicMemory episodicMemory
         +decideAction(engine) BotAction
         +step(engine) BotAction
         +handleStuckRescue() void
@@ -428,52 +426,58 @@ classDiagram
         +resolveParameters(phase, player, ...) DynamicBotParameters
     }
 
-    class AdaptiveNavigator {
-        +findPath(from, to, ...) Direction
-        +wanderSafe(...) BotAction
-        +updateTurn(pos) void
-        +triggerRescue(turns) void
-    }
-
-    class EightStepController {
-        +handleEightStepCycle(...) BotAction
-        +clearEightStepState() void
-    }
-
-    class Behaviors {
+    class PerceptionLayer {
         <<module>>
-        BootstrapBehavior
-        GraveSealBehavior
-        ResourceFarmBehavior
-        RelocateBehavior
-        CombatBehavior
-        DragonSlayBehavior
-        EscapeBehavior
+        SpatialKnowledge
+        SituationalPerception
+        MapSituationEvaluator
+        EpisodicMemory
+        TacticalSnapshot
+    }
+
+    class StrategyLayer {
+        <<module>>
+        StrategicPlanner
+        MissionSelector
+        ReadinessEvaluator
+        DirectiveArbiter
+        TacticalStallResolver
+        OpportunisticEvaluator
+        Missions
+    }
+
+    class TacticsLayer {
+        <<module>>
+        TacticalExecutor
+        TacticalCombat
+        ItemSwapTactics
+        AdaptiveNavigator
+        EightStepController
     }
 
     AutoPlayBot --> TacticalContext
-    AutoPlayBot --> AdaptiveNavigator
-    AutoPlayBot --> EightStepController
-    AutoPlayBot --> Behaviors
-    Behaviors --> AdaptiveNavigator
-    Behaviors --> TacticalContext
+    AutoPlayBot --> PerceptionLayer
+    AutoPlayBot --> StrategyLayer
+    AutoPlayBot --> TacticsLayer
+    StrategyLayer --> PerceptionLayer
+    TacticsLayer --> PerceptionLayer
     SimulationRunner --> AutoPlayBot
     SimulationRunner --> SimulationTelemetry
 ```
 
 #### コアアルゴリズム
-1. **状況適応型フェーズステートマシン**:
-   `BOOTSTRAP`（初期装備確保・詰み検知） → `GRAVE_SEAL`（チョークポイント墓封鎖） → `RESOURCE_FARM`（8歩開錠・石奉納・コイン換金） → `RELOCATE_HOME`（前線基地化） → `DRAGON_SLAY`（首斜め討伐） → `CROWN_ESCAPE`（王冠4個歩行脱出）。
+1. **PST 3層分離＆ミッション駆動プランニング**:
+   認知層（`MapSituationEvaluator` ほか）が `TacticalSnapshot` を生成し、戦略層（`StrategicPlanner` / `MissionSelector` / `DirectiveArbiter`）が12種の `IStrategicMission` と `StrategicDirective` を調停・発行、戦術層（`TacticalExecutor`）が具体的な1手の `BotAction` を遂行する。表示・字幕用の `BotPhase`（`BOOTSTRAP` / `GRAVE_SEAL` / `RESOURCE_FARM` / `RELOCATE_HOME` / `DRAGON_SLAY` / `CROWN_ESCAPE`）はアクティブミッションから同期される。
 2. **幾何スケール連動と動的パラメータ導出 (`TacticalContext`)**:
    マップ解像度（32x32〜64x64）、トポロジー、進行度から `TacticalScale`（近傍・中距離・遠征半径）と `DynamicBotParameters` を動的算出。
-3. **訪問ヒートマップによる周回ループ打開 (`CombatBehavior`)**:
-   時間減衰型ヒートマップにより敵との周回鬼ごっこを検知し、障害物越し `KICK` スナイプまたは近傍 `FREEZE` 氷像バリケード化で能動打開。
-4. **MP=1 セーフティリザーブ保護**:
-   `BREAK` 習得後、MP=1の壁破壊能力（消費コスト0）を死守するため、他の魔法によるMP枯渇を拒否。
+3. **訪問ヒートマップによる周回ループ打開 (`TacticalCombat` / `AdaptiveNavigator`)**:
+   時間減衰型ヒートマップ（`+10.0` / `×0.85`）により敵との周回鬼ごっこを検知し、障害物越し `KICK` スナイプ、岩 `BREAK`、近傍 `FREEZE` 氷像バリケード化で能動打開。
+4. **MP=1 セーフティリザーブ保護 (`TacticalExecutor` / `TacticalStallResolver`)**:
+   `BREAK` 習得後、MP=1の壁破壊能力（消費コスト0）を死守するため、他の魔法によるMP枯渇を抑止。
 5. **8歩周期宝箱開錠チェーン (`EightStepController`)**:
-   石排出直後に近傍（距離2〜6）の未開封宝箱を全探索。パリティ調整可能なピボット／待機マス間を往復して正確に8歩目で踏み込み、100%石確定排出を連続チェーン化。
-6. **多層スタック・逡巡防止機構 (`AdaptiveNavigator`)**:
-   一元化された直近訪問履歴、ピンポンカウンタ、孤立目標ブラックリスト（BFS Early Exit）、ワープタブーリストによりループを強固に遮断。
+   石排出直後に近傍の未開封宝箱を探索。パリティ調整可能なピボット／待機マス間を往復して正確に8歩目で踏み込み、100%石確定排出を連続チェーン化。
+6. **多層スタック・逡巡防止機構 (`AdaptiveNavigator` / `EpisodicMemory` / `TacticalStallResolver`)**:
+   直近訪問履歴、ピンポン/周回カウンタ、期限付き到達不能ブラックリスト、ワープタブーリスト、袋小路拘束時の緊急打開指令によりループを強固に遮断。
 
 ---
 
