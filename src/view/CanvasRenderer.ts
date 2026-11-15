@@ -20,8 +20,9 @@ import { TileGraphics } from './TileGraphics.js';
 import { MonsterGraphics } from './MonsterGraphics.js';
 import { CombatEffectManager } from './CombatEffectManager.js';
 import { ThreatEvaluator } from '../systems/ThreatEvaluator.js';
+import { IGameRenderer, RendererMode } from './IGameRenderer.js';
 
-export class CanvasRenderer {
+export class CanvasRenderer implements IGameRenderer {
   private ctx: CanvasRenderingContext2D;
   private palette: PaletteManager;
   private blinkFrame: number = 0;
@@ -41,6 +42,10 @@ export class CanvasRenderer {
     // 初回起動時に全32種モンスターおよびマップタイルのオフスクリーンスプライトシートを一括生成
     MonsterGraphics.getOrCreateSpriteSheet();
     TileGraphics.getOrCreateSpriteSheet();
+  }
+
+  public getMode(): RendererMode {
+    return 'classic';
   }
 
   public getPalette(): PaletteManager {

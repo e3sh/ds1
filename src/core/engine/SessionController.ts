@@ -52,6 +52,7 @@ export class SessionController {
       );
     }
     this.engine.setGhosts(ghosts);
+    this.engine.getRenderer()?.resetInterpolation?.();
   }
 
   public startGame(options?: ProceduralMapOptions | number): void {
@@ -458,6 +459,7 @@ export class SessionController {
       const renderer = this.engine.getRenderer();
       if (renderer) {
         renderer.getPalette().setMode(data.system.paletteMode ?? 'NORMAL');
+        renderer.resetInterpolation?.();
       }
 
       CombatSystem.clearEngagedEnemy();

@@ -133,6 +133,9 @@ export class EngineUIAndInputBinder {
       onExitAutoPlayVerify: () => {
         this.engine.stopAutoPlayVerifyMode(true);
       },
+      onToggleRenderer: () => {
+        this.engine.toggleRenderer();
+      },
     });
 
     return domUI;
@@ -253,6 +256,11 @@ export class EngineUIAndInputBinder {
       this.toggleMarker();
     });
 
+    // レンダラー切替コールバック (V キー)
+    inputManager.setOnToggleRenderer(() => {
+      this.engine.toggleRenderer();
+    });
+
     // インスペクタ表示切り替えコールバック (I キー)
     inputManager.setOnToggleInspect(() => {
       if (this.engine.isDemoActive()) {
@@ -332,6 +340,10 @@ export class EngineUIAndInputBinder {
           }
           if (code === 'Enter' || code === 'Tab' || code === 'KeyP') {
             this.engine.takeoverAutoPlay();
+            return true;
+          }
+          if (code === 'KeyV') {
+            this.engine.toggleRenderer();
             return true;
           }
           return true;

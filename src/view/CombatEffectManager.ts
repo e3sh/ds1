@@ -3,6 +3,7 @@ import { Position } from '../models/Types.js';
 import { WorldMap } from '../models/WorldMap.js';
 import { TileGraphics } from './TileGraphics.js';
 import { PaletteManager } from './PaletteManager.js';
+import type { CameraTransform } from './IGameRenderer.js';
 
 export interface KickSlideAnimation {
   path: Position[];
@@ -439,26 +440,48 @@ export class CombatEffectManager {
     ctx: CanvasRenderingContext2D,
     playerWorldPos: Position,
     map?: WorldMap,
-    palette?: PaletteManager
+    palette?: PaletteManager,
+    camera?: CameraTransform
   ): void {
+    const useCamera = camera !== undefined;
+    const zoom = camera?.zoom ?? 1;
+    const camPos: Position = camera
+      ? { x: camera.centerX, y: camera.centerY }
+      : playerWorldPos;
+
+    if (useCamera) {
+      ctx.save();
+      ctx.translate(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
+      ctx.scale(zoom, zoom);
+    }
+
+    const halfVisibleW = useCamera ? SCREEN_WIDTH / (2 * zoom) + TILE_SIZE : 0;
+    const halfVisibleH = useCamera ? SCREEN_HEIGHT / (2 * zoom) + TILE_SIZE : 0;
+
     for (const effect of this.effects) {
       if (!effect.worldPos) continue;
 
       // ワールド座標からスクリーンピクセル座標を算出（トーラス最短差分対応）
-      let dx = effect.worldPos.x - playerWorldPos.x;
-      let dy = effect.worldPos.y - playerWorldPos.y;
+      let dx = effect.worldPos.x - camPos.x;
+      let dy = effect.worldPos.y - camPos.y;
       if (map) {
-        const delta = map.getTorusDelta(playerWorldPos, effect.worldPos);
+        const delta = map.getTorusDelta(camPos, effect.worldPos);
         dx = delta.dx;
         dy = delta.dy;
       }
 
-      const sx = (dx + PLAYER_SCREEN_TILE_X) * TILE_SIZE;
-      const sy = (dy + PLAYER_SCREEN_TILE_Y) * TILE_SIZE;
+      const sx = useCamera ? (dx - 0.5) * TILE_SIZE : (dx + PLAYER_SCREEN_TILE_X) * TILE_SIZE;
+      const sy = useCamera ? (dy - 0.5) * TILE_SIZE : (dy + PLAYER_SCREEN_TILE_Y) * TILE_SIZE;
 
       // 画面外ならスキップ
-      if (sx < -TILE_SIZE || sx > 15 * TILE_SIZE || sy < -TILE_SIZE || sy > 11 * TILE_SIZE) {
-        continue;
+      if (useCamera) {
+        if (sx < -halfVisibleW || sx > halfVisibleW || sy < -halfVisibleH || sy > halfVisibleH) {
+          continue;
+        }
+      } else {
+        if (sx < -TILE_SIZE || sx > 15 * TILE_SIZE || sy < -TILE_SIZE || sy > 11 * TILE_SIZE) {
+          continue;
+        }
       }
 
       const progress = effect.elapsedMs / effect.durationMs; // 0.0 〜 1.0
@@ -528,18 +551,22 @@ export class CombatEffectManager {
       );
       const currPos = this.kickSlide.path[idx];
 
-      let dx = currPos.x - playerWorldPos.x;
-      let dy = currPos.y - playerWorldPos.y;
+      let dx = currPos.x - camPos.x;
+      let dy = currPos.y - camPos.y;
       if (map) {
-        const delta = map.getTorusDelta(playerWorldPos, currPos);
+        const delta = map.getTorusDelta(camPos, currPos);
         dx = delta.dx;
         dy = delta.dy;
       }
 
-      const sx = (dx + PLAYER_SCREEN_TILE_X) * TILE_SIZE;
-      const sy = (dy + PLAYER_SCREEN_TILE_Y) * TILE_SIZE;
+      const sx = useCamera ? (dx - 0.5) * TILE_SIZE : (dx + PLAYER_SCREEN_TILE_X) * TILE_SIZE;
+      const sy = useCamera ? (dy - 0.5) * TILE_SIZE : (dy + PLAYER_SCREEN_TILE_Y) * TILE_SIZE;
 
-      if (sx >= -TILE_SIZE && sx <= 15 * TILE_SIZE && sy >= -TILE_SIZE && sy <= 11 * TILE_SIZE) {
+      const isVisible = useCamera
+        ? sx >= -halfVisibleW && sx <= halfVisibleW && sy >= -halfVisibleH && sy <= halfVisibleH
+        : sx >= -TILE_SIZE && sx <= 15 * TILE_SIZE && sy >= -TILE_SIZE && sy <= 11 * TILE_SIZE;
+
+      if (isVisible) {
         if (palette) {
           TileGraphics.drawTile(ctx, 'BLOCK', sx, sy, palette);
         } else {
@@ -548,6 +575,10 @@ export class CombatEffectManager {
         }
         this.drawKickDust(ctx, sx, sy, idx, this.kickSlide.path);
       }
+    }
+
+    if (useCamera) {
+      ctx.restore();
     }
 
     // 画面全体フラッシュ演出（ホワイト・シアン等のフラッシュオーバーレイ）

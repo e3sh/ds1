@@ -133,7 +133,9 @@ export class TileGraphics {
     type: TileType,
     screenX: number,
     screenY: number,
-    palette: PaletteManager
+    palette: PaletteManager,
+    destWidth: number = TILE_SIZE,
+    destHeight: number = TILE_SIZE
   ): void {
     if (typeof ctx.drawImage === 'function') {
       const sheet = this.getOrCreateSpriteSheet();
@@ -150,8 +152,8 @@ export class TileGraphics {
             TILE_SIZE,
             screenX,
             screenY,
-            TILE_SIZE,
-            TILE_SIZE
+            destWidth,
+            destHeight
           );
           return;
         }

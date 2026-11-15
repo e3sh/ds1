@@ -6,6 +6,8 @@ import { EnemyInstance } from '../models/Enemy.js';
 import { Ghost } from '../models/Ghost.js';
 import { Dragon, DragonPart } from '../models/Dragon.js';
 import { CanvasRenderer } from '../view/CanvasRenderer.js';
+import { SmoothCanvasRenderer } from '../view/SmoothCanvasRenderer.js';
+import { IGameRenderer, RendererMode } from '../view/IGameRenderer.js';
 import { CombatEffectManager } from '../view/CombatEffectManager.js';
 import { EnemyAISystem } from '../systems/EnemyAISystem.js';
 import { GhostAISystem } from '../systems/GhostAISystem.js';
@@ -48,7 +50,9 @@ export class GameEngine {
   private enemies: EnemyInstance[];
   private ghosts: Ghost[];
   private dragon: Dragon;
-  private renderer?: CanvasRenderer;
+  private canvas?: HTMLCanvasElement | null;
+  private renderer?: IGameRenderer;
+  private rendererMode: RendererMode = 'classic';
   private combatEffects: CombatEffectManager;
   private domUI?: DOMUIManager;
   private turnManager: TurnManager;
@@ -96,7 +100,8 @@ export class GameEngine {
     ChestSystem.setDefaultRng(this.rng);
 
     this.audio = PSGAudio.getInstance();
-    this.renderer = resolvedCanvas ? new CanvasRenderer(resolvedCanvas) : undefined;
+    this.canvas = resolvedCanvas;
+    this.renderer = resolvedCanvas ? this.createRenderer(this.rendererMode, resolvedCanvas) : undefined;
     this.combatEffects = new CombatEffectManager();
     this.turnManager = new TurnManager();
     this.inputManager = new InputManager();
@@ -121,12 +126,21 @@ export class GameEngine {
       this.domUI.setGameState(this.state);
       this.domUI.updateSoundStatus(this.audio.isMuted());
       this.domUI.updateMarkerStatus(this.uiBinder.isMarkerEnabled());
+      this.domUI.updateRendererMode(this.rendererMode);
       this.refreshContinueButton();
     }
 
     if (this.renderer) {
       this.renderer.setTacticalMarker(this.uiBinder.isMarkerEnabled());
     }
+
+    // RETURN / JUMP 魔法発動時は補間をスキップして即座スナップ
+    this.eventBus.on('magic:cast', (data) => {
+      if (!data.success) return;
+      if (data.magicName === 'RETURN' || data.magicName === 'JUMP') {
+        this.renderer?.resetInterpolation?.();
+      }
+    });
 
     this.sessionController.initLevelEntities();
     this.uiBinder.bindInputHandlers(this.inputManager);
@@ -149,10 +163,72 @@ export class GameEngine {
   public stop(): void {
     this.gameLoop.stop();
     this.inputManager.destroy();
+    this.renderer?.destroy?.();
     this.audio.stopBGM();
   }
 
+  private createRenderer(mode: RendererMode, canvas: HTMLCanvasElement): IGameRenderer {
+    return mode === 'smooth' ? new SmoothCanvasRenderer(canvas) : new CanvasRenderer(canvas);
+  }
+
+  public getRendererMode(): RendererMode {
+    return this.rendererMode;
+  }
+
+  public toggleRenderer(): RendererMode {
+    const nextMode: RendererMode = this.rendererMode === 'classic' ? 'smooth' : 'classic';
+    return this.switchRenderer(nextMode);
+  }
+
+  public switchRenderer(mode: RendererMode): RendererMode {
+    if (mode === this.rendererMode && this.renderer) {
+      return this.rendererMode;
+    }
+
+    const prevPaletteMode = this.renderer?.getPalette().getMode() ?? 'NORMAL';
+    const prevMarker = this.renderer?.isTacticalMarkerEnabled() ?? this.uiBinder.isMarkerEnabled();
+
+    this.renderer?.destroy?.();
+
+    // 将来の WebGPU 等のコンテキスト切替も見据え、#game-container 内の <canvas> 要素を再生成・差し替え
+    if (this.canvas && typeof document !== 'undefined' && this.canvas.parentElement) {
+      const nextCanvas = document.createElement('canvas');
+      nextCanvas.id = this.canvas.id || 'game-canvas';
+      nextCanvas.width = this.canvas.width;
+      nextCanvas.height = this.canvas.height;
+      if (this.canvas.className) {
+        nextCanvas.className = this.canvas.className;
+      }
+      this.canvas.parentElement.replaceChild(nextCanvas, this.canvas);
+      this.canvas = nextCanvas;
+    }
+
+    this.rendererMode = mode;
+    if (this.canvas) {
+      this.renderer = this.createRenderer(mode, this.canvas);
+      this.renderer.getPalette().setMode(prevPaletteMode);
+      this.renderer.setTacticalMarker(prevMarker);
+    }
+
+    this.domUI?.updateRendererMode(mode);
+    this.domUI?.addLog(
+      mode === 'smooth'
+        ? '✨ レンダラーを SMOOTH（スムーズスクロール＆ズーム俯瞰）に切り替えました。'
+        : '🎨 レンダラーを CLASSIC（従来ドット固定描画）に切り替えました。',
+      'info'
+    );
+
+    this.render();
+    return this.rendererMode;
+  }
+
   private update(deltaMs: number): void {
+    // レンダラーの補間・カメラアニメーションは状態に関わらず更新
+    this.renderer?.update?.(deltaMs, {
+      autoPlaySpeed: this.demoController.getAutoPlaySpeed(),
+      isSpectatorMode: this.demoController.isDemoActive(),
+    });
+
     if (this.state !== 'PLAYING') return;
 
     // 1. ターンの時間進行
@@ -571,7 +647,7 @@ export class GameEngine {
     return this.combatEffects;
   }
 
-  public getRenderer(): CanvasRenderer | undefined {
+  public getRenderer(): IGameRenderer | undefined {
     return this.renderer;
   }
 

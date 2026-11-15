@@ -33,6 +33,7 @@ import './test-hierarchical-generator.js';
 import './test-ai-perception-strategy.js';
 import './test-autoplay-v2-integration.js';
 import './systems/MapProfiler.test.js';
+import './test-renderer-switching.js';
 
 
 

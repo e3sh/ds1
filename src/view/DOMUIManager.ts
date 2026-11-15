@@ -16,6 +16,7 @@ import { InspectorModal, InspectorData } from './InspectorModal.js';
 import { HelpModal, HelpTabType } from './HelpModal.js';
 import { CustomStageModal } from './CustomStageModal.js';
 import { MapPresetData, MapPresetManager } from '../services/MapPresetManager.js';
+import type { RendererMode } from './IGameRenderer.js';
 
 export interface LogEntry {
   id: string;
@@ -47,6 +48,7 @@ export interface DOMUICallbacks {
   onTakeoverAutoPlay?: () => void;
   onToggleAutoPlay?: () => void;
   onExitAutoPlayVerify?: () => void;
+  onToggleRenderer?: () => void;
   onOpenCustomModal?: () => void;
   onCloseCustomModal?: () => void;
 }
@@ -81,6 +83,7 @@ export class DOMUIManager {
 
   // モーダル・UIコントロール
   private markerBtnEl: HTMLButtonElement | null = null;
+  private rendererBtnEl: HTMLButtonElement | null = null;
   private soundBtnEl: HTMLButtonElement | null = null;
   private giveupBtnEl: HTMLButtonElement | null = null;
   private saveQuitBtnEl: HTMLButtonElement | null = null;
@@ -195,6 +198,7 @@ export class DOMUIManager {
       <div class="top-bar-controls">
         <div class="top-bar-btn-group">
           <button class="hud-action-btn autoplay-toggle-btn" id="dom-autoplay-toggle-btn" title="自動自走 ⇔ 手動操作のシームレス切替 [Tab] / [P]" style="background: #263238; color: #b0bec5; border: 1px solid #455a64;">🤖 AUTO: OFF</button>
+          <button class="hud-action-btn renderer-toggle-btn" id="dom-renderer-btn" title="レンダラー切替 (CLASSIC ⇔ SMOOTH) [V]" style="background: #1a2436; color: #90caf9; border: 1px solid #394b6b;">🎨 CLASSIC</button>
           <button class="hud-action-btn marker-toggle-btn active" id="dom-marker-btn" title="敵相対マーカー切替 [T]">🎯 TACTICAL</button>
           <button class="hud-action-btn inspect-btn" id="dom-inspect-btn" title="マップ構造＆成長パラメータインスペクタ [I]">📊 INSPECT</button>
           <button class="hud-action-btn help-btn" id="dom-help-btn" title="アイテム効果＆冒険ガイド [H]" style="background: #0c4a6e; color: #7dd3fc; border: 1px solid #0284c7;">📖 HELP</button>
@@ -425,6 +429,7 @@ export class DOMUIManager {
     this.targetBodyEl = this.container.querySelector('#dom-target-body');
 
     this.markerBtnEl = (document.getElementById('dom-marker-btn') ?? this.topBarEl?.querySelector('#dom-marker-btn') ?? this.container.querySelector('#dom-marker-btn')) as HTMLButtonElement | null;
+    this.rendererBtnEl = (document.getElementById('dom-renderer-btn') ?? this.topBarEl?.querySelector('#dom-renderer-btn') ?? this.container.querySelector('#dom-renderer-btn')) as HTMLButtonElement | null;
     this.soundBtnEl = (document.getElementById('dom-sound-btn') ?? this.topBarEl?.querySelector('#dom-sound-btn') ?? this.container.querySelector('#dom-sound-btn')) as HTMLButtonElement | null;
     this.giveupBtnEl = (document.getElementById('dom-giveup-btn') ?? this.topBarEl?.querySelector('#dom-giveup-btn') ?? this.container.querySelector('#dom-giveup-btn')) as HTMLButtonElement | null;
     this.saveQuitBtnEl = (document.getElementById('dom-savequit-btn') ?? this.topBarEl?.querySelector('#dom-savequit-btn') ?? this.container.querySelector('#dom-savequit-btn')) as HTMLButtonElement | null;
@@ -481,6 +486,12 @@ export class DOMUIManager {
     if (this.markerBtnEl) {
       this.markerBtnEl.addEventListener('click', () => {
         if (this.callbacks.onToggleMarker) this.callbacks.onToggleMarker();
+      });
+    }
+
+    if (this.rendererBtnEl) {
+      this.rendererBtnEl.addEventListener('click', () => {
+        if (this.callbacks.onToggleRenderer) this.callbacks.onToggleRenderer();
       });
     }
 
@@ -717,6 +728,26 @@ export class DOMUIManager {
 
   public isTactical(): boolean {
     return this.isTacticalMarkerEnabled;
+  }
+
+  /**
+   * レンダラー表示モード（CLASSIC / SMOOTH）のUI反映
+   */
+  public updateRendererMode(mode: RendererMode): void {
+    if (!this.rendererBtnEl) return;
+    if (mode === 'smooth') {
+      this.rendererBtnEl.textContent = '✨ SMOOTH';
+      this.rendererBtnEl.title = 'スムーズ補間＆ズーム俯瞰レンダラー (クリックまたは [V] でCLASSIC切替)';
+      this.rendererBtnEl.style.background = '#0d3b4c';
+      this.rendererBtnEl.style.color = '#00e5ff';
+      this.rendererBtnEl.style.borderColor = '#00acc1';
+    } else {
+      this.rendererBtnEl.textContent = '🎨 CLASSIC';
+      this.rendererBtnEl.title = 'クラシック固定ドットレンダラー (クリックまたは [V] でSMOOTH切替)';
+      this.rendererBtnEl.style.background = '#1a2436';
+      this.rendererBtnEl.style.color = '#90caf9';
+      this.rendererBtnEl.style.borderColor = '#394b6b';
+    }
   }
 
   /**

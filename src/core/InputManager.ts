@@ -18,6 +18,7 @@ export class InputManager {
   private onConfirmYes?: SimpleCallback;
   private onConfirmNo?: SimpleCallback;
   private onToggleMarker?: SimpleCallback;
+  private onToggleRenderer?: SimpleCallback;
   private onToggleInspect?: SimpleCallback;
   private onToggleHelp?: SimpleCallback;
   private onToggleAutoPlay?: SimpleCallback;
@@ -71,6 +72,10 @@ export class InputManager {
 
   public setOnToggleMarker(cb: SimpleCallback): void {
     this.onToggleMarker = cb;
+  }
+
+  public setOnToggleRenderer(cb: SimpleCallback): void {
+    this.onToggleRenderer = cb;
   }
 
   public setOnToggleInspect(cb: SimpleCallback): void {
@@ -185,6 +190,12 @@ export class InputManager {
     // 敵相対マーカー切替 (T キー)
     if (e.code === 'KeyT' && this.onToggleMarker) {
       this.onToggleMarker();
+      return;
+    }
+
+    // レンダラー切替 (V キー)
+    if (e.code === 'KeyV' && this.onToggleRenderer) {
+      this.onToggleRenderer();
       return;
     }
 
