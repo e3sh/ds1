@@ -19,14 +19,30 @@ export class OpportunisticEvaluator {
     engine: GameEngine,
     mainDirective: StrategicDirective
   ): StrategicDirective | null {
+    const player = engine.getPlayer();
+    const map = snapshot.map;
+    const pPos = player.pos;
+
+    // 0. 既に死神憑依中の場合、近傍（距離<=3）の地面の死神は手持ちアイテムに関わらず踏むだけで安全に排除できる
+    if (player.hasDeath) {
+      const nearestDeath = MapSituationEvaluator.get(snapshot, engine).items.nearestDeath;
+      if (nearestDeath) {
+        const deathDist = map.getTorusDistance(pPos, nearestDeath).manhattan;
+        if (deathDist >= 1 && deathDist <= 3) {
+          return {
+            type: 'NAVIGATE_TO_POSITION',
+            targetPos: nearestDeath,
+            priority: 90 - deathDist,
+            reason: `💀 死神憑依中のため動線近傍の死神を安全排除 (${nearestDeath.x}, ${nearestDeath.y}) [距離:${deathDist}]`,
+          };
+        }
+      }
+    }
+
     // DS1では手ぶら（holdItem === 'NONE'）でしか床のアイテム（COIN, POTION）を拾えない
     if (!snapshot.milestones.canPickupFloorItem) {
       return null;
     }
-
-    const player = engine.getPlayer();
-    const map = snapshot.map;
-    const pPos = player.pos;
 
     // A. 現在地の足元にあるアイテム（距離 0）
     const floorItem = map.getItem(pPos);

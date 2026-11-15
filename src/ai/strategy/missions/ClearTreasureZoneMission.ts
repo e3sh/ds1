@@ -316,6 +316,20 @@ export class ClearTreasureZoneMission implements IStrategicMission {
       }
     }
 
+    // 2-D. 既に死神憑依中の場合、近傍の地面の死神を踏んで事前排除（追加の悪影響なし・手持ち維持）
+    if (player.hasDeath && !itemsSummary.shouldContinueChestChain && itemsSummary.nearestDeath) {
+      const deathDist = map.getTorusDistance(player.pos, itemsSummary.nearestDeath).manhattan;
+      if (deathDist >= 1 && deathDist <= 8) {
+        this.subMode = 'COLLECTING_DROP';
+        return {
+          type: 'NAVIGATE_TO_POSITION',
+          targetPos: itemsSummary.nearestDeath,
+          priority: 91,
+          reason: `💀 死神憑依中のため近傍の地面の死神を先行排除 (${itemsSummary.nearestDeath.x}, ${itemsSummary.nearestDeath.y})`,
+        };
+      }
+    }
+
     // 3. 鍵を持っていない場合: 鍵を回収
     if (player.holdItem !== 'KEY') {
       this.subMode = 'FETCHING_KEY';
@@ -370,12 +384,12 @@ export class ClearTreasureZoneMission implements IStrategicMission {
         !snapshot.milestones.isStrCapped &&
         itemsSummary.projectedStrFromNearbyStones < snapshot.params.targetStr;
 
+      let bestParityChest: Position | null = null;
       if (needMoreStr && player.stepCountSinceStone <= 7) {
         const remSteps = 8 - player.stepCountSinceStone;
         const zonePool = zone
           ? itemsSummary.getReachableChestsInZone(zone.bounds)
           : itemsSummary.chests;
-        let bestParityChest: Position | null = null;
         let bestParityDist = Infinity;
         for (const cPos of zonePool) {
           const d = map.getTorusDistance(player.pos, cPos).manhattan;
@@ -397,6 +411,10 @@ export class ClearTreasureZoneMission implements IStrategicMission {
           nearestChest = bestParityChest;
         }
       }
+
+      const isAtChestStep8 =
+        player.stepCountSinceStone === 8 && map.getObject(player.pos) === 'CHEST';
+      const useEightStep = needMoreStr && (bestParityChest !== null || isAtChestStep8);
 
       if (nearestChest) {
         const chestDist = map.getTorusDistance(player.pos, nearestChest).manhattan;
@@ -427,10 +445,10 @@ export class ClearTreasureZoneMission implements IStrategicMission {
         }
 
         return {
-          type: needMoreStr ? 'UNLOCK_CHEST_8STEP' : 'UNLOCK_CHEST_RAPID',
+          type: useEightStep ? 'UNLOCK_CHEST_8STEP' : 'UNLOCK_CHEST_RAPID',
           targetPos: nearestChest,
           priority: 88,
-          reason: needMoreStr ? `宝箱の8歩開錠 (${nearestChest.x}, ${nearestChest.y})` : `宝箱の最速開錠(コイン回収) (${nearestChest.x}, ${nearestChest.y})`,
+          reason: useEightStep ? `宝箱の8歩開錠 (${nearestChest.x}, ${nearestChest.y})` : `宝箱の最速開錠 (${nearestChest.x}, ${nearestChest.y})`,
         };
       }
 

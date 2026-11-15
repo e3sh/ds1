@@ -69,6 +69,8 @@ export interface ItemReachabilitySummary {
   nearestPowerStone: Position | null;
   rings: Position[];
   nearestRing: Position | null;
+  deaths: Position[];
+  nearestDeath: Position | null;
   chests: Position[];
   nearestChest: Position | null;
   totalActualChests: number;
@@ -509,6 +511,7 @@ export class MapSituationEvaluator {
     const potionsWithDist: { pos: Position; dist: number }[] = [];
     const stonesWithDist: { pos: Position; dist: number }[] = [];
     const ringsWithDist: { pos: Position; dist: number }[] = [];
+    const deathsWithDist: { pos: Position; dist: number }[] = [];
     const chestsWithDist: { pos: Position; dist: number }[] = [];
     const coinsForOpportunistic: { pos: Position; dist: number }[] = [];
 
@@ -656,6 +659,9 @@ export class MapSituationEvaluator {
           case 'RING':
             ringsWithDist.push({ pos: p, dist: tileBfsDist });
             break;
+          case 'DEATH':
+            deathsWithDist.push({ pos: p, dist: tileBfsDist });
+            break;
         }
       }
     }
@@ -670,6 +676,7 @@ export class MapSituationEvaluator {
     sortByDist(potionsWithDist);
     sortByDist(stonesWithDist);
     sortByDist(ringsWithDist);
+    sortByDist(deathsWithDist);
     sortByDist(chestsWithDist);
     sortByDist(coinsForOpportunistic);
 
@@ -737,6 +744,7 @@ export class MapSituationEvaluator {
     const coins = coinsForOpportunistic.map(c => c.pos);
     const powerStones = stonesWithDist.map(s => s.pos);
     const rings = ringsWithDist.map(r => r.pos);
+    const deaths = deathsWithDist.map(d => d.pos);
     const chests = chestsWithDist.map(c => c.pos);
 
     const mapW = map.width;
@@ -881,6 +889,8 @@ export class MapSituationEvaluator {
       nearestPowerStone: powerStones[0] ?? null,
       rings,
       nearestRing: rings[0] ?? null,
+      deaths,
+      nearestDeath: deaths[0] ?? null,
       chests,
       nearestChest: chests[0] ?? null,
       totalActualChests,

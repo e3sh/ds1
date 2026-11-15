@@ -497,6 +497,13 @@ export class TacticalExecutor {
     const chestPos = directive.targetPos!;
     const curPos = player.pos;
 
+    // ターゲット座標に宝箱が存在しない場合は8歩調整に入らず安全に通常ナビゲーションへフォールバック
+    if (map.getObject(chestPos) !== 'CHEST') {
+      this.eightStepController.clearEightStepState();
+      this.pivotTurns = 0;
+      return this.executeNavigate(directive, player, map, enemies, dragon, params, snapshot);
+    }
+
     // 0. 8歩周期同期コントローラによる最優先チェイン判定（0 <= stepCountSinceStone <= 6）
     if (player.holdItem === 'KEY' && player.stepCountSinceStone <= 6 && dragon && !this.eightStepController.eightStepTargetChestPos) {
       const cycleTarget = this.eightStepController.findNearbyChestForEightStepCycle(curPos, map, enemies, dragon, player);
