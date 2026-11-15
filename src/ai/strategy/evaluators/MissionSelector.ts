@@ -40,7 +40,6 @@ export class MissionSelector {
     const harvestOnCooldown = cooldownMissions?.has('HARVEST_POWER_STONE') ?? false;
     const earlyBreakOnCooldown = cooldownMissions?.has('EARLY_BREAK_UNLOCK') ?? false;
     const prepOnCooldown = cooldownMissions?.has('PREPARE_DRAGON_ASSAULT') ?? false;
-    const slayOnCooldown = cooldownMissions?.has('SLAY_DRAGON') ?? false;
 
     // ① ドラゴン全首撃破済み -> 王冠脱出
     if (dragon && (dragon.isAllHeadsDefeated || dragon.heads.every(h => !h.isAlive))) {
