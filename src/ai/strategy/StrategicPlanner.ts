@@ -5,12 +5,7 @@ import { IStrategicMission, MissionCompletionReason, MissionStatus } from './Str
 import { StrategicDirective } from './StrategicDirective.js';
 import { EmergencyEvacuateMission } from './missions/EmergencyEvacuateMission.js';
 import { CrownEscapeMission } from './missions/CrownEscapeMission.js';
-import { SlayDragonMission } from './missions/SlayDragonMission.js';
-import { PrepareDragonAssaultMission } from './missions/PrepareDragonAssaultMission.js';
-import { CashInGoldMission } from './missions/CashInGoldMission.js';
-import { EarlyBreakUnlockMission } from './missions/EarlyBreakUnlockMission.js';
-import { RelocateHomeMission } from './missions/RelocateHomeMission.js';
-import { ReadinessEvaluator } from './evaluators/ReadinessEvaluator.js';
+import { DragonReadinessAssessment, ReadinessEvaluator } from './evaluators/ReadinessEvaluator.js';
 import { DirectiveArbiter } from './arbitration/DirectiveArbiter.js';
 import { MissionSelector } from './evaluators/MissionSelector.js';
 import { TacticalExecutionResult, TacticalExecutionStatus } from '../tactics/TacticalExecutor.js';
@@ -167,8 +162,9 @@ export class StrategicPlanner {
     if (canDamageDragon && hasDiagonal) {
       this.defensePrepTurns++;
     }
+    const readyForDragon = MissionSelector.isReadyForDragon(snapshot, engine, this.defensePrepTurns);
     const canTransitionToPrep =
-      MissionSelector.isReadyForDragon(snapshot, engine, this.defensePrepTurns) ||
+      readyForDragon ||
       canDamageDragon ||
       (player.hasSword && allChestsAndStonesExhausted);
 
@@ -185,62 +181,18 @@ export class StrategicPlanner {
       player.holdItem !== 'POWER_STONE' &&
       !(player.holdItem === 'KEY' && MissionSelector.hasNearbyChest(player.pos, snapshot.map, 8, snapshot))
     ) {
-      // 要件1: 5条件（攻撃力・斜め移動・BREAK・MP・HP十分）を満たし、準備が完了またはタイムアウトしたら SlayDragonMission を起動
+      const activeCooldowns = this.getActiveCooldowns(snapshot.totalTurns);
       const assessment = ReadinessEvaluator.evaluateDragonReadiness(snapshot, engine, this.defensePrepTurns);
-      const readyForDragon = MissionSelector.isReadyForDragon(snapshot, engine, this.defensePrepTurns);
-      const noReachablePotion = items.nearbyPotionCountWithin15 === 0 && items.nearestPotion === null;
-      const prepCooldownUntil = this.missionCooldowns.get('PREPARE_DRAGON_ASSAULT') ?? 0;
-      const slayCooldownUntil = this.missionCooldowns.get('SLAY_DRAGON') ?? 0;
-      const prepOnCooldown = prepCooldownUntil > snapshot.totalTurns;
-      const slayOnCooldown = slayCooldownUntil > snapshot.totalTurns;
-
-      let nextMission: IStrategicMission;
-      if (readyForDragon && (assessment.isFullyPrepared || prepOnCooldown) && !slayOnCooldown) {
-        nextMission = new SlayDragonMission();
-      } else {
-        // 事前準備優先起動
-        if (player.experience < 12000 || !snapshot.milestones.canDiagonal || !snapshot.milestones.canBreak) {
-          const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
-          const hitsBreak = player.experience < 4000 && player.experience + estimatedGainedExp >= 4000;
-          const earlyBreakCooldownUntil = this.missionCooldowns.get('EARLY_BREAK_UNLOCK') ?? 0;
-          const earlyBreakOnCooldown = earlyBreakCooldownUntil > snapshot.totalTurns;
-          const clearZoneCooldownUntil = this.missionCooldowns.get('CLEAR_TREASURE_ZONE') ?? 0;
-          const clearZoneOnCooldown = clearZoneCooldownUntil > snapshot.totalTurns;
-          const canUnlockChests =
-            MissionSelector.hasReachableKey(snapshot.map, snapshot) &&
-            MissionSelector.hasReachableChests(snapshot.map, snapshot);
-
-          if (player.gold > 0 && (player.experience + estimatedGainedExp >= 12000 || hitsBreak || player.gold >= 3)) {
-            nextMission = new CashInGoldMission(player.gold);
-          } else if (!prepOnCooldown && items.nearestCoin !== null) {
-            nextMission = new PrepareDragonAssaultMission();
-          } else if (player.gold > 0) {
-            nextMission = new CashInGoldMission(player.gold);
-          } else if (!clearZoneOnCooldown && canUnlockChests) {
-            nextMission = this.selectNextMission(snapshot, engine);
-          } else if (!earlyBreakOnCooldown && MissionSelector.hasSafeEnemyNearby(player, snapshot)) {
-            nextMission = new EarlyBreakUnlockMission(12000);
-          } else {
-            nextMission = this.selectNextMission(snapshot, engine);
-          }
-        } else if (
-          !prepOnCooldown &&
-          ((!noReachablePotion && player.magic < 3) || assessment.needsPotionSweep || assessment.needsCoinSweep)
-        ) {
-          nextMission = new PrepareDragonAssaultMission();
-        } else if (assessment.needsGoldCashIn || player.gold > 0) {
-          nextMission = new CashInGoldMission(player.gold);
-        } else if (assessment.needsRelocation && !this.relocateDone && (player.holdItem === 'RING' || ReadinessEvaluator.hasMapRing(snapshot.map, snapshot))) {
-          const anchor = snapshot.spatial.recommendedRelocateAnchors[0] ?? { x: 32, y: 25 };
-          nextMission = new RelocateHomeMission(anchor);
-        } else if (!prepOnCooldown && player.hp < player.maxHp * 0.5 && player.hp < 15000) {
-          nextMission = new PrepareDragonAssaultMission();
-        } else if (!slayOnCooldown && readyForDragon) {
-          nextMission = new SlayDragonMission();
-        } else {
-          nextMission = this.selectNextMission(snapshot, engine);
-        }
-      }
+      const nextMission =
+        MissionSelector.selectDragonPrepMission(snapshot, engine, {
+          relocateDone: this.relocateDone,
+          prepTurns: this.defensePrepTurns,
+          cooldownMissions: activeCooldowns,
+          prioritizeImmediateSlay: true,
+          includeHeldKeyInChestCheck: false,
+          precomputedReady: readyForDragon,
+          precomputedAssessment: assessment,
+        }) ?? this.selectNextMission(snapshot, engine, { readyForDragon, assessment });
 
       // 同じミッションを再生成してチャタリングを起こす場合は中断しない
       if (nextMission.id !== this.activeMission.id) {
@@ -337,25 +289,35 @@ export class StrategicPlanner {
     }
   }
 
-  /**
-   * 次期ミッション選定（MissionSelectorへ委譲）
-   */
-  public selectNextMission(snapshot: TacticalSnapshot, engine: GameEngine): IStrategicMission {
+  private getActiveCooldowns(totalTurns: number): Set<string> {
     const activeCooldowns = new Set<string>();
     for (const [key, untilTurn] of this.missionCooldowns.entries()) {
-      if (untilTurn > snapshot.totalTurns) {
+      if (untilTurn > totalTurns) {
         activeCooldowns.add(key);
       } else {
         this.missionCooldowns.delete(key);
       }
     }
+    return activeCooldowns;
+  }
+
+  /**
+   * 次期ミッション選定（MissionSelectorへ委譲）
+   */
+  public selectNextMission(
+    snapshot: TacticalSnapshot,
+    engine: GameEngine,
+    precomputed?: { readyForDragon?: boolean; assessment?: DragonReadinessAssessment }
+  ): IStrategicMission {
+    const activeCooldowns = this.getActiveCooldowns(snapshot.totalTurns);
     return MissionSelector.selectNextMission(
       snapshot,
       engine,
       this.graveSealDone,
       this.relocateDone,
       this.defensePrepTurns,
-      activeCooldowns
+      activeCooldowns,
+      precomputed
     );
   }
 

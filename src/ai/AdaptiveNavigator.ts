@@ -10,6 +10,8 @@ import { MovementSystem } from '../systems/MovementSystem.js';
 import { BotAction, DynamicBotParameters } from './BotTypes.js';
 import type { TacticalContext } from './TacticalContext.js';
 import type { MapTacticalMetadata } from '../systems/generator/ThemeBlockTypes.js';
+import type { EpisodicMemory } from './perception/EpisodicMemory.js';
+import { CostMinHeap } from './utils/MinHeap.js';
 
 export interface PathResult {
   dir: Direction;
@@ -50,10 +52,7 @@ export class AdaptiveNavigator {
   public oscillationCount: number = 0;
   public pingPongCount: number = 0;
 
-  // 3. 到達不能ターゲット・ブラックリスト (座標キー "x,y" => 残り除外ターン数)
-  private unreachableTargets: Map<string, number> = new Map();
-
-  // 4. ワープ往復防止タブー
+  // 3. ワープ往復防止タブー
   private recentWarpTiles: { pos: Position; turnsRemaining: number }[] = [];
 
   // 5. 危険ゾーン退避タイル記憶
@@ -138,15 +137,7 @@ export class AdaptiveNavigator {
       this.oscillationCount = Math.max(0, this.oscillationCount - 1);
     }
 
-    // C. ブラックリスト・タイマーの減衰
-    for (const [key, turns] of this.unreachableTargets.entries()) {
-      if (turns <= 1) {
-        this.unreachableTargets.delete(key);
-      } else {
-        this.unreachableTargets.set(key, turns - 1);
-      }
-    }
-
+    // C. タブー・退避・強制徘徊タイマーの減衰
     for (let i = this.recentWarpTiles.length - 1; i >= 0; i--) {
       this.recentWarpTiles[i].turnsRemaining--;
       if (this.recentWarpTiles[i].turnsRemaining <= 0) {
@@ -167,21 +158,8 @@ export class AdaptiveNavigator {
   }
 
   // ==========================================================================
-  // ブラックリスト＆タブー操作
+  // タブー＆スタック救出操作
   // ==========================================================================
-
-  public markTargetUnreachable(pos: Position, turns: number = 30): void {
-    this.unreachableTargets.set(`${pos.x},${pos.y}`, turns);
-  }
-
-  public isTargetUnreachable(pos: Position): boolean {
-    const remaining = this.unreachableTargets.get(`${pos.x},${pos.y}`);
-    return remaining !== undefined && remaining > 0;
-  }
-
-  public clearUnreachableTargets(): void {
-    this.unreachableTargets.clear();
-  }
 
   public recordWarpEvent(fromPos: Position, _toPos: Position): void {
     this.recentWarpTiles.push({ pos: { ...fromPos }, turnsRemaining: 12 });
@@ -698,9 +676,8 @@ export class AdaptiveNavigator {
       }
     }
 
-    const queue: { pos: Position; firstDir: Direction | null; cost: number; steps: number }[] = [
-      { pos: from, firstDir: null, cost: 0, steps: 0 },
-    ];
+    const queue = new CostMinHeap<{ pos: Position; firstDir: Direction | null; cost: number; steps: number }>();
+    queue.push({ pos: from, firstDir: null, cost: 0, steps: 0 }, 0);
     const visited = new Map<string, number>();
     visited.set(`${from.x},${from.y}`, 0);
 
@@ -723,7 +700,7 @@ export class AdaptiveNavigator {
     let stepCount = 0;
     while (queue.length > 0 && stepCount < params.maxBfsSteps) {
       stepCount++;
-      const current = queue.shift()!;
+      const current = queue.pop()!;
       if (current.pos.x === to.x && current.pos.y === to.y) {
         return {
           dir: current.firstDir!,
@@ -911,9 +888,7 @@ export class AdaptiveNavigator {
           steps: current.steps + 1,
         };
 
-        const insertIdx = queue.findIndex(q => q.cost > newCost);
-        if (insertIdx === -1) queue.push(item);
-        else queue.splice(insertIdx, 0, item);
+        queue.push(item, newCost);
       }
     }
 
@@ -1186,13 +1161,15 @@ export class AdaptiveNavigator {
     enemies?: EnemyInstance[],
     player?: Player,
     limit: number = 8,
-    lockedPos?: Position | null
+    lockedPos?: Position | null,
+    memory?: EpisodicMemory,
+    totalTurns: number = 0
   ): Position[] {
     const candidates: { pos: Position; score: number }[] = [];
     for (let y = 0; y < map.height; y++) {
       for (let x = 0; x < map.width; x++) {
         const p = { x, y };
-        if (this.isTargetUnreachable(p)) continue;
+        if (memory?.isTargetUnreachable(p, totalTurns)) continue;
         if (map.getItem(p) === itemType) {
           if (enemies && player) {
             const enemy = enemies.find(e => e.isAlive && e.pos.x === x && e.pos.y === y);
@@ -1224,13 +1201,15 @@ export class AdaptiveNavigator {
     enemies?: EnemyInstance[],
     player?: Player,
     limit: number = 8,
-    lockedPos?: Position | null
+    lockedPos?: Position | null,
+    memory?: EpisodicMemory,
+    totalTurns: number = 0
   ): Position[] {
     const candidates: { pos: Position; score: number }[] = [];
     for (let y = 0; y < map.height; y++) {
       for (let x = 0; x < map.width; x++) {
         const p = { x, y };
-        if (this.isTargetUnreachable(p)) continue;
+        if (memory?.isTargetUnreachable(p, totalTurns)) continue;
         if (map.getObject(p) === 'CHEST') {
           if (enemies && player) {
             const enemy = enemies.find(e => e.isAlive && e.pos.x === x && e.pos.y === y);

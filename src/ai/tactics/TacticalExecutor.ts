@@ -22,6 +22,8 @@ export interface TacticalExecutionResult {
   action: BotAction;
   description: string;
   status: TacticalExecutionStatus;
+  /** true の場合、ブロック押し出し等のため resolveMoveOrBreak による BREAK/KICK 変換をスキップする */
+  skipMoveOrBreak?: boolean;
 }
 
 /**
@@ -45,6 +47,21 @@ export class TacticalExecutor {
   ) {}
 
   public execute(
+    directive: StrategicDirective,
+    snapshot: TacticalSnapshot,
+    engine: GameEngine
+  ): TacticalExecutionResult {
+    const result = this.executeInternal(directive, snapshot, engine);
+    if (result.skipMoveOrBreak) {
+      return result;
+    }
+    return {
+      ...result,
+      action: this.resolveMoveOrBreak(result.action, engine.getPlayer(), snapshot.map),
+    };
+  }
+
+  private executeInternal(
     directive: StrategicDirective,
     snapshot: TacticalSnapshot,
     engine: GameEngine
@@ -360,7 +377,6 @@ export class TacticalExecutor {
     if (!isTargetHome) {
       const isTargetCrown = directive.targetItemType === 'CROWN' || map.getItem(targetPos) === 'CROWN';
       const blacklistTurns = isTargetCrown ? 6 : (player.experience < 4000 ? 80 : 45);
-      this.nav.markTargetUnreachable(targetPos, blacklistTurns);
       snapshot.memory.markTargetUnreachable(targetPos, blacklistTurns, snapshot.totalTurns);
     }
     const wander = this.nav.wanderSafe(player, map, enemies, dragon);
@@ -406,7 +422,6 @@ export class TacticalExecutor {
           };
         }
         // MP不足等でBREAK/KICKが唱えられない場合: 開削を断念してブラックリスト化
-        this.nav.markTargetUnreachable(targetPos, 40);
         snapshot.memory.markTargetUnreachable(targetPos, 40, snapshot.totalTurns);
         const wander = this.nav.wanderSafe(player, map, enemies, dragon);
         return {
@@ -428,7 +443,6 @@ export class TacticalExecutor {
     }
 
     if (standCandidates.length === 0) {
-      this.nav.markTargetUnreachable(targetPos, 30);
       snapshot.memory.markTargetUnreachable(targetPos, 30, snapshot.totalTurns);
       const wander = this.nav.wanderSafe(player, map, enemies, dragon);
       return {
@@ -459,7 +473,6 @@ export class TacticalExecutor {
     }
 
     // どの隣接マスへの経路も見つからない場合: 到達不能マーク
-    this.nav.markTargetUnreachable(targetPos, 20);
     snapshot.memory.markTargetUnreachable(targetPos, 20, snapshot.totalTurns);
     const wander = this.nav.wanderSafe(player, map, enemies, dragon);
     return {
@@ -732,7 +745,6 @@ export class TacticalExecutor {
     }
 
     // スワップ不能（空き床不在・経路遮断等）の場合は2マス往復ループを防ぐため到達不能登録しリセットして安全移動
-    this.nav.markTargetUnreachable(player.pos, 20);
     snapshot?.memory.markTargetUnreachable(player.pos, 20, snapshot.totalTurns);
     this.swapState.itemToPickupPos = null;
     this.swapState.tempDroppedKeyPos = null;
@@ -768,11 +780,9 @@ export class TacticalExecutor {
         const standPos = map.wrapPosition(MovementSystem.getNextPosition(bPos, oppDir));
 
         if (player.pos.x === standPos.x && player.pos.y === standPos.y) {
-          // dPos（移動先）が進入可能かチェック
-          const dBase = map.getBaseTile(dPos);
-          const dObj = map.getObject(dPos);
-          if (dBase === 'WALL_STATIC' || dObj === 'BLOCK') {
-            snapshot.memory.markTargetUnreachable(bPos, 100, snapshot.totalTurns);
+          // dPos（移動先）が進入可能かチェック（静的壁・ブロック・敵がいれば押せない）
+          if (!map.isPushDestinationValid(dPos, enemies)) {
+            snapshot.memory.markTargetUnreachable(bPos, 40, snapshot.totalTurns);
             const wander = this.nav.wanderSafe(player, map, enemies, dragon);
             return {
               action: this.resolveMoveOrBreak(wander, player, map),
@@ -781,11 +791,12 @@ export class TacticalExecutor {
             };
           }
 
-          // 既に立ち位置にいるなら bPos 方向へ直進して押す！
+          // 既に立ち位置にいるなら bPos 方向へ直進して押す（BREAK 変換は抑止）
           return {
             action: { type: 'MOVE', dir: pushDir },
             description: `🪦 墓封鎖ブロックプッシュ実行 -> ${pushDir}`,
             status: 'SUCCESS',
+            skipMoveOrBreak: true,
           };
         }
 
@@ -851,7 +862,6 @@ export class TacticalExecutor {
     // ※ドラゴン首（dragon.heads）の場合は絶対に unreachable マークしてはならない！
     const isDragonPart = dragon && dragon.heads.some(h => h.pos.x === targetPos.x && h.pos.y === targetPos.y);
     if (!isDragonPart) {
-      this.nav.markTargetUnreachable(targetPos, 8);
       snapshot.memory.markTargetUnreachable(targetPos, 8, snapshot.totalTurns);
     }
 
@@ -875,12 +885,10 @@ export class TacticalExecutor {
     if (obj === 'BLOCK') {
       if (MagicSystem.canCast(player, 'BREAK').allowed) {
         player.dir = dir;
-        this.nav.clearUnreachableTargets();
         return { type: 'MAGIC', magic: 'BREAK' };
       }
       if (MagicSystem.canCast(player, 'KICK').allowed) {
         player.dir = dir;
-        this.nav.clearUnreachableTargets();
         return { type: 'MAGIC', magic: 'KICK' };
       }
     }

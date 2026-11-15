@@ -9,7 +9,7 @@ import { CashInGoldMission } from '../missions/CashInGoldMission.js';
 import { SlayDragonMission } from '../missions/SlayDragonMission.js';
 import { PrepareDragonAssaultMission } from '../missions/PrepareDragonAssaultMission.js';
 import { RelocateHomeMission } from '../missions/RelocateHomeMission.js';
-import { ReadinessEvaluator } from './ReadinessEvaluator.js';
+import { DragonReadinessAssessment, ReadinessEvaluator } from './ReadinessEvaluator.js';
 import { CrownEscapeMission } from '../missions/CrownEscapeMission.js';
 import { ExploreWanderMission } from '../missions/ExploreWanderMission.js';
 import { Position } from '../../../models/Types.js';
@@ -30,7 +30,8 @@ export class MissionSelector {
     _graveSealDone: boolean,
     relocateDone?: boolean,
     prepTurns: number = 0,
-    cooldownMissions?: Set<string>
+    cooldownMissions?: Set<string>,
+    precomputed?: { readyForDragon?: boolean; assessment?: DragonReadinessAssessment }
   ): IStrategicMission {
     const player = engine.getPlayer();
     const map = snapshot.map;
@@ -157,65 +158,17 @@ export class MissionSelector {
     // ※要件1: 5条件（攻撃力・斜め移動・BREAK・MP>=3・HP十分）をすべて満たすまで絶対に SlayDragonMission を起動しない
     const needAssaultPrep = canDamageDragon || allChestsAndStonesExhausted;
     if (needAssaultPrep) {
-      const assessment = ReadinessEvaluator.evaluateDragonReadiness(snapshot, engine, prepTurns);
-      const readyForDragon = this.isReadyForDragon(snapshot, engine, prepTurns);
-
-      // 1. EXP不足 (< 12,000 または BREAK/斜め未習得)
-      if (player.experience < 12000 || !snapshot.milestones.canDiagonal || !snapshot.milestones.canBreak) {
-        const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
-        const hitsBreak = player.experience < 4000 && player.experience + estimatedGainedExp >= 4000;
-        if (
-          player.gold > 0 &&
-          (player.experience + estimatedGainedExp >= 12000 || hitsBreak || player.gold >= 3)
-        ) {
-          return new CashInGoldMission(player.gold);
-        }
-        // 逃走敵追跡より確実な床コイン回収・一括換金を最優先
-        if (!prepOnCooldown && itemsAll.nearestCoin !== null) {
-          return new PrepareDragonAssaultMission();
-        }
-        if (player.gold > 0) {
-          return new CashInGoldMission(player.gold);
-        }
-        if (!clearZoneOnCooldown && canUnlockChests) {
-          const nearestZone = snapshot.spatial.getNearestUnclearedTreasureZone(player.pos, map, snapshot.memory, snapshot.totalTurns);
-          if (nearestZone) return new ClearTreasureZoneMission(nearestZone.id);
-          return new ClearTreasureZoneMission('GLOBAL_ALL');
-        }
-        if (!earlyBreakOnCooldown && this.hasSafeEnemyNearby(player, snapshot)) {
-          return new EarlyBreakUnlockMission(12000);
-        }
-      }
-
-      // 2. MP不足 (< 3) または ポーション/コイン回収が必要（枯渇またはクールダウン時はスキップ）
-      const noReachablePotion = itemsAll.nearbyPotionCountWithin15 === 0 && itemsAll.nearestPotion === null;
-
-      if (
-        !prepOnCooldown &&
-        ((!noReachablePotion && player.magic < 3) || assessment.needsPotionSweep || assessment.needsCoinSweep)
-      ) {
-        return new PrepareDragonAssaultMission();
-      }
-
-      // 3. コイン換金が必要
-      if (assessment.needsGoldCashIn || player.gold > 0) {
-        return new CashInGoldMission(player.gold);
-      }
-
-      // 4. 前線移転条件合致時
-      if (assessment.needsRelocation && !relocateDone && (player.holdItem === 'RING' || ReadinessEvaluator.hasMapRing(map, snapshot))) {
-        const anchor = snapshot.spatial.recommendedRelocateAnchors[0] ?? { x: 32, y: 25 };
-        return new RelocateHomeMission(anchor);
-      }
-
-      // 5. HP十分性チェック
-      if (!prepOnCooldown && player.hp < player.maxHp * 0.5 && player.hp < 15000) {
-        return new PrepareDragonAssaultMission();
-      }
-
-      // 6. 全条件を満たした場合のみ決戦起動
-      if (!slayOnCooldown && readyForDragon && (assessment.isFullyPrepared || prepOnCooldown)) {
-        return new SlayDragonMission();
+      const prepMission = this.selectDragonPrepMission(snapshot, engine, {
+        relocateDone,
+        prepTurns,
+        cooldownMissions,
+        prioritizeImmediateSlay: false,
+        includeHeldKeyInChestCheck: true,
+        precomputedReady: precomputed?.readyForDragon,
+        precomputedAssessment: precomputed?.assessment,
+      });
+      if (prepMission) {
+        return prepMission;
       }
     }
 
@@ -378,5 +331,108 @@ export class MissionSelector {
       (canDiagonal && (prepTurns >= 25 || snapshot.totalTurns >= 600 || (noReachablePotion && player.gold === 0)));
 
     return canDamageAllHeads && canDiagonal && canBreak && hasDragonAssaultMagic && hasEnoughHp && hasEnoughDefense;
+  }
+
+  /**
+   * 決戦準備・決戦移行ミッションの統合選定ロジック
+   * （通常選定 ④ と 緊急割り込み 1-C の双方から利用し、重複評価を排除する）
+   */
+  public static selectDragonPrepMission(
+    snapshot: TacticalSnapshot,
+    engine: GameEngine,
+    options: {
+      relocateDone?: boolean;
+      prepTurns?: number;
+      cooldownMissions?: Set<string>;
+      prioritizeImmediateSlay?: boolean;
+      includeHeldKeyInChestCheck?: boolean;
+      precomputedReady?: boolean;
+      precomputedAssessment?: DragonReadinessAssessment;
+    } = {}
+  ): IStrategicMission | null {
+    const player = engine.getPlayer();
+    const map = snapshot.map;
+    const prepTurns = options.prepTurns ?? 0;
+    const cooldownMissions = options.cooldownMissions;
+    const clearZoneOnCooldown = cooldownMissions?.has('CLEAR_TREASURE_ZONE') ?? false;
+    const earlyBreakOnCooldown = cooldownMissions?.has('EARLY_BREAK_UNLOCK') ?? false;
+    const prepOnCooldown = cooldownMissions?.has('PREPARE_DRAGON_ASSAULT') ?? false;
+    const slayOnCooldown = cooldownMissions?.has('SLAY_DRAGON') ?? false;
+
+    const itemsAll = MapSituationEvaluator.get(snapshot, engine).items;
+    const assessment = options.precomputedAssessment ?? ReadinessEvaluator.evaluateDragonReadiness(snapshot, engine, prepTurns);
+    const readyForDragon = options.precomputedReady ?? this.isReadyForDragon(snapshot, engine, prepTurns);
+
+    if (options.prioritizeImmediateSlay && readyForDragon && (assessment.isFullyPrepared || prepOnCooldown) && !slayOnCooldown) {
+      return new SlayDragonMission();
+    }
+
+    // 1. EXP不足 (< 12,000 または BREAK/斜め未習得)
+    if (player.experience < 12000 || !snapshot.milestones.canDiagonal || !snapshot.milestones.canBreak) {
+      const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
+      const hitsBreak = player.experience < 4000 && player.experience + estimatedGainedExp >= 4000;
+      if (
+        player.gold > 0 &&
+        (player.experience + estimatedGainedExp >= 12000 || hitsBreak || player.gold >= 3)
+      ) {
+        return new CashInGoldMission(player.gold);
+      }
+      // 逃走敵追跡より確実な床コイン回収・一括換金を最優先
+      if (!prepOnCooldown && itemsAll.nearestCoin !== null) {
+        return new PrepareDragonAssaultMission();
+      }
+      if (player.gold > 0) {
+        return new CashInGoldMission(player.gold);
+      }
+
+      const hasKey = options.includeHeldKeyInChestCheck ? (player.holdItem === 'KEY' || this.hasReachableKey(map, snapshot)) : this.hasReachableKey(map, snapshot);
+      const canUnlockChests = hasKey && this.hasReachableChests(map, snapshot);
+      if (!clearZoneOnCooldown && canUnlockChests) {
+        if (options.prioritizeImmediateSlay) {
+          return null;
+        }
+        const nearestZone = snapshot.spatial.getNearestUnclearedTreasureZone(player.pos, map, snapshot.memory, snapshot.totalTurns);
+        if (nearestZone) return new ClearTreasureZoneMission(nearestZone.id);
+        return new ClearTreasureZoneMission('GLOBAL_ALL');
+      }
+      if (!earlyBreakOnCooldown && this.hasSafeEnemyNearby(player, snapshot)) {
+        return new EarlyBreakUnlockMission(12000);
+      }
+      if (options.prioritizeImmediateSlay) {
+        return null;
+      }
+    }
+
+    // 2. MP不足 (< 3) または ポーション/コイン回収が必要（枯渇またはクールダウン時はスキップ）
+    const noReachablePotion = itemsAll.nearbyPotionCountWithin15 === 0 && itemsAll.nearestPotion === null;
+    if (
+      !prepOnCooldown &&
+      ((!noReachablePotion && player.magic < 3) || assessment.needsPotionSweep || assessment.needsCoinSweep)
+    ) {
+      return new PrepareDragonAssaultMission();
+    }
+
+    // 3. コイン換金が必要
+    if (assessment.needsGoldCashIn || player.gold > 0) {
+      return new CashInGoldMission(player.gold);
+    }
+
+    // 4. 前線移転条件合致時
+    if (assessment.needsRelocation && !options.relocateDone && (player.holdItem === 'RING' || ReadinessEvaluator.hasMapRing(map, snapshot))) {
+      const anchor = snapshot.spatial.recommendedRelocateAnchors[0] ?? { x: 32, y: 25 };
+      return new RelocateHomeMission(anchor);
+    }
+
+    // 5. HP十分性チェック
+    if (!prepOnCooldown && player.hp < player.maxHp * 0.5 && player.hp < 15000) {
+      return new PrepareDragonAssaultMission();
+    }
+
+    // 6. 全条件を満たした場合のみ決戦起動
+    if (!slayOnCooldown && readyForDragon && (options.prioritizeImmediateSlay || assessment.isFullyPrepared || prepOnCooldown)) {
+      return new SlayDragonMission();
+    }
+
+    return null;
   }
 }

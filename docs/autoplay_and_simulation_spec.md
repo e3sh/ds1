@@ -37,7 +37,7 @@ flowchart TD
     end
 
     subgraph Bot_Orchestrator ["AutoPlayBot (PST オーケストレータ)"]
-        Bot["AutoPlayBot<br>(step / decideAction / resolveMoveOrBreak)"]
+        Bot["AutoPlayBot<br>(step / decideAction)"]
         PARAMS["TacticalContext<br>(幾何スケール & DynamicBotParameters 算出)"]
     end
 
@@ -131,7 +131,7 @@ flowchart TD
 | :--- | :--- |
 | **`SpatialKnowledge`** | `MapTacticalMetadata` を統合し、宝物庫ゾーン（`TreasureZoneState`）、開削ショートカット（`BreachShortcutState`）、墓パズル（`GravePuzzleState`）、ドラゴン巣様式（`DragonLairStyle`）、前線移転推奨アンカーを管理。さらにドラゴンの生存首ごとにブレス射線・体パーツ・壁を除外した斜め安全攻撃マス（`calculateHeadAttackSpots`）を算出する。 |
 | **`SituationalPerception`** | ① `evaluateMilestones`: 剣所持、`canBreak`（`!hasDeath && MP>=1 && EXP>=4000`）、`canDiagonal`（`EXP>=12000`）、目標STR/EXP到達、MP充足度を評価。<br>② `evaluateThreats`: 緊急HP（`hp < maxHp * emergencyHpRatio`）、直角隣接する即死級敵（`isLethalDanger`）、ドラゴンブレス射線上の有無を評価。<br>③ `evaluateStagnation`: ヒートマップ・未踏ターン数から停滞（`isStagnated`）、安全床3マス以下の完全拘束（`isPhysicallyTrapped`）、剣未所持時の序盤詰み（`isEarlySwordTrapped`）を評価。 |
-| **`MapSituationEvaluator`** | `evaluate` により毎ターンのマップ状況を一括要約（`MapSituationSummary`）しキャッシュする（`_stateKey` による差分検知）。<br>・`homeReachability`: 我が家到達性（王冠所持時/手ぶら時）、閉塞原因（`NONE` / `DANGEROUS_ENEMY` / `BLOCK` / `SEALED`）、最初の開削対象ブロック座標。<br>・`items`: 1-pass Dial法BFSによる到達可能実距離ベースのアイテム一覧（王冠候補・剣・鍵・ポーション・金貨・パワーストーン・指輪・宝箱）、8歩チェーン継続可否（`shouldContinueChestChain`）、動線ついで拾い最良候補（`bestOpportunisticItem`）。<br>・`surroundings`: 足元アイテム、隣接ブロック/敵、安全退避方向（`safeEvadeDir`）、絶望的状況の緊急脱出方向（`desperateEscapeAction`）。 |
+| **`MapSituationEvaluator`** | `evaluate` により毎ターンのマップ状況を一括要約（`MapSituationSummary`）しキャッシュする（`_stateKey` による差分検知）。<br>・`homeReachability`: 我が家到達性（王冠所持時/手ぶら時）、閉塞原因（`NONE` / `DANGEROUS_ENEMY` / `BLOCK` / `SEALED`）、最初の開削対象ブロック座標（`CostMinHeap` による高速BFS。BFSを伴う到達性フィールドは getter により遅延評価・メモ化され、未参照ターンではBFSを実行しない）。<br>・`items`: 1-pass Dial法BFSによる到達可能実距離ベースのアイテム一覧（王冠候補・剣・鍵・ポーション・金貨・パワーストーン・指輪・宝箱）、8歩チェーン継続可否（`shouldContinueChestChain`）、動線ついで拾い最良候補（`bestOpportunisticItem`）。<br>・`surroundings`: 足元アイテム、隣接ブロック/敵、安全退避方向（`safeEvadeDir`）、絶望的状況の緊急脱出方向（`desperateEscapeAction`）。 |
 | **`EpisodicMemory`** | 過去30ターンの移動履歴、訪問回数、期限付き到達不能ターゲット/ゾーンのブラックリスト（`markTargetUnreachable` / `markZoneUnreachable`）、2マス往復（`pingPongCount`）および3マス周回（`oscillationCount`）を管理する。 |
 | **`TacticalSnapshot`** | 上記認知結果とプレイヤー/ドラゴン/生存敵の客観状態をまとめたイミュータブルなスナップショット。 |
 
@@ -145,7 +145,7 @@ flowchart TD
 1. **最優先割り込み判定**:
    - **ドラゴン全首撃破完了**: 即座に `CrownEscapeMission` へ切り替え、以降は他ミッションによる上書きを禁止（絶対維持）。
    - **緊急危機介入**: `threats.isLethalDanger` または `threats.isPinchHp` の場合、`EmergencyEvacuateMission` へ割り込み切替。
-   - **決戦・準備移行割り込み**: 育成・探索系ミッション中に `canDamageDragon`（目標STR到達）または宝箱・石枯渇、あるいは `MissionSelector.isReadyForDragon` を満たした場合、`SlayDragonMission` / `PrepareDragonAssaultMission` / `CashInGoldMission` / `RelocateHomeMission` 等へ移行する。
+   - **決戦・準備移行割り込み**: 育成・探索系ミッション中に `canDamageDragon`（目標STR到達）または宝箱・石枯渇、あるいは `MissionSelector.isReadyForDragon` を満たした場合、`MissionSelector.selectDragonPrepMission` へ委譲し、`SlayDragonMission` / `PrepareDragonAssaultMission` / `CashInGoldMission` / `RelocateHomeMission` 等へ移行する。
 2. **現行ミッションのコミットメント評価**:
    - `activeMission.evaluateStatus()` が `'ACTIVE'` であれば `generateDirective()` を呼び出し、`DirectiveArbiter.arbitrate()` を経て戦術指令を返す。
    - `'COMPLETED'` / `'FAILED'` / `'ABORTED'` となった場合、`missionHistory` へ記録し、`NO_PROGRESS_TIMEOUT` / `NO_PROGRESS_BLOCKED` 時は該当ミッションにクールダウン（15〜80ターン）を設定して無限再選択を防止する。
@@ -209,7 +209,7 @@ flowchart TD
    - `nav.oscillationCount >= 2` または `memory.pingPongCount >= 2` の膠着時（王冠脱出中・一撃必殺攻撃中を除く）に、`tryBreakCirclingLoop`（岩越し `KICK` スナイプ、岩 `BREAK`、墓周回 `FREEZE`/`FLASH`、冷涼ゾーン離脱）または `tryBreakthroughCombat`（`turnsToKill <= 5` の安全敵撃破）を実行する。
 5. **個別ディレクティブ遂行 & MP=1リザーブ保護**:
    - `CAST_MAGIC` 時、EXP >= 4,000 かつ MP <= 1 の場合は `BREAK` / `RETURN` / 緊急優先度（`priority >= 95`）を除き詠唱を見送り、壁破壊用MPを死守する。
-   - 最終出力が `MOVE` で移動先が `BLOCK` の場合、`resolveMoveOrBreak` が `BREAK`（不可なら `KICK`）魔法詠唱へ自動変換する。
+   - 最終出力が `MOVE` で移動先が `BLOCK` の場合、戦術層出口（`TacticalExecutor.execute`）の `resolveMoveOrBreak` が `BREAK`（不可なら `KICK`）魔法詠唱へ自動変換する（`SEAL_GRAVE_STEP` のブロック押し出し時は `skipMoveOrBreak` で抑止）。
 
 ---
 
@@ -309,7 +309,8 @@ sequenceDiagram
 | `src/ai/AutoPlayBot.ts` | PST 3層オーケストレータ本体（`AdaptiveAutoPlayBot.ts` から再エクスポート）。 |
 | `src/ai/BotTypes.ts` | ボット関連の型定義（`BotPhase`, `BotAction`, `DynamicBotParameters`, `TacticalScale` 等）。 |
 | `src/ai/TacticalContext.ts` | 動的戦術コンテキスト。マップ幾何スケール連動、動的パラメータ導出。 |
-| `src/ai/AdaptiveNavigator.ts` | トーラス空間BFS探索、スタック・ピンポン追跡、訪問ヒートマップ、安全徘徊（`BotNavigator.ts` から再エクスポート）。 |
+| `src/ai/AdaptiveNavigator.ts` | トーラス空間BFS探索（`CostMinHeap` による $O(N \log N)$ 実装）、スタック・ピンポン追跡、訪問ヒートマップ、安全徘徊（`BotNavigator.ts` から再エクスポート）。 |
+| `src/ai/utils/MinHeap.ts` | 挿入順タイブレーク付き Binary Min-Heap（`CostMinHeap`）。BFS の同コスト FIFO 順序を保証。 |
 | `src/ai/EightStepController.ts` | 8歩周期パワーストーン確定排出の歩数調整および近傍宝箱連続開錠チェーン制御。 |
 | `src/ai/perception/SpatialKnowledge.ts` | トポロジー・宝物庫ゾーン・開削点・墓パズル・ドラゴン安全攻撃マスの構造化知識。 |
 | `src/ai/perception/SituationalPerception.ts` | マイルストーン進捗、脅威分布、ヒートマップ停滞・拘束・序盤詰みの認知評価。 |
@@ -325,7 +326,7 @@ sequenceDiagram
 | `src/ai/strategy/arbitration/OpportunisticEvaluator.ts` | 動線上の金貨/壺ついで拾いおよび安全敵ワンパン撃破評価。 |
 | `src/ai/strategy/arbitration/TacticalStallResolver.ts` | 袋小路拘束・敵封鎖の検知と緊急打開（RETURN/JUMP/BREAK/FREEZE/突破/GIVE_UP）。 |
 | `src/ai/strategy/missions/*.ts` | 12種の作戦ミッション実装（`BootstrapSword`, `HarvestPowerStone`, `ClearTreasureZone`, `EarlyBreakUnlock`, `CashInGold`, `PrepareDragonAssault`, `ExploreWander`, `RelocateHome`, `SlayDragon`, `CrownEscape`, `EmergencyEvacuate`, `SealGrave`）。 |
-| `src/ai/tactics/TacticalExecutor.ts` | 戦術実行ユニット。ディレクティブ解釈、緊急自衛、MP=1リザーブ保護。 |
+| `src/ai/tactics/TacticalExecutor.ts` | 戦術実行ユニット。ディレクティブ解釈、緊急自衛、MP=1リザーブ保護、`resolveMoveOrBreak` 解決。 |
 | `src/ai/tactics/TacticalCombat.ts` | KICKスナイプ、ヒートマップ周回ループ打開、強行突破戦闘。 |
 | `src/ai/tactics/ItemSwapTactics.ts` | 鍵の一時置き退避と有益アイテム回収・再回収スワップ戦術。 |
 | `src/simulation/SimulationRunner.ts` | ヘッドレスバッチシミュレータ。高速バッチ実行調停。 |

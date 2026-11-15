@@ -1,5 +1,6 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
+import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
 import { IStrategicMission, MissionCompletionReason, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 import { Position } from '../../../models/Types.js';
@@ -23,7 +24,7 @@ export class SealGraveMission implements IStrategicMission {
     this.name = `🪦 墓パズル封鎖作戦 (${gravePos.x}, ${gravePos.y})`;
   }
 
-  public evaluateStatus(snapshot: TacticalSnapshot, _engine: GameEngine): MissionStatus {
+  public evaluateStatus(snapshot: TacticalSnapshot, engine: GameEngine): MissionStatus {
     const puzzle = snapshot.spatial.gravePuzzles.find(
       gp => gp.gravePos.x === this.gravePos.x && gp.gravePos.y === this.gravePos.y
     );
@@ -33,10 +34,21 @@ export class SealGraveMission implements IStrategicMission {
       return 'COMPLETED';
     }
 
+    const player = engine.getPlayer();
     const map = snapshot.map;
+    const hasRingAccess =
+      player.holdItem === 'RING' ||
+      (player.holdItem === 'NONE' && MapSituationEvaluator.get(snapshot, engine).items.rings.length > 0);
+    if (!hasRingAccess) {
+      this.completionReason = 'NO_PROGRESS_BLOCKED';
+      return 'ABORTED';
+    }
+
     const hasExecutablePush = puzzle.recommendedPushes.some(
       push =>
         map.getObject(push.blockPos) === 'BLOCK' &&
+        map.getBaseTile(push.destinationPos) !== 'WALL_STATIC' &&
+        map.getObject(push.destinationPos) !== 'BLOCK' &&
         !snapshot.memory.isTargetUnreachable(push.blockPos, snapshot.totalTurns)
     );
     if (!hasExecutablePush) {
@@ -64,7 +76,7 @@ export class SealGraveMission implements IStrategicMission {
     snapshot.memory.markTargetUnreachable(this.gravePos, 300, snapshot.totalTurns);
   }
 
-  public generateDirective(snapshot: TacticalSnapshot, _engine: GameEngine): StrategicDirective {
+  public generateDirective(snapshot: TacticalSnapshot, engine: GameEngine): StrategicDirective {
     const puzzle = snapshot.spatial.gravePuzzles.find(
       gp => gp.gravePos.x === this.gravePos.x && gp.gravePos.y === this.gravePos.y
     );
@@ -73,12 +85,42 @@ export class SealGraveMission implements IStrategicMission {
       return { type: 'WANDER_SAFELY', priority: 10, reason: '墓パズル不明' };
     }
 
+    const player = engine.getPlayer();
     const map = snapshot.map;
+
+    // 0. ブロック押し出しには RING 所持が必須
+    if (player.holdItem !== 'RING') {
+      const items = MapSituationEvaluator.get(snapshot, engine).items;
+      const ringPos = items.rings[0] ?? null;
+      if (player.holdItem === 'NONE' && ringPos) {
+        return {
+          type: 'PICKUP_ITEM',
+          targetPos: ringPos,
+          targetItemType: 'RING',
+          priority: 85,
+          reason: `墓封鎖のため指輪(RING)を取得 (${ringPos.x}, ${ringPos.y})`,
+        };
+      }
+      this.completionReason = 'NO_PROGRESS_BLOCKED';
+      this.status = 'ABORTED';
+      return {
+        type: 'WANDER_SAFELY',
+        priority: 10,
+        reason: '指輪(RING)未所持のため墓封鎖を中断',
+      };
+    }
 
     // 1. 推奨プッシュ手があれば実行
     for (const push of puzzle.recommendedPushes) {
       const currentObj = map.getObject(push.blockPos);
-      if (currentObj === 'BLOCK') {
+      const destBase = map.getBaseTile(push.destinationPos);
+      const destObj = map.getObject(push.destinationPos);
+      if (
+        currentObj === 'BLOCK' &&
+        destBase !== 'WALL_STATIC' &&
+        destObj !== 'BLOCK' &&
+        !snapshot.memory.isTargetUnreachable(push.blockPos, snapshot.totalTurns)
+      ) {
         this.subMode = 'PUSHING_BLOCK';
         return {
           type: 'SEAL_GRAVE_STEP',

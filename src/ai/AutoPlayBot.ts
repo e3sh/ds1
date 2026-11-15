@@ -4,7 +4,6 @@ import { WorldMap } from '../models/WorldMap.js';
 import { Dragon } from '../models/Dragon.js';
 import { Ghost } from '../models/Ghost.js';
 import { MagicSystem } from '../systems/MagicSystem.js';
-import { MovementSystem } from '../systems/MovementSystem.js';
 import { MapProfiler } from '../systems/generator/MapProfiler.js';
 
 import {
@@ -75,36 +74,7 @@ export class AutoPlayBot {
       this.currentPhase = newPhase;
       this.turnsInPhase = 0;
       this.eightStepController.clearEightStepState();
-      this.nav.clearUnreachableTargets();
     }
-  }
-
-  /**
-   * 移動先が BLOCK の場合に BREAK / KICK 魔法詠唱へ解決・変換する共通ヘルパー
-   */
-  public resolveMoveOrBreak(action: BotAction, player: Player, map: WorldMap): BotAction {
-    if (action.type !== 'MOVE') {
-      return action;
-    }
-
-    const dir = action.dir;
-    const nextPos = map.wrapPosition(MovementSystem.getNextPosition(player.pos, dir));
-    const obj = map.getObject(nextPos);
-
-    if (obj === 'BLOCK') {
-      if (MagicSystem.canCast(player, 'BREAK').allowed) {
-        player.dir = dir;
-        this.nav.clearUnreachableTargets();
-        return { type: 'MAGIC', magic: 'BREAK' };
-      }
-      if (MagicSystem.canCast(player, 'KICK').allowed) {
-        player.dir = dir;
-        this.nav.clearUnreachableTargets();
-        return { type: 'MAGIC', magic: 'KICK' };
-      }
-    }
-
-    return action;
   }
 
   /**
@@ -242,6 +212,7 @@ export class AutoPlayBot {
 
     this.params = this.context.resolveParameters(this.currentPhase, player, dragon, enemies, {
       totalTurns: this.totalTurns,
+      strategyTuning: this.opts.strategyTuning,
       enableGiveUp: this.opts.enableGiveUp,
     });
     MagicSystem.updatePassiveSkills(player);
@@ -249,7 +220,6 @@ export class AutoPlayBot {
     // BREAK 解禁検知
     if (!this.unlockedBreakNotified && player.experience >= 4000) {
       this.unlockedBreakNotified = true;
-      this.nav.clearUnreachableTargets();
       this.episodicMemory.clearAllUnreachableTargets();
     }
 
@@ -353,7 +323,7 @@ export class AutoPlayBot {
       return { type: 'GIVE_UP' };
     }
 
-    return this.resolveMoveOrBreak(execResult.action, player, map);
+    return execResult.action;
   }
 
   public getTelemetryStatus(player: Player, _map?: WorldMap, turn?: number): string {

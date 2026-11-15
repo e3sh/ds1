@@ -101,7 +101,7 @@ export class TacticalContext {
     player: Player,
     dragon?: Dragon,
     enemies?: EnemyInstance[],
-    options?: { totalTurns?: number; defensePrepTurns?: number; strategyTuning?: BotStrategyTuning; enableGiveUp?: boolean }
+    options?: { totalTurns?: number; strategyTuning?: BotStrategyTuning; enableGiveUp?: boolean }
   ): DynamicBotParameters {
     const isClassic = this.tuning?.progressionConfig?.ruleMode === 'CLASSIC';
     const mazeIndex = this.metrics?.mazeIndex ?? 0.3;
@@ -131,10 +131,10 @@ export class TacticalContext {
       targetDefenseExp = Math.max(targetDefenseExp, maxNearEnemyAtk + 2000);
     }
 
-    // 滞留防止フィードバック: 防御準備ターンや総ターンがかさんだ場合は早期切り上げ (TIMEOUT_STALL防止)
-    const defensePrepTurns = options?.defensePrepTurns ?? 0;
+    // 滞留防止フィードバック: 総ターンがかさんだ場合は早期切り上げ (TIMEOUT_STALL防止)
+    // ※ 決戦準備ターン経過による防御緩和は S層 (ReadinessEvaluator / MissionSelector) で実施する
     const totalTurns = options?.totalTurns ?? 0;
-    if (phase === 'RESOURCE_FARM' && (defensePrepTurns > 80 || totalTurns > 1800)) {
+    if (phase === 'RESOURCE_FARM' && totalTurns > 1800) {
       targetDefenseExp = Math.min(targetDefenseExp, Math.max(player.experience, 12000));
     }
 
@@ -192,19 +192,25 @@ export class TacticalContext {
     const homeRelocateDistMin = Math.max(4, Math.round(this.scale.nearRadius * 0.5));
     const homeRelocateDistMax = Math.max(7, Math.round(this.scale.nearRadius * 0.8));
 
-    // 墓封鎖ポリシーの推奨値判定（マップ幾何メトリクス＆資源数連動）
+    // 墓封鎖ポリシーの推奨値判定（strategyTuning 上書き > マップ推奨 > 幾何メトリクス＆資源数連動）
     let graveSealPolicy: 'AUTO' | 'NONE' | 'NEAR_HOME' | 'ALL' = 'NEAR_HOME';
-    if (this.metadata?.recommendedBotTuning?.graveSealPolicy) {
-      graveSealPolicy = this.metadata.recommendedBotTuning.graveSealPolicy;
+    const overridePolicy = options?.strategyTuning?.graveSealPolicy;
+    const recommendedPolicy = this.metadata?.recommendedBotTuning?.graveSealPolicy;
+    if (overridePolicy && overridePolicy !== 'AUTO') {
+      graveSealPolicy = overridePolicy;
+    } else if (recommendedPolicy && recommendedPolicy !== 'AUTO') {
+      graveSealPolicy = recommendedPolicy;
     } else {
       const nearGraves = this.metrics?.nearHomeGraves ?? 1;
       const hasTools = this.resourceCounts.crossCount > 0 || this.resourceCounts.ringCount > 0;
-      if (!hasTools || nearGraves === 0) {
+      if (!hasTools) {
         graveSealPolicy = 'NONE';
-      } else if (nearGraves > 0) {
-        graveSealPolicy = 'NEAR_HOME';
       } else if (this.resourceCounts.crossCount >= 3 && mazeIndex > 0.4) {
         graveSealPolicy = 'ALL';
+      } else if (nearGraves > 0) {
+        graveSealPolicy = 'NEAR_HOME';
+      } else {
+        graveSealPolicy = 'NONE';
       }
     }
 

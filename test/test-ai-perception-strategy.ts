@@ -951,7 +951,6 @@ console.log('Testing 9: CrownEscapeMission pre-pickup FLASH, safe temporary drop
     const res97 = executor97.execute(navDirective97, snap97, e97);
     assert.strictEqual(res97.status, 'PATH_BLOCKED', '完全封鎖された HOME への移動は PATH_BLOCKED を返すこと');
     assert.strictEqual(memory97.isTargetUnreachable(m97.realHomePos, 10), false, 'EpisodicMemory に realHomePos がブラックリスト登録されないこと');
-    assert.strictEqual(nav97.isTargetUnreachable(m97.realHomePos), false, 'AdaptiveNavigator に realHomePos がブラックリスト登録されないこと');
 
     const planner97 = new StrategicPlanner();
     planner97.planTurn(snap97, e97);

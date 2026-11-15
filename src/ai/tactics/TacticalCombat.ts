@@ -110,7 +110,6 @@ export class TacticalCombat {
         const dirToRock = nav.getAdjacentDirection(curPos, obstaclePos, map);
         if (dirToRock) {
           player.dir = dirToRock;
-          nav.clearUnreachableTargets();
           return {
             action: { type: 'MAGIC', magic: 'BREAK' },
             description: `⛏️ 周回打開 BREAK岩破壊 (${obstaclePos.x}, ${obstaclePos.y})`,
@@ -140,8 +139,7 @@ export class TacticalCombat {
     }
 
     // C. 魔法が使えない場合（MP枯渇やリザーブ保護中）
-    // 敵を一時ブラックリスト化して周回追尾を中断し、冷涼ゾーンへ離脱
-    nav.markTargetUnreachable(enemy.pos, 20);
+    // 周回追尾を中断し、冷涼ゾーンへ離脱
     const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
     let bestDir: Direction | null = null;
     let minHeat = Infinity;

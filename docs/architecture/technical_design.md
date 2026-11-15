@@ -109,6 +109,7 @@ src/
 │   ├── TacticalContext.ts     # 幾何スケール連動・動的戦術パラメータ導出
 │   ├── EightStepController.ts # 8歩周期確定開錠チェーン制御
 │   ├── BotTypes.ts            # ボットフェーズ・動的パラメータ型定義
+│   ├── utils/                 # 汎用データ構造 (MinHeap.ts)
 │   ├── perception/            # 認知層 (SpatialKnowledge, SituationalPerception, MapSituationEvaluator, EpisodicMemory, TacticalSnapshot)
 │   ├── strategy/              # 戦略層 (StrategicPlanner, MissionSelector, ReadinessEvaluator, DirectiveArbiter, missions/)
 │   └── tactics/               # 戦術層 (TacticalExecutor, TacticalCombat, ItemSwapTactics)
@@ -477,7 +478,7 @@ classDiagram
 5. **8歩周期宝箱開錠チェーン (`EightStepController`)**:
    石排出直後に近傍の未開封宝箱を探索。パリティ調整可能なピボット／待機マス間を往復して正確に8歩目で踏み込み、100%石確定排出を連続チェーン化。
 6. **多層スタック・逡巡防止機構 (`AdaptiveNavigator` / `EpisodicMemory` / `TacticalStallResolver`)**:
-   直近訪問履歴、ピンポン/周回カウンタ、期限付き到達不能ブラックリスト、ワープタブーリスト、袋小路拘束時の緊急打開指令によりループを強固に遮断。
+   直近訪問履歴、ピンポン/周回カウンタ、期限付き到達不能ブラックリスト（`EpisodicMemory` に一本化）、ワープタブーリスト、袋小路拘束時の緊急打開指令によりループを強固に遮断。また、BFS の優先度付きキューは `CostMinHeap`（挿入順タイブレーク付き二分ヒープ）で高速化され、`MapSituationEvaluator.homeReachability` の重い BFS は遅延評価・メモ化されている。
 
 ---
 

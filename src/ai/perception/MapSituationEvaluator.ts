@@ -17,6 +17,7 @@ import { AdaptiveNavigator } from '../AdaptiveNavigator.js';
 import { EpisodicMemory } from './EpisodicMemory.js';
 import type { TacticalSnapshot } from './TacticalSnapshot.js';
 import type { SpatialKnowledge } from './SpatialKnowledge.js';
+import { CostMinHeap } from '../utils/MinHeap.js';
 
 export type HomeBlockingCause = 'NONE' | 'DANGEROUS_ENEMY' | 'BLOCK' | 'SEALED';
 
@@ -223,6 +224,12 @@ export class MapSituationEvaluator {
   /**
    * 拠点（我が家）への到達可能性・閉塞原因・最初の開削岩を評価
    */
+  /**
+   * 拠点（我が家）への到達可能性・閉塞原因・最初の開削岩を評価
+   *
+   * 計算コストの高い BFS フィールド（canReachWithCrown / canReachHandsFree / blockingCause / firstBlockingBlockPos）は
+   * getter による遅延評価・メモ化を行い、実際に参照されたターンでのみ計算する。
+   */
   private static evaluateHomeReachability(
     player: Player,
     map: WorldMap,
@@ -232,7 +239,7 @@ export class MapSituationEvaluator {
     nav: AdaptiveNavigator,
     params: DynamicBotParameters
   ): HomeReachabilitySummary {
-    const curPos = player.pos;
+    const curPos = { ...player.pos };
     const bestHomePos = { ...map.realHomePos };
     const allHomes = map.getAllHomePositions();
 
@@ -257,79 +264,116 @@ export class MapSituationEvaluator {
       };
     }
 
-    const playerWithCrown = this.clonePlayerWithHold(player, 'CROWN');
-    const statsWithCrown = nav.executeBfs(
-      curPos,
-      bestHomePos,
-      map,
-      playerWithCrown,
-      enemies,
-      params,
-      { dragon, isEscapePhase: true, ghosts }
-    );
-    const statsStaticWithCrown = nav.executeBfs(
-      curPos,
-      bestHomePos,
-      map,
-      playerWithCrown,
-      [],
-      params,
-      { isEscapePhase: true }
-    );
-    const canReachWithCrown = this.isReasonableCrownRoute(statsWithCrown, statsStaticWithCrown);
+    let crownEvaluated = false;
+    let cachedStatsStaticWithCrown: { cost: number; steps: number } | null = null;
+    let cachedCanReachWithCrown = false;
 
-    const playerHandsFree = this.clonePlayerWithHold(player, 'NONE');
-    const canBreakHandsFree =
-      !playerHandsFree.hasDeath &&
-      playerHandsFree.magic >= 1 &&
-      playerHandsFree.experience >= 4000;
-    const handsFreeParams: DynamicBotParameters = {
-      ...params,
-      allowBreakAsRoad: canBreakHandsFree,
+    const ensureCrownReachability = () => {
+      if (crownEvaluated) return;
+      crownEvaluated = true;
+      const playerWithCrown = this.clonePlayerWithHold(player, 'CROWN');
+      const statsWithCrown = nav.executeBfs(
+        curPos,
+        bestHomePos,
+        map,
+        playerWithCrown,
+        enemies,
+        params,
+        { dragon, isEscapePhase: true, ghosts }
+      );
+      cachedStatsStaticWithCrown = nav.executeBfs(
+        curPos,
+        bestHomePos,
+        map,
+        playerWithCrown,
+        [],
+        params,
+        { isEscapePhase: true }
+      );
+      cachedCanReachWithCrown = this.isReasonableCrownRoute(statsWithCrown, cachedStatsStaticWithCrown);
     };
-    const dirHandsFree = nav.findPath(
-      curPos,
-      bestHomePos,
-      map,
-      playerHandsFree,
-      enemies,
-      handsFreeParams,
-      { dragon, isEscapePhase: true, ghosts }
-    );
-    const canReachHandsFree = dirHandsFree !== null;
 
-    let blockingCause: HomeBlockingCause = 'NONE';
-    let firstBlockingBlockPos: Position | null = null;
+    let handsFreeEvaluated = false;
+    let cachedCanReachHandsFree = false;
 
-    if (!canReachWithCrown) {
+    const ensureHandsFreeReachability = () => {
+      if (handsFreeEvaluated) return;
+      handsFreeEvaluated = true;
+      const playerHandsFree = this.clonePlayerWithHold(player, 'NONE');
+      const canBreakHandsFree =
+        !playerHandsFree.hasDeath &&
+        playerHandsFree.magic >= 1 &&
+        playerHandsFree.experience >= 4000;
+      const handsFreeParams: DynamicBotParameters = {
+        ...params,
+        allowBreakAsRoad: canBreakHandsFree,
+      };
+      const dirHandsFree = nav.findPath(
+        curPos,
+        bestHomePos,
+        map,
+        playerHandsFree,
+        enemies,
+        handsFreeParams,
+        { dragon, isEscapePhase: true, ghosts }
+      );
+      cachedCanReachHandsFree = dirHandsFree !== null;
+    };
+
+    let blockingEvaluated = false;
+    let cachedBlockingCause: HomeBlockingCause = 'NONE';
+    let cachedFirstBlockingBlockPos: Position | null = null;
+
+    const ensureBlockingInfo = () => {
+      if (blockingEvaluated) return;
+      blockingEvaluated = true;
+      ensureCrownReachability();
+      if (cachedCanReachWithCrown) {
+        cachedBlockingCause = 'NONE';
+        cachedFirstBlockingBlockPos = null;
+        return;
+      }
       // 敵を除外した状態で王冠持ちで帰還できるか確認し、原因を切り分ける
-      if (statsStaticWithCrown !== null) {
-        blockingCause = 'DANGEROUS_ENEMY';
+      if (cachedStatsStaticWithCrown !== null) {
+        cachedBlockingCause = 'DANGEROUS_ENEMY';
       } else {
-        firstBlockingBlockPos = this.findFirstBlockingBlockOnPath(
+        cachedFirstBlockingBlockPos = this.findFirstBlockingBlockOnPath(
           curPos,
           bestHomePos,
           map,
           player,
           params.maxBfsSteps
         );
-        if (firstBlockingBlockPos !== null || canReachHandsFree) {
-          blockingCause = 'BLOCK';
+        if (cachedFirstBlockingBlockPos !== null) {
+          cachedBlockingCause = 'BLOCK';
         } else {
-          blockingCause = 'SEALED';
+          ensureHandsFreeReachability();
+          cachedBlockingCause = cachedCanReachHandsFree ? 'BLOCK' : 'SEALED';
         }
       }
-    }
+    };
 
     return {
       bestHomePos,
       isAtHome,
       isNearRealHome,
       isNearSpawnHome,
-      canReachWithCrown,
-      canReachHandsFree,
-      blockingCause,
-      firstBlockingBlockPos,
+      get canReachWithCrown(): boolean {
+        ensureCrownReachability();
+        return cachedCanReachWithCrown;
+      },
+      get canReachHandsFree(): boolean {
+        ensureHandsFreeReachability();
+        return cachedCanReachHandsFree;
+      },
+      get blockingCause(): HomeBlockingCause {
+        ensureBlockingInfo();
+        return cachedBlockingCause;
+      },
+      get firstBlockingBlockPos(): Position | null {
+        ensureBlockingInfo();
+        return cachedFirstBlockingBlockPos;
+      },
     };
   }
 
@@ -379,14 +423,15 @@ export class MapSituationEvaluator {
       firstBlock: Position | null;
     }
 
-    const queue: Node[] = [{ pos: { ...from }, cost: 0, firstBlock: null }];
+    const queue = new CostMinHeap<Node>();
+    queue.push({ pos: { ...from }, cost: 0, firstBlock: null }, 0);
     const visited = new Map<string, number>();
     visited.set(`${from.x},${from.y}`, 0);
 
     let stepCount = 0;
     while (queue.length > 0 && stepCount < maxBfsSteps) {
       stepCount++;
-      const current = queue.shift()!;
+      const current = queue.pop()!;
       if (current.pos.x === to.x && current.pos.y === to.y) {
         return current.firstBlock;
       }
@@ -434,9 +479,7 @@ export class MapSituationEvaluator {
           cost: newCost,
           firstBlock: nextFirstBlock,
         };
-        const insertIdx = queue.findIndex(q => q.cost > newCost);
-        if (insertIdx === -1) queue.push(node);
-        else queue.splice(insertIdx, 0, node);
+        queue.push(node, newCost);
       }
     }
 
