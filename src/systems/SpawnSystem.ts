@@ -75,6 +75,15 @@ export class SpawnSystem {
     rng?: SeedRandom,
     engineTurnCounter?: number
   ): EnemyInstance[] {
+    // 死亡済み敵オブジェクトの配列蓄積を防ぐためインプレースでクリーンアップ
+    let writeIdx = 0;
+    for (let i = 0; i < enemies.length; i++) {
+      if (enemies[i].isAlive) {
+        enemies[writeIdx++] = enemies[i];
+      }
+    }
+    enemies.length = writeIdx;
+
     const isSpawnTurn = engineTurnCounter !== undefined
       ? (engineTurnCounter % this.spawnTurnInterval === 0 && engineTurnCounter > 0)
       : (++this.turnCounter >= this.spawnTurnInterval);

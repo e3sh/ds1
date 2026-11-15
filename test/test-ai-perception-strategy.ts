@@ -17,7 +17,9 @@ import { CrownEscapeMission } from '../src/ai/strategy/missions/CrownEscapeMissi
 import { CashInGoldMission } from '../src/ai/strategy/missions/CashInGoldMission.js';
 import { PrepareDragonAssaultMission } from '../src/ai/strategy/missions/PrepareDragonAssaultMission.js';
 import { TacticalExecutor } from '../src/ai/tactics/TacticalExecutor.js';
+import { TacticalCombat } from '../src/ai/tactics/TacticalCombat.js';
 import { EightStepController } from '../src/ai/EightStepController.js';
+import { MapSituationEvaluator } from '../src/ai/perception/MapSituationEvaluator.js';
 
 console.log('================================================================');
 console.log('  Testing PST Step 1: Perception & Strategic Planner Units     ');
@@ -1266,6 +1268,549 @@ console.log('Testing 12: CrownEscapeMission prevents FLASH-pickup-drop MP deplet
   assert.notStrictEqual(dTurn3.type, 'DROP_HOLD_ITEM', 'FLASHクールダウン中に拾う⇄落とすループへ入らないこと');
 
   console.log('✓ 12. CrownEscapeMission anti-loop gate & FLASH cooldown verified.');
+}
+
+// =========================================================================
+// Test 13: 段階的脅威度評価（経路探索・緊急退避・王冠帰還判定）
+// =========================================================================
+console.log('Testing 13: Graded threat evaluation in pathfinding, evade, and crown escape...');
+{
+  // 13-A: executeBfs の段階的コスト比較（弱い敵 vs 強敵）
+  const m13 = createEmptyMap(32, 32);
+  for (const h of m13.getAllHomePositions()) {
+    m13.setBaseTile(h, 'EMPTY');
+  }
+  const home13 = { x: 5, y: 10 };
+  m13.setBaseTile(home13, 'HOME');
+  m13.homePos = { ...home13 };
+  m13.setRealHomePos(home13);
+  m13.spawnHomePos = { ...home13 };
+
+  const p13 = new Player({ x: 10, y: 10 });
+  p13.hp = 1000;
+  p13.maxHp = 1000;
+  p13.experience = 5000;
+  p13.str = 3000;
+  p13.hasSword = true;
+  p13.holdItem = 'CROWN';
+  p13.canDiagonal = false;
+
+  // 通路の上下・両端を壁で塞ぎ、(10,10)->(5,10) の一本道を作る
+  for (let x = 4; x <= 11; x++) {
+    m13.setBaseTile({ x, y: 9 }, 'WALL_STATIC');
+    m13.setBaseTile({ x, y: 11 }, 'WALL_STATIC');
+  }
+  m13.setBaseTile({ x: 4, y: 10 }, 'WALL_STATIC');
+  m13.setBaseTile({ x: 11, y: 10 }, 'WALL_STATIC');
+  // 敵を配置する横ポケット（(7,9) は壁にせず敵を置く）
+  m13.setBaseTile({ x: 7, y: 9 }, 'EMPTY');
+  m13.setBaseTile({ x: 7, y: 8 }, 'WALL_STATIC');
+  m13.setBaseTile({ x: 6, y: 8 }, 'WALL_STATIC');
+  m13.setBaseTile({ x: 8, y: 8 }, 'WALL_STATIC');
+
+  const nav13 = new AdaptiveNavigator();
+  const weakEnemy: EnemyInstance = {
+    id: 'e-weak-13',
+    name: 'Weak Slime',
+    type: 'SLIME',
+    pos: { x: 7, y: 9 }, // 帰還路 (8,10)-(7,10)-(6,10) のすぐ隣
+    hp: 2000,
+    maxHp: 2000,
+    atk: 5001, // 被ダメ 1
+    def: 100,
+    exp: 10,
+    isAlive: true,
+    isPermanentlyFrozen: false,
+    frozenTimer: 0,
+  } as any;
+
+  const strongEnemy: EnemyInstance = {
+    id: 'e-strong-13',
+    name: 'Strong Demon',
+    type: 'DEMON',
+    pos: { x: 7, y: 9 },
+    hp: 2000,
+    maxHp: 2000,
+    atk: 5400, // 被ダメ 400 (HPの40%, DANGER)
+    def: 100,
+    exp: 500,
+    isAlive: true,
+    isPermanentlyFrozen: false,
+    frozenTimer: 0,
+  } as any;
+
+  const navParams: DynamicBotParameters = {
+    ...mockParams,
+    dangerHpRatio: 0.3,
+    magicReserveThreshold: 1,
+    huntDistance: 10,
+    allowBreakAsRoad: false,
+    breakCostMultiplier: 3,
+    warpAvoidanceCost: 100,
+    maxBfsSteps: 2000,
+    homeRelocateDistMax: 25,
+  };
+
+  const weakRoute = nav13.executeBfs(
+    { x: 10, y: 10 },
+    { x: 5, y: 10 },
+    m13,
+    p13,
+    [weakEnemy],
+    navParams,
+    { isEscapePhase: true }
+  );
+  const strongRoute = nav13.executeBfs(
+    { x: 10, y: 10 },
+    { x: 5, y: 10 },
+    m13,
+    p13,
+    [strongEnemy],
+    navParams,
+    { isEscapePhase: true }
+  );
+
+  assert.ok(weakRoute !== null, '弱い敵が隣にいても帰還ルートが見つかること');
+  assert.ok(strongRoute !== null, '非致死の強敵でも経路自体は見つかること');
+  assert.ok(
+    weakRoute.cost < 500,
+    `弱い敵(被ダメ1)の通過コストは軽微であること (actual: ${weakRoute.cost})`
+  );
+  assert.ok(
+    strongRoute.cost > weakRoute.cost * 5,
+    `強敵(被ダメ40%)の通過コストは弱い敵より十分に高いこと (weak: ${weakRoute.cost}, strong: ${strongRoute.cost})`
+  );
+
+  // 13-B: findEvadeDirection の段階的ペナルティ比較（弱い敵を許容し、強敵の直線・斜め隣接を避ける）
+  const mEvade = createEmptyMap(32, 32);
+  const pEvade = new Player({ x: 10, y: 10 });
+  pEvade.hp = 1000;
+  pEvade.maxHp = 1000;
+  pEvade.experience = 5000;
+  pEvade.str = 3000;
+  pEvade.hasSword = true;
+  pEvade.holdItem = 'CROWN';
+  pEvade.canDiagonal = false;
+
+  // DOWN(10,11) と LEFT(9,10) を壁で塞ぎ、UP(10,9) と RIGHT(11,10) の2択にする
+  mEvade.setBaseTile({ x: 10, y: 11 }, 'WALL_STATIC');
+  mEvade.setBaseTile({ x: 9, y: 10 }, 'WALL_STATIC');
+
+  // UP(10,9) の隣 (10,8) に弱い敵（被ダメ1）
+  const weakEvadeTarget: EnemyInstance = {
+    id: 'e-evade-weak',
+    name: 'Weak Bat',
+    type: 'BAT',
+    pos: { x: 10, y: 8 },
+    hp: 2000,
+    maxHp: 2000,
+    atk: 5001, // 被ダメ 1
+    def: 100,
+    exp: 10,
+    isAlive: true,
+    isPermanentlyFrozen: false,
+    frozenTimer: 0,
+  } as any;
+
+  // RIGHT(11,10) の斜め隣 (12,9) に強敵（被ダメ400, DANGER）
+  const strongDiagTarget: EnemyInstance = {
+    id: 'e-evade-strong-diag',
+    name: 'Strong Knight',
+    type: 'KNIGHT',
+    pos: { x: 12, y: 9 },
+    hp: 2000,
+    maxHp: 2000,
+    atk: 5400, // 被ダメ 400
+    def: 100,
+    exp: 500,
+    isAlive: true,
+    isPermanentlyFrozen: false,
+    frozenTimer: 0,
+  } as any;
+
+  const navEvade = new AdaptiveNavigator();
+  const evadeDir = navEvade.findEvadeDirection(
+    pEvade.pos,
+    mEvade,
+    [weakEvadeTarget, strongDiagTarget],
+    pEvade
+  );
+  assert.strictEqual(
+    evadeDir,
+    'UP',
+    '強敵の斜め隣接(RIGHT)より、被ダメ1の弱い敵の隣接(UP)を許容して退避すること'
+  );
+
+  // 13-C: CrownEscapeMission で弱い敵が帰還路近傍にいても不要な王冠ドロップをしないこと
+  const e13 = new GameEngine();
+  const d13 = e13.getDragon();
+  if (d13) {
+    d13.defeatedHeadsCount = 3;
+    d13.heads.forEach(h => (h.isAlive = false));
+  }
+  (e13 as any).map = m13;
+  (e13 as any).player = p13;
+  (e13 as any).enemies = [weakEnemy];
+  p13.magic = 3;
+
+  const snap13: TacticalSnapshot = {
+    spatial: new SpatialKnowledge(m13),
+    milestones: {
+      hasSword: true,
+      canBreak: true,
+      canReturn: true,
+      canDiagonal: false,
+      dragonHeadsRemaining: 0,
+      allHeadsDefeated: true,
+      crownsCollected: 0,
+    },
+    threats: {
+      isLethalDanger: false,
+      isEmergencyHp: false,
+      adjacentLethalEnemies: [],
+      nearbyThreats: [],
+      dragonThreat: false,
+    },
+    player: {
+      pos: p13.pos,
+      hp: p13.hp,
+      maxHp: p13.maxHp,
+      str: p13.str,
+      effectiveAttack: 5000,
+      experience: p13.experience,
+      magic: p13.magic,
+      gold: p13.gold,
+      holdItem: 'CROWN',
+      hasSword: true,
+      isFlying: false,
+      canDiagonal: false,
+      hasDeath: false,
+      stepCountSinceStone: 0,
+    },
+    livingEnemies: [weakEnemy],
+    memory: new EpisodicMemory(),
+    params: navParams,
+    map: m13,
+    totalTurns: 10,
+  };
+
+  const sit13 = MapSituationEvaluator.get(snap13, e13, nav13);
+  assert.strictEqual(
+    sit13.homeReachability.canReachWithCrown,
+    true,
+    '弱い敵が帰還路の近くにいても canReachWithCrown が true であること'
+  );
+
+  const mission13 = new CrownEscapeMission();
+  const dir13 = mission13.generateDirective(snap13, e13);
+  assert.strictEqual(
+    dir13.type,
+    'NAVIGATE_TO_POSITION',
+    '弱い敵がいても不要な王冠ドロップをせず我が家へ直行すること'
+  );
+
+  console.log('✓ 13. Graded threat evaluation in pathfinding, evade, and crown escape verified.');
+}
+
+// -------------------------------------------------------------
+// Test 14: 遠距離 FREEZE 空撃ち防止 & 弱い敵への FLASH 無駄打ち防止 & P/S/T責務確認
+// -------------------------------------------------------------
+console.log('Testing 14: Preventing long-range FREEZE whiffs and wasteful FLASH against weak enemies...');
+{
+  // 14-A: enemyNearSpawnHome はプレイヤー周囲1マス(Chebyshev <= 1)に敵がいる場合のみ検出すること
+  const m14a = createEmptyMap(32, 32);
+  for (const h of m14a.getAllHomePositions()) {
+    m14a.setBaseTile(h, 'EMPTY');
+  }
+  const spawnHome14 = { x: 10, y: 10 };
+  const realHome14 = { x: 24, y: 24 };
+  m14a.setBaseTile(spawnHome14, 'HOME');
+  m14a.setBaseTile(realHome14, 'HOME');
+  m14a.spawnHomePos = { ...spawnHome14 };
+  m14a.homePos = { ...realHome14 };
+  m14a.setRealHomePos(realHome14);
+
+  const e14a = new GameEngine();
+  const d14a = e14a.getDragon();
+  if (d14a) {
+    d14a.defeatedHeadsCount = 3;
+    d14a.heads.forEach(h => (h.isAlive = false));
+  }
+  const p14a = e14a.getPlayer();
+  p14a.pos = { x: 10, y: 12 }; // spawnHomePos(10,10)から Chebyshev=2 (isNearSpawnHome=true)
+  p14a.hp = 1000;
+  p14a.maxHp = 1000;
+  p14a.experience = 20000;
+  p14a.str = 5000;
+  p14a.hasSword = true;
+  p14a.magic = 5;
+  p14a.holdItem = 'NONE';
+  p14a.hasDeath = false;
+
+  // spawnHomePos から Chebyshev=2 だが、プレイヤーからは Chebyshev=4 の遠い敵
+  const farSpawnEnemy: EnemyInstance = {
+    id: 'e-far-spawn-14',
+    name: 'FarSpawnDemon',
+    type: 'DEMON',
+    pos: { x: 10, y: 8 },
+    hp: 2000,
+    maxHp: 2000,
+    atk: 5100,
+    def: 100,
+    exp: 100,
+    isAlive: true,
+    isPermanentlyFrozen: false,
+    frozenTimer: 0,
+  } as any;
+
+  (e14a as any).map = m14a;
+  (e14a as any).player = p14a;
+  (e14a as any).enemies = [farSpawnEnemy];
+
+  const makeSnap14a = (enemiesList: EnemyInstance[]): TacticalSnapshot => ({
+    spatial: new SpatialKnowledge(m14a),
+    milestones: {
+      hasSword: true,
+      canBreak: true,
+      canReturn: true,
+      canDiagonal: true,
+      dragonHeadsRemaining: 0,
+      allHeadsDefeated: true,
+      crownsCollected: 0,
+    },
+    threats: SituationalPerception.evaluateThreats(p14a, m14a, enemiesList, d14a, mockParams),
+    player: {
+      pos: { ...p14a.pos },
+      hp: p14a.hp,
+      maxHp: p14a.maxHp,
+      str: p14a.str,
+      effectiveAttack: 5000,
+      experience: p14a.experience,
+      magic: p14a.magic,
+      gold: p14a.gold,
+      holdItem: p14a.holdItem,
+      hasSword: true,
+      isFlying: false,
+      canDiagonal: true,
+      hasDeath: false,
+      stepCountSinceStone: 0,
+    },
+    livingEnemies: enemiesList,
+    memory: new EpisodicMemory(),
+    params: mockParams,
+    map: m14a,
+    totalTurns: 10,
+  });
+
+  const nav14a = new AdaptiveNavigator();
+  const sitFar = MapSituationEvaluator.get(makeSnap14a([farSpawnEnemy]), e14a, nav14a);
+  assert.strictEqual(
+    sitFar.surroundings.enemyNearSpawnHome,
+    null,
+    'プレイヤーから Chebyshev >= 2 の敵は enemyNearSpawnHome として検出しないこと'
+  );
+  const mission14a = new CrownEscapeMission();
+  const dirFar = mission14a.generateDirective(makeSnap14a([farSpawnEnemy]), e14a);
+  assert.ok(
+    !(dirFar.type === 'CAST_MAGIC' && dirFar.magicToCast === 'FREEZE'),
+    '届かない遠方の湧き家周辺敵に対して FREEZE 空撃ち指令を出さないこと'
+  );
+
+  // プレイヤーから Chebyshev=1 かつ spawnHomePos から Chebyshev=1 の敵なら検出＆FREEZE すること
+  const closeSpawnEnemy: EnemyInstance = {
+    ...farSpawnEnemy,
+    id: 'e-close-spawn-14',
+    pos: { x: 10, y: 11 },
+  } as any;
+  (e14a as any).enemies = [closeSpawnEnemy];
+  const sitClose = MapSituationEvaluator.get(makeSnap14a([closeSpawnEnemy]), e14a, nav14a);
+  assert.ok(
+    sitClose.surroundings.enemyNearSpawnHome !== null,
+    'プレイヤー周囲1マスかつ spawnHomePos 近傍の敵は enemyNearSpawnHome として検出すること'
+  );
+  const dirClose = mission14a.generateDirective(makeSnap14a([closeSpawnEnemy]), e14a);
+  assert.strictEqual(dirClose.type, 'CAST_MAGIC');
+  assert.strictEqual(dirClose.magicToCast, 'FREEZE', 'FREEZE 射程内の湧き家周辺敵には FREEZE を出すこと');
+
+  // 14-B: TacticalCombat.tryBreakCirclingLoop が Chebyshev >= 2 の敵に FREEZE を空撃ちしないこと
+  const m14b = createEmptyMap(32, 32);
+  m14b.setObject({ x: 10, y: 9 }, 'GRAVE');
+  const p14b = new Player({ x: 10, y: 10 });
+  p14b.hp = 1000;
+  p14b.maxHp = 1000;
+  p14b.experience = 20000;
+  p14b.magic = 5;
+  p14b.hasDeath = false;
+
+  const nav14b = new AdaptiveNavigator();
+  // 現在地 (10,10) と周辺にヒートを蓄積させて detectObstacleCircling を発火させる
+  for (let i = 0; i < 40; i++) {
+    nav14b.updateTurn(i % 2 === 0 ? { x: 9, y: 10 } : p14b.pos);
+  }
+  p14b.pos = { x: 10, y: 10 };
+
+  const graveFarEnemy: EnemyInstance = {
+    id: 'e-grave-far-14',
+    name: 'GraveGhost',
+    type: 'GHOST',
+    pos: { x: 10, y: 8 }, // プレイヤー(10,10)から距離2、墓(10,9)から距離1
+    hp: 5000,
+    maxHp: 5000,
+    atk: 25000,
+    def: 1000,
+    exp: 500,
+    isAlive: true,
+    isPermanentlyFrozen: false,
+    frozenTimer: 0,
+  } as any;
+  const d14b = new Dragon({ x: 25, y: 25 }, m14b);
+  const combatRes = TacticalCombat.tryBreakCirclingLoop(p14b, m14b, [graveFarEnemy], d14b, nav14b, mockParams);
+  assert.ok(combatRes !== null, '周回打開アクション自体は返ること');
+  assert.ok(
+    !(combatRes.action.type === 'MAGIC' && combatRes.action.magic === 'FREEZE'),
+    'プレイヤー周囲1マスに敵がいない周回打開で FREEZE を空撃ちしないこと'
+  );
+
+  // 14-C: 被ダメ1・ワンパン不可の弱い敵に対して FLASH を無駄打ちしないこと＆遠方帰還時 disallowFreezeNearHome が付かないこと
+  const m14c = createEmptyMap(32, 32);
+  const home14c = { x: 25, y: 25 };
+  for (const h of m14c.getAllHomePositions()) {
+    m14c.setBaseTile(h, 'EMPTY');
+  }
+  m14c.setBaseTile(home14c, 'HOME');
+  m14c.homePos = { ...home14c };
+  m14c.setRealHomePos(home14c);
+  m14c.spawnHomePos = { ...home14c };
+  m14c.setItem({ x: 10, y: 10 }, 'CROWN');
+
+  const e14c = new GameEngine();
+  const d14c = e14c.getDragon();
+  if (d14c) {
+    d14c.defeatedHeadsCount = 3;
+    d14c.heads.forEach(h => (h.isAlive = false));
+  }
+  const p14c = e14c.getPlayer();
+  p14c.pos = { x: 10, y: 10 };
+  p14c.hp = 1000;
+  p14c.maxHp = 1000;
+  p14c.experience = 5000; // effectiveDef = 5000
+  p14c.str = 2000;
+  p14c.hasSword = true;
+  p14c.magic = 5;
+  p14c.holdItem = 'NONE';
+  p14c.hasDeath = false;
+
+  // 被ダメ1 (atk=5001) だが HP が高くワンパン不可の雑魚敵（隣接）
+  const weakToughEnemy: EnemyInstance = {
+    id: 'e-weak-tough-14',
+    name: 'ToughSlime',
+    type: 'SLIME',
+    pos: { x: 11, y: 10 },
+    hp: 9000,
+    maxHp: 9000,
+    atk: 5001, // damageToPlayer = 1
+    def: 100,
+    exp: 10,
+    isAlive: true,
+    isPermanentlyFrozen: false,
+    frozenTimer: 0,
+  } as any;
+
+  (e14c as any).map = m14c;
+  (e14c as any).player = p14c;
+  (e14c as any).enemies = [weakToughEnemy];
+
+  const snap14c: TacticalSnapshot = {
+    spatial: new SpatialKnowledge(m14c),
+    milestones: {
+      hasSword: true,
+      canBreak: true,
+      canReturn: true,
+      canDiagonal: false,
+      dragonHeadsRemaining: 0,
+      allHeadsDefeated: true,
+      crownsCollected: 0,
+    },
+    threats: SituationalPerception.evaluateThreats(p14c, m14c, [weakToughEnemy], d14c, mockParams),
+    player: {
+      pos: { ...p14c.pos },
+      hp: p14c.hp,
+      maxHp: p14c.maxHp,
+      str: p14c.str,
+      effectiveAttack: 2000,
+      experience: p14c.experience,
+      magic: p14c.magic,
+      gold: p14c.gold,
+      holdItem: 'NONE',
+      hasSword: true,
+      isFlying: false,
+      canDiagonal: false,
+      hasDeath: false,
+      stepCountSinceStone: 0,
+    },
+    livingEnemies: [weakToughEnemy],
+    memory: new EpisodicMemory(),
+    params: mockParams,
+    map: m14c,
+    totalTurns: 20,
+  };
+
+  const nav14c = new AdaptiveNavigator();
+  const sit14c = MapSituationEvaluator.get(snap14c, e14c, nav14c);
+  assert.strictEqual(
+    sit14c.surroundings.nearbyDangerousEnemies.length,
+    0,
+    '被ダメ1・ワンパン不可の敵を nearbyDangerousEnemies に含めないこと'
+  );
+  assert.strictEqual(
+    sit14c.surroundings.chebyshev1ActiveDangerousEnemies.length,
+    0,
+    '被ダメ1・ワンパン不可の敵を chebyshev1ActiveDangerousEnemies に含めないこと'
+  );
+
+  const mission14c = new CrownEscapeMission();
+  const dir14c = mission14c.generateDirective(snap14c, e14c);
+  assert.strictEqual(
+    dir14c.type,
+    'PICKUP_ITEM',
+    '被ダメ1の弱い敵が隣にいても王冠上で FLASH せず PICKUP_ITEM すること'
+  );
+
+  // TacticalExecutor の 0-B 緊急自衛でも FLASH/FREEZE を暴発しないこと
+  const exec14c = new TacticalExecutor(nav14c, new EightStepController(nav14c));
+  const execRes14c = exec14c.execute(
+    {
+      type: 'NAVIGATE_TO_POSITION',
+      targetPos: { x: 10, y: 15 },
+      priority: 90,
+      policy: { disallowFreezeNearHome: true },
+      reason: 'テスト移動',
+    },
+    snap14c,
+    e14c
+  );
+  assert.strictEqual(
+    execRes14c.action.type,
+    'MOVE',
+    `被ダメ1の弱い敵が隣接していても 0-B 緊急自衛で FLASH/FREEZE を暴発せず MOVE すること (actual: ${execRes14c.action.type}, desc: ${execRes14c.description})`
+  );
+
+  // 王冠所持中かつ我が家から遠い場合は disallowFreezeNearHome を付けないこと
+  p14c.holdItem = 'CROWN';
+  const snap14cCrown: TacticalSnapshot = {
+    ...snap14c,
+    player: { ...snap14c.player, holdItem: 'CROWN' },
+    totalTurns: 21,
+  };
+  const dir14cCrown = mission14c.generateDirective(snap14cCrown, e14c);
+  assert.strictEqual(dir14cCrown.type, 'NAVIGATE_TO_POSITION');
+  assert.strictEqual(
+    dir14cCrown.policy?.disallowFreezeNearHome,
+    undefined,
+    '我が家から遠い帰還時に disallowFreezeNearHome を常時付与しないこと'
+  );
+
+  console.log('✓ 14. Long-range FREEZE whiffs and weak-enemy FLASH waste prevented.');
 }
 
 console.log('================================================================');

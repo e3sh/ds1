@@ -101,7 +101,7 @@ export class CrownEscapeMission implements IStrategicMission {
       info => info.defenseThreat === 'LETHAL' && info.enemy.id !== candidate.enemy.id
     );
     const hasOtherChebyshev1Danger = surroundings.chebyshev1ActiveDangerousEnemies.some(
-      e => e.id !== candidate.enemy.id
+      info => info.enemy.id !== candidate.enemy.id
     );
     const otherAdjacentDamage = surroundings.adjacentActiveEnemies
       .filter(info => info.enemy.id !== candidate.enemy.id)
@@ -281,7 +281,7 @@ export class CrownEscapeMission implements IStrategicMission {
           surroundings.approachingLethalEnemies.length > 0)
       ) {
         const targetDanger =
-          surroundings.chebyshev1ActiveDangerousEnemies[0] ??
+          surroundings.chebyshev1ActiveDangerousEnemies[0]?.enemy ??
           surroundings.approachingLethalEnemies[0];
         this.droppedCrownForClearing = true;
         this.subMode = 'CLEARING_RETURN_ENEMY';
@@ -320,7 +320,7 @@ export class CrownEscapeMission implements IStrategicMission {
         type: 'NAVIGATE_TO_POSITION',
         targetPos: homePos,
         priority: 90,
-        policy: { disallowFreezeNearHome: true },
+        policy: homeReachability.isNearRealHome ? { disallowFreezeNearHome: true } : undefined,
         reason: `👑 王冠所持: 我が家 (${homePos.x}, ${homePos.y}) へ最速脱出帰還`,
       };
     }
@@ -375,7 +375,7 @@ export class CrownEscapeMission implements IStrategicMission {
             type: 'CAST_MAGIC',
             magicToCast: 'FREEZE',
             priority: 98,
-            reason: `❄️ 王冠取得前・隣接危険敵をFREEZE永久凍結 (${surroundings.chebyshev1ActiveDangerousEnemies[0].name})`,
+            reason: `❄️ 王冠取得前・隣接危険敵をFREEZE永久凍結 (${surroundings.chebyshev1ActiveDangerousEnemies[0].enemy.name})`,
           };
         }
 
@@ -388,7 +388,7 @@ export class CrownEscapeMission implements IStrategicMission {
           hasEvadeRoute
         );
         if (flashAllowed) {
-          const dangerTarget = surroundings.chebyshev1ActiveDangerousEnemies[0] ?? surroundings.nearbyDangerousEnemies[0];
+          const dangerTarget = surroundings.chebyshev1ActiveDangerousEnemies[0]?.enemy ?? surroundings.nearbyDangerousEnemies[0]?.enemy;
           this.recordFlash(curPos, snapshot.totalTurns);
           return {
             type: 'CAST_MAGIC',
@@ -627,7 +627,7 @@ export class CrownEscapeMission implements IStrategicMission {
         type: 'CAST_MAGIC',
         magicToCast: 'FREEZE',
         priority: 96,
-        reason: `❄️ 脱出路確保: 隣接危険敵をFREEZE永久凍結 (${surroundings.chebyshev1ActiveDangerousEnemies[0].name})`,
+        reason: `❄️ 脱出路確保: 隣接危険敵をFREEZE永久凍結 (${surroundings.chebyshev1ActiveDangerousEnemies[0].enemy.name})`,
       };
     }
 

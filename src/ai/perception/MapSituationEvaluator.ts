@@ -96,6 +96,18 @@ export interface AdjacentEnemyInfo {
   attackThreat: AttackThreat;
   defenseThreat: DefenseThreat;
   damageToPlayer: number;
+  hasDrain: boolean;
+}
+
+export interface NearbyEnemyThreatInfo {
+  enemy: EnemyInstance;
+  manhattan: number;
+  chebyshev: number;
+  attackThreat: AttackThreat;
+  defenseThreat: DefenseThreat;
+  damageToPlayer: number;
+  damageRatio: number;
+  hasDrain: boolean;
 }
 
 export interface AdjacentHomeEnemyInfo {
@@ -109,8 +121,8 @@ export interface LocalSurroundingsSummary {
   adjacentActiveEnemies: AdjacentEnemyInfo[];
   adjacentAllEnemies: AdjacentEnemyInfo[];
   adjacentHomeEnemies: AdjacentHomeEnemyInfo[];
-  nearbyDangerousEnemies: EnemyInstance[];
-  chebyshev1ActiveDangerousEnemies: EnemyInstance[];
+  nearbyDangerousEnemies: NearbyEnemyThreatInfo[];
+  chebyshev1ActiveDangerousEnemies: NearbyEnemyThreatInfo[];
   canSafelyFreezeAdjacent: boolean;
   approachingLethalEnemies: EnemyInstance[];
   approachingLethalChebyshev3: EnemyInstance[];
@@ -380,7 +392,7 @@ export class MapSituationEvaluator {
   }
 
   /**
-   * 敵による即死危険帯踏破や極端な大回りを除外した合理的な王冠帰還ルートか判定する
+   * 敵による即死危険帯踏破（+50000）や強敵密集による高危険ルート、極端な大回りを除外した合理的な王冠帰還ルートか判定する
    */
   private static isReasonableCrownRoute(
     withEnemies: { cost: number; steps: number } | null,
@@ -680,24 +692,40 @@ export class MapSituationEvaluator {
     sortByDist(chestsWithDist);
     sortByDist(coinsForOpportunistic);
 
-    // 王冠候補の実経路評価（全王冠に対して到達性および王冠持帰り帰還可能性を評価）
+    // 王冠候補の実経路評価（計算負荷を抑えるため到達性・王冠帰還可能性は遅延評価＆メモ化）
     const playerWithCrown = rawCrowns.length > 0 ? this.clonePlayerWithHold(player, 'CROWN') : player;
     const homeTarget = { ...map.realHomePos };
     const crownCandidates: CrownCandidate[] = rawCrowns.map(rc => {
-      const firstDir = rc.dist === 0
-        ? null
-        : nav.findPath(
-            curPos,
-            rc.pos,
-            map,
-            player,
-            enemies,
-            params,
-            { dragon, isEscapePhase: true, ghosts }
-          );
-      const isReachable = rc.dist === 0 || firstDir !== null;
-      let canReturnHomeWithCrown = false;
-      if (isReachable && rawCrowns.length <= 6) {
+      let pathEvaluated = rc.dist === 0;
+      let cachedFirstDir: Direction | null = null;
+      let cachedIsReachable = rc.dist === 0;
+
+      const ensurePathToCrown = () => {
+        if (pathEvaluated) return;
+        pathEvaluated = true;
+        cachedFirstDir = nav.findPath(
+          curPos,
+          rc.pos,
+          map,
+          player,
+          enemies,
+          params,
+          { dragon, isEscapePhase: true, ghosts }
+        );
+        cachedIsReachable = cachedFirstDir !== null;
+      };
+
+      let returnEvaluated = false;
+      let cachedCanReturnHomeWithCrown = false;
+
+      const ensureReturnHomeWithCrown = () => {
+        if (returnEvaluated) return;
+        returnEvaluated = true;
+        ensurePathToCrown();
+        if (!cachedIsReachable || rawCrowns.length > 6) {
+          cachedCanReturnHomeWithCrown = false;
+          return;
+        }
         const crownStats = nav.executeBfs(
           rc.pos,
           homeTarget,
@@ -710,30 +738,42 @@ export class MapSituationEvaluator {
         const staticCrownStats = crownStats
           ? nav.executeBfs(rc.pos, homeTarget, map, playerWithCrown, [], params, { isEscapePhase: true })
           : null;
-        canReturnHomeWithCrown = this.isReasonableCrownRoute(crownStats, staticCrownStats);
-      }
+        cachedCanReturnHomeWithCrown = this.isReasonableCrownRoute(crownStats, staticCrownStats);
+      };
+
       return {
         pos: rc.pos,
         dist: rc.dist,
-        isReachable,
-        firstDir,
-        canReturnHomeWithCrown,
+        get isReachable(): boolean {
+          ensurePathToCrown();
+          return cachedIsReachable;
+        },
+        get firstDir(): Direction | null {
+          ensurePathToCrown();
+          return cachedFirstDir;
+        },
+        get canReturnHomeWithCrown(): boolean {
+          ensureReturnHomeWithCrown();
+          return cachedCanReturnHomeWithCrown;
+        },
       };
     });
 
-    // 到達可能を最優先。双方到達可能かつ（MP/能力不足で自力開拓不可、または距離差4以内）のときのみ帰還開通（canReturnHomeWithCrown）を優先し、距離差5以上なら近傍王冠を優先
+    // 王冠非所持時のみ、到達可能性および帰還開通性で候補をソート
+    // （王冠所持中は dist 順のままで十分なため不要な BFS 発火を回避）
     const canClearReturnPath = !player.hasDeath && player.magic >= 2;
-    crownCandidates.sort((a, b) => {
-      if (a.isReachable !== b.isReachable) return a.isReachable ? -1 : 1;
-      if (a.isReachable && b.isReachable && a.canReturnHomeWithCrown !== b.canReturnHomeWithCrown) {
-        if (!canClearReturnPath || Math.abs(a.dist - b.dist) <= 4) {
-          return a.canReturnHomeWithCrown ? -1 : 1;
+    if (player.holdItem !== 'CROWN' && crownCandidates.length > 1) {
+      crownCandidates.sort((a, b) => {
+        if (a.isReachable !== b.isReachable) return a.isReachable ? -1 : 1;
+        if (a.isReachable && b.isReachable && (!canClearReturnPath || Math.abs(a.dist - b.dist) <= 4)) {
+          if (a.canReturnHomeWithCrown !== b.canReturnHomeWithCrown) {
+            return a.canReturnHomeWithCrown ? -1 : 1;
+          }
         }
-      }
-      return a.dist - b.dist;
-    });
+        return a.dist - b.dist;
+      });
+    }
 
-    const reachableCrown = crownCandidates.find(c => c.isReachable) ?? null;
     const nearestCrown = crownCandidates[0] ?? null;
     const crownGhost = ghosts.find(g => g.carriedItem === 'CROWN');
     const ghostCarryingCrownPos = crownGhost ? { ...crownGhost.pos } : null;
@@ -868,10 +908,19 @@ export class MapSituationEvaluator {
       for (const c of coinsForOpportunistic) checkCandidate(c.pos, 'COIN', c.dist);
     }
 
+    let reachableCrownEvaluated = false;
+    let cachedReachableCrown: CrownCandidate | null = null;
+
     return {
       crowns: {
         allFloorCrowns: crownCandidates,
-        reachableCrown,
+        get reachableCrown(): CrownCandidate | null {
+          if (!reachableCrownEvaluated) {
+            reachableCrownEvaluated = true;
+            cachedReachableCrown = crownCandidates.find(c => c.isReachable) ?? null;
+          }
+          return cachedReachableCrown;
+        },
         nearestCrown,
         ghostCarryingCrownPos,
       },
@@ -942,6 +991,7 @@ export class MapSituationEvaluator {
           attackThreat: details.attackThreat,
           defenseThreat: details.defenseThreat,
           damageToPlayer: details.damageToPlayer,
+          hasDrain: details.hasDrain,
         };
         adjacentAllEnemies.push(info);
         if (!enemy.isPermanentlyFrozen && (enemy.frozenTimer ?? 0) <= 0) {
@@ -957,8 +1007,8 @@ export class MapSituationEvaluator {
       }
     }
 
-    const nearbyDangerousEnemies: EnemyInstance[] = [];
-    const chebyshev1ActiveDangerousEnemies: EnemyInstance[] = [];
+    const nearbyDangerousEnemies: NearbyEnemyThreatInfo[] = [];
+    const chebyshev1ActiveDangerousEnemies: NearbyEnemyThreatInfo[] = [];
     const approachingLethalEnemies: EnemyInstance[] = [];
     const approachingLethalChebyshev3: EnemyInstance[] = [];
     let hasActiveDangerousEnemyOnFloor = false;
@@ -969,18 +1019,36 @@ export class MapSituationEvaluator {
 
       const dist = map.getTorusDistance(curPos, e.pos);
       const details = ThreatEvaluator.evaluateThreatDetails(player, e);
+      const damageRatio = player.hp > 0 ? details.damageToPlayer / player.hp : 1;
+      const isSignificantThreat =
+        details.defenseThreat === 'LETHAL' ||
+        damageRatio >= 0.35 ||
+        (details.hasDrain && (details.damageToPlayer > 0 || player.magic > 0));
 
-      if (dist.manhattan <= 2 && details.defenseThreat !== 'NO_DAMAGE') {
-        nearbyDangerousEnemies.push(e);
+      if (dist.manhattan <= 2 && isSignificantThreat) {
+        nearbyDangerousEnemies.push({
+          enemy: e,
+          manhattan: dist.manhattan,
+          chebyshev: dist.chebyshev,
+          attackThreat: details.attackThreat,
+          defenseThreat: details.defenseThreat,
+          damageToPlayer: details.damageToPlayer,
+          damageRatio,
+          hasDrain: details.hasDrain,
+        });
       }
 
-      if (
-        dist.chebyshev <= 1 &&
-        (details.defenseThreat === 'LETHAL' ||
-          (details.defenseThreat === 'TAKES_DAMAGE' &&
-            (details.damageToPlayer >= player.hp * 0.35 || details.attackThreat !== 'ONE_SHOT')))
-      ) {
-        chebyshev1ActiveDangerousEnemies.push(e);
+      if (dist.chebyshev <= 1 && isSignificantThreat) {
+        chebyshev1ActiveDangerousEnemies.push({
+          enemy: e,
+          manhattan: dist.manhattan,
+          chebyshev: dist.chebyshev,
+          attackThreat: details.attackThreat,
+          defenseThreat: details.defenseThreat,
+          damageToPlayer: details.damageToPlayer,
+          damageRatio,
+          hasDrain: details.hasDrain,
+        });
       }
 
       const isDangerOrLethal =
@@ -1005,6 +1073,7 @@ export class MapSituationEvaluator {
 
       if (
         !enemyNearSpawnHome &&
+        dist.chebyshev <= 1 &&
         map.spawnHomePos &&
         map.getTorusDistance(e.pos, map.spawnHomePos).chebyshev <= 2
       ) {

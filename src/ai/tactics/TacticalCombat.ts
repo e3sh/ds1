@@ -120,8 +120,10 @@ export class TacticalCombat {
 
     // B. 障害物が墓（GRAVE）またはその他の場合（またはBLOCKだがKICK/BREAKできない場合）
     // B-1. FREEZE 詠唱（永久氷像化して足止め＆墓封鎖バリケード化）
+    // ※FREEZE はプレイヤー周囲1マス（Chebyshev <= 1）のみ有効なため、射程内であることを確認する
     const canSpendForFreeze = player.experience < 4000 || player.magic > params.magicReserveThreshold;
-    if (canSpendForFreeze && !player.hasDeath && MagicSystem.canCast(player, 'FREEZE').allowed) {
+    const isEnemyInFreezeRange = map.getTorusDistance(curPos, enemy.pos).chebyshev <= 1;
+    if (canSpendForFreeze && !player.hasDeath && isEnemyInFreezeRange && MagicSystem.canCast(player, 'FREEZE').allowed) {
       if (!enemy.isPermanentlyFrozen && enemy.frozenTimer <= 0) {
         return {
           action: { type: 'MAGIC', magic: 'FREEZE' },

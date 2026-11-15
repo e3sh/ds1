@@ -77,6 +77,11 @@ export class SmoothCanvasRenderer implements IGameRenderer {
   private boundOnMouseUp?: () => void;
   private boundOnDblClick?: () => void;
 
+  private overviewCacheCanvas: HTMLCanvasElement | null = null;
+  private overviewCacheTimeMs: number = 0;
+  private overviewCacheWidth: number = 0;
+  private overviewCacheHeight: number = 0;
+
   constructor(canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext('2d');
     if (!ctx) {
@@ -623,29 +628,85 @@ export class SmoothCanvasRenderer implements IGameRenderer {
     this.ctx.strokeRect(startX - 4, startY - 4, mapW + 8, mapH + 8);
 
     const cellSz = Math.max(2, Math.ceil(scale));
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
 
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        const tile = map.getTile({ x, y });
-        const base = map.getBaseTile({ x, y });
-        const px = startX + Math.floor(x * scale);
-        const py = startY + Math.floor(y * scale);
+    // 地形レイヤーをオフスクリーンCanvasにキャッシュ（TTL 120ms）して毎フレーム4096セル走査を回避
+    let usedCache = false;
+    if (
+      typeof document !== 'undefined' &&
+      typeof document.createElement === 'function' &&
+      typeof this.ctx.drawImage === 'function'
+    ) {
+      if (!this.overviewCacheCanvas || this.overviewCacheWidth !== mapW || this.overviewCacheHeight !== mapH) {
+        const cacheEl = document.createElement('canvas');
+        cacheEl.width = mapW;
+        cacheEl.height = mapH;
+        this.overviewCacheCanvas = cacheEl;
+        this.overviewCacheWidth = mapW;
+        this.overviewCacheHeight = mapH;
+        this.overviewCacheTimeMs = 0;
+      }
 
-        if (tile === 'HOME' || (map.homePos.x === x && map.homePos.y === y)) {
-          this.ctx.fillStyle = '#ffffff';
-          this.ctx.fillRect(px, py, cellSz, cellSz);
-        } else if (tile === 'GRAVE' || base === 'GRAVE') {
-          this.ctx.fillStyle = '#dddd00';
-          this.ctx.fillRect(px, py, cellSz, cellSz);
-        } else if (tile === 'WARP' || base === 'WARP') {
-          this.ctx.fillStyle = '#00dddd';
-          this.ctx.fillRect(px, py, cellSz, cellSz);
-        } else if (tile === 'CHEST' || tile === 'CHEST_DRAGON') {
-          this.ctx.fillStyle = '#3388ff';
-          this.ctx.fillRect(px, py, cellSz, cellSz);
-        } else if (tile === 'BLOCK' || tile === 'WALL_STATIC') {
-          this.ctx.fillStyle = '#252d3d';
-          this.ctx.fillRect(px, py, cellSz, cellSz);
+      const cacheCtx = this.overviewCacheCanvas.getContext('2d');
+      if (cacheCtx) {
+        if (now - this.overviewCacheTimeMs >= 120) {
+          cacheCtx.clearRect(0, 0, mapW, mapH);
+          for (let y = 0; y < map.height; y++) {
+            for (let x = 0; x < map.width; x++) {
+              const tile = map.getTile({ x, y });
+              const base = map.getBaseTile({ x, y });
+              const px = Math.floor(x * scale);
+              const py = Math.floor(y * scale);
+
+              if (tile === 'HOME' || (map.homePos.x === x && map.homePos.y === y)) {
+                cacheCtx.fillStyle = '#ffffff';
+                cacheCtx.fillRect(px, py, cellSz, cellSz);
+              } else if (tile === 'GRAVE' || base === 'GRAVE') {
+                cacheCtx.fillStyle = '#dddd00';
+                cacheCtx.fillRect(px, py, cellSz, cellSz);
+              } else if (tile === 'WARP' || base === 'WARP') {
+                cacheCtx.fillStyle = '#00dddd';
+                cacheCtx.fillRect(px, py, cellSz, cellSz);
+              } else if (tile === 'CHEST' || tile === 'CHEST_DRAGON') {
+                cacheCtx.fillStyle = '#3388ff';
+                cacheCtx.fillRect(px, py, cellSz, cellSz);
+              } else if (tile === 'BLOCK' || tile === 'WALL_STATIC') {
+                cacheCtx.fillStyle = '#252d3d';
+                cacheCtx.fillRect(px, py, cellSz, cellSz);
+              }
+            }
+          }
+          this.overviewCacheTimeMs = now;
+        }
+        this.ctx.drawImage(this.overviewCacheCanvas, startX, startY);
+        usedCache = true;
+      }
+    }
+
+    if (!usedCache) {
+      for (let y = 0; y < map.height; y++) {
+        for (let x = 0; x < map.width; x++) {
+          const tile = map.getTile({ x, y });
+          const base = map.getBaseTile({ x, y });
+          const px = startX + Math.floor(x * scale);
+          const py = startY + Math.floor(y * scale);
+
+          if (tile === 'HOME' || (map.homePos.x === x && map.homePos.y === y)) {
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.fillRect(px, py, cellSz, cellSz);
+          } else if (tile === 'GRAVE' || base === 'GRAVE') {
+            this.ctx.fillStyle = '#dddd00';
+            this.ctx.fillRect(px, py, cellSz, cellSz);
+          } else if (tile === 'WARP' || base === 'WARP') {
+            this.ctx.fillStyle = '#00dddd';
+            this.ctx.fillRect(px, py, cellSz, cellSz);
+          } else if (tile === 'CHEST' || tile === 'CHEST_DRAGON') {
+            this.ctx.fillStyle = '#3388ff';
+            this.ctx.fillRect(px, py, cellSz, cellSz);
+          } else if (tile === 'BLOCK' || tile === 'WALL_STATIC') {
+            this.ctx.fillStyle = '#252d3d';
+            this.ctx.fillRect(px, py, cellSz, cellSz);
+          }
         }
       }
     }

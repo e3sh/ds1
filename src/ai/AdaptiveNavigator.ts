@@ -619,9 +619,9 @@ export class AdaptiveNavigator {
     const isEscapePhase = options?.isEscapePhase ?? false;
     const ghosts = options?.ghosts;
 
-    // 敵マスの高速判定マップ & 危険ゾーンの事前セット化 (O(1) ルックアップ)
+    // 敵マスの高速判定マップ & 段階的危険コストマップ (O(1) ルックアップ)
     const enemyTileMap = new Map<string, EnemyInstance>();
-    const threatDangerZones = new Set<string>();
+    const threatDangerCosts = new Map<string, number>();
     const lethalOrthogonalZones = new Set<string>();
     const lethalAdjacentDiagZones = new Set<string>();
     const lethalChebyshevZones = new Set<string>();
@@ -634,11 +634,10 @@ export class AdaptiveNavigator {
       if (!e.isPermanentlyFrozen && e.frozenTimer <= 0) {
         if (to && e.pos.x === to.x && e.pos.y === to.y) continue;
 
-        const rawDmg = Math.max(0, e.atk - effectiveDef);
+        const details = ThreatEvaluator.evaluateThreatDetails(player, e);
+        const rawDmg = details.damageToPlayer;
         const isTwoShotWithCrown = player.holdItem === 'CROWN' && rawDmg >= player.hp * 0.45;
-        const isLethal = rawDmg >= player.hp || isTwoShotWithCrown || ThreatEvaluator.evaluateThreat(player, e) === 'LETHAL';
-        const cannotDefeat = !isLethal && ThreatEvaluator.evaluateThreatDetails(player, e).turnsToKill > 8;
-        const isDangerous = isLethal || cannotDefeat || rawDmg >= player.hp * params.dangerHpRatio || rawDmg >= 10000 || (player.holdItem === 'CROWN' && rawDmg > 0);
+        const isLethal = rawDmg >= player.hp || isTwoShotWithCrown || details.overallThreat === 'LETHAL';
 
         if (isLethal) {
           const cardDeltas = [{ dx: 0, dy: -1 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }, { dx: 1, dy: 0 }];
@@ -662,14 +661,38 @@ export class AdaptiveNavigator {
               }
             }
           }
+          continue;
         }
 
-        if (isDangerous) {
+        // 非致死敵の周囲8マスに対する段階的・連続的な脅威コスト算出
+        let enemyZoneCost = 0;
+        const cannotDefeat = details.overallThreat === 'STALEMATE' || details.turnsToKill > 8;
+        if (rawDmg > 0 || details.hasDrain) {
+          const hpRatio = player.hp > 0 ? Math.min(1, rawDmg / player.hp) : 1;
+          const baseScale = isEscapePhase ? 1200 : 800;
+          const dangerBonus =
+            hpRatio >= params.dangerHpRatio
+              ? (isEscapePhase ? 300 : 250)
+              : 0;
+          const drainBonus = details.hasDrain ? 100 : 0;
+          const cannotDefeatBonus = (!isEscapePhase && cannotDefeat) ? 100 : 0;
+          const minCost = isEscapePhase ? 25 : 15;
+          enemyZoneCost = Math.max(
+            minCost,
+            Math.round(hpRatio * baseScale) + dangerBonus + drainBonus + cannotDefeatBonus
+          );
+        } else if (cannotDefeat) {
+          // 被ダメ0だが硬くて倒しにくい敵は、進路妨害・中盤スタックを避けるため迂回コストを付与
+          enemyZoneCost = isEscapePhase ? 80 : 120;
+        }
+
+        if (enemyZoneCost > 0) {
           for (let dy = -1; dy <= 1; dy++) {
             for (let dx = -1; dx <= 1; dx++) {
               if (dx === 0 && dy === 0) continue;
               const p = map.wrapPosition({ x: e.pos.x + dx, y: e.pos.y + dy });
-              threatDangerZones.add(`${p.x},${p.y}`);
+              const zoneKey = `${p.x},${p.y}`;
+              threatDangerCosts.set(zoneKey, (threatDangerCosts.get(zoneKey) ?? 0) + enemyZoneCost);
             }
           }
         }
@@ -839,8 +862,9 @@ export class AdaptiveNavigator {
           stepCost += (player.holdItem === 'CROWN' || isEscapePhase) ? 50000 : 5000;
         }
 
-        if (threatDangerZones.has(key) && !enemyTileMap.has(key) && !(nextPos.x === to.x && nextPos.y === to.y)) {
-          stepCost += isEscapePhase ? 1000 : 400;
+        const dangerZoneCost = threatDangerCosts.get(key);
+        if (dangerZoneCost !== undefined && !enemyTileMap.has(key) && !(nextPos.x === to.x && nextPos.y === to.y)) {
+          stepCost += dangerZoneCost;
         }
 
         // ゴースト接近回避 (脱出時)
@@ -1065,7 +1089,6 @@ export class AdaptiveNavigator {
         return dir;
       }
 
-      const effectiveDef = Math.floor(player.experience * 1.0);
       let hasLethalOrthogonal = false;
       let enemyPenalty = 0;
 
@@ -1073,18 +1096,33 @@ export class AdaptiveNavigator {
         if (!e.isAlive || e.isPermanentlyFrozen || e.frozenTimer > 0) continue;
         const dist = map.getTorusDistance(nextPos, e.pos);
         if (dist.chebyshev > 1) continue;
-        const rawDmg = Math.max(0, e.atk - effectiveDef);
+        const details = ThreatEvaluator.evaluateThreatDetails(player, e);
+        const rawDmg = details.damageToPlayer;
         const isTwoShotWithCrown = player.holdItem === 'CROWN' && rawDmg >= player.hp * 0.45;
-        const isLethal = rawDmg >= player.hp || isTwoShotWithCrown || ThreatEvaluator.evaluateThreat(player, e) === 'LETHAL';
+        const isLethal = rawDmg >= player.hp || isTwoShotWithCrown || details.overallThreat === 'LETHAL';
 
         if (dist.manhattan === 1) {
           if (isLethal) {
             hasLethalOrthogonal = true;
             break;
           }
-          enemyPenalty += rawDmg > 0 ? 500 : 50;
-        } else if (dist.chebyshev === 1 && isLethal) {
-          enemyPenalty += 350;
+          if (rawDmg === 0 && !details.hasDrain) {
+            enemyPenalty += 30;
+          } else {
+            const hpRatio = player.hp > 0 ? Math.min(1, rawDmg / player.hp) : 1;
+            const drainBonus = details.hasDrain ? 150 : 0;
+            const dangerBonus = hpRatio >= 0.30 ? 200 : 30;
+            enemyPenalty += Math.round(hpRatio * 1000) + drainBonus + dangerBonus;
+          }
+        } else if (dist.chebyshev === 1) {
+          if (isLethal) {
+            enemyPenalty += 400;
+          } else if (rawDmg > 0 || details.hasDrain) {
+            const hpRatio = player.hp > 0 ? Math.min(1, rawDmg / player.hp) : 1;
+            const drainBonus = details.hasDrain ? 80 : 0;
+            const dangerBonus = hpRatio >= 0.30 ? 100 : 0;
+            enemyPenalty += Math.round(hpRatio * 500) + drainBonus + dangerBonus;
+          }
         }
       }
       if (hasLethalOrthogonal) continue;

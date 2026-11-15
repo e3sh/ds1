@@ -283,6 +283,16 @@ console.log('Testing 4: Long-range sliding KICK magic specification...');
   // プレイヤー自身が (10, 10) にいて、もし一周して (10, 10) に戻ってきた場合は isPlayerAtNext で停止する
   assert.strictEqual(maxRangeResult.kickPath?.some(p => p.x === 10 && p.y === 10), false, 'Trajectory never collides with player');
 
+  // 4-8. トーラス境界を跨いだ周囲1マス FREEZE 永久凍結
+  player.pos = { x: 63, y: 34 };
+  player.experience = 20000;
+  player.magic = 3;
+  const borderEnemy = new EnemyInstance({ typeId: 8, pos: { x: 0, y: 34 } });
+  const freezeRes = MagicSystem.cast(player, 'FREEZE', map, [borderEnemy]);
+  assert.strictEqual(freezeRes.success, true, 'FREEZE cast across torus border succeeded');
+  assert.strictEqual(borderEnemy.isPermanentlyFrozen, true, 'Enemy across torus border (63,34)->(0,34) is permanently frozen');
+  assert.strictEqual(player.magic, 2, 'MAGIC decreased by 1 on FREEZE');
+
   console.log('✓ 4. Long-range sliding KICK magic specification fully verified.');
 }
 

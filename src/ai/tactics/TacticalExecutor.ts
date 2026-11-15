@@ -119,24 +119,22 @@ export class TacticalExecutor {
         if (!enemy.isAlive || enemy.pos.x !== targetPos.x || enemy.pos.y !== targetPos.y) return false;
         return ThreatEvaluator.evaluateThreatDetails(player, enemy).attackThreat === 'ONE_SHOT';
       });
-    const evadeDirForSelfDefense = this.nav.findEvadeDirection(player.pos, map, enemies, player, dragon);
+    const situation = MapSituationEvaluator.get(snapshot, engine);
+    const evadeDirForSelfDefense = situation.surroundings.safeEvadeDir;
     const canSpendForSelfDefense = !player.hasDeath && (player.magic > 1 || (player.experience < 4000 && player.magic > 0) || !evadeDirForSelfDefense);
     if (canSpendForSelfDefense) {
-      const isNearEscapeHome = map.getTorusDistance(player.pos, map.realHomePos).chebyshev <= 2;
+      const isNearEscapeHome = situation.homeReachability.isNearRealHome;
       const shouldDisallowFreeze = directive.policy?.disallowFreezeNearHome || isNearEscapeHome;
-      const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
 
-      const hasAdjacentDangerous = cardDirs.some(d => {
-        const np = map.wrapPosition(MovementSystem.getNextPosition(player.pos, d));
-        const e = enemies.find(
-          enemy => enemy.isAlive && !enemy.isPermanentlyFrozen && (enemy.frozenTimer ?? 0) <= 0 && enemy.pos.x === np.x && enemy.pos.y === np.y
-        );
-        if (!e) return false;
-        if (isDirectOneShotAttack && targetPos && e.pos.x === targetPos.x && e.pos.y === targetPos.y) {
+      const hasAdjacentDangerous = situation.surroundings.adjacentActiveEnemies.some(info => {
+        if (isDirectOneShotAttack && targetPos && info.enemy.pos.x === targetPos.x && info.enemy.pos.y === targetPos.y) {
           return false;
         }
-        const details = ThreatEvaluator.evaluateThreatDetails(player, e);
-        return details.defenseThreat === 'LETHAL' || (details.defenseThreat === 'TAKES_DAMAGE' && (details.damageToPlayer >= player.hp * 0.35 || details.attackThreat !== 'ONE_SHOT'));
+        return (
+          info.defenseThreat === 'LETHAL' ||
+          info.damageToPlayer >= player.hp * 0.35 ||
+          (info.hasDrain && (info.damageToPlayer > 0 || player.magic > 0))
+        );
       });
 
       if (hasAdjacentDangerous) {

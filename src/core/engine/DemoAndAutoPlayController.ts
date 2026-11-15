@@ -393,8 +393,8 @@ export class DemoAndAutoPlayController {
       this.demoStuckFrames = 0;
     }
 
-    // リアルタイムタイマー更新 & Bot行動
-    this.engine.stepFrame(100);
+    // リアルタイムタイマー更新 & Bot行動（描画はBot行動内のexecuteTurn/castMagic及びGameLoop側で行う）
+    this.engine.stepUpdate(100);
     this.demoBot.step(this.engine);
 
     // チュートリアルTips & 検証ステータス字幕更新

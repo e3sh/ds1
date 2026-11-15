@@ -188,7 +188,7 @@ export class TacticalContext {
     const maxBfsSteps = Math.min(6000, Math.max(3000, this.scale.width * this.scale.height * 2));
 
     // 6. 戦術ポリシー
-    const enableHomeRelocation = this.profile !== 'NOVICE';
+    const enableHomeRelocation = options?.strategyTuning?.enableHomeRelocation ?? (this.profile !== 'NOVICE');
     const homeRelocateDistMin = Math.max(4, Math.round(this.scale.nearRadius * 0.5));
     const homeRelocateDistMax = Math.max(7, Math.round(this.scale.nearRadius * 0.8));
 

@@ -99,7 +99,7 @@ export class MagicSystem {
         return this.castKick(player, map, enemies, dragon);
 
       case 'FREEZE':
-        return this.castFreeze(player, enemies);
+        return this.castFreeze(player, enemies, map);
 
       case 'FLASH':
         return this.castFlash(player, enemies);
@@ -251,17 +251,15 @@ export class MagicSystem {
   /**
    * FREEZE: 周囲モンスターを永久凍結（倒されるまで二度と動かない）
    */
-  private static castFreeze(player: Player, enemies: EnemyInstance[]): CastResult {
+  private static castFreeze(player: Player, enemies: EnemyInstance[], map: WorldMap): CastResult {
     player.magic = Math.max(0, player.magic - 1);
 
     let frozenCount = 0;
     const frozenPositions: Position[] = [];
     for (const enemy of enemies) {
       if (!enemy.isAlive) continue;
-      const dx = Math.abs(enemy.pos.x - player.pos.x);
-      const dy = Math.abs(enemy.pos.y - player.pos.y);
-      // 周囲1マス（8方向）
-      if (dx <= 1 && dy <= 1) {
+      // 周囲1マス（8方向、トーラス境界ラップ対応）
+      if (map.getTorusDistance(player.pos, enemy.pos).chebyshev <= 1) {
         enemy.isPermanentlyFrozen = true;
         enemy.frozenTimer = Infinity;
         frozenCount++;

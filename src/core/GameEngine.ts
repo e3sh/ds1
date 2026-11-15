@@ -249,6 +249,10 @@ export class GameEngine {
     }
   }
 
+  public stepUpdate(deltaMs: number = 16.6): void {
+    this.update(deltaMs);
+  }
+
   public stepFrame(deltaMs: number = 16.6): void {
     this.update(deltaMs);
     this.render();
