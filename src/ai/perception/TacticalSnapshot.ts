@@ -3,8 +3,9 @@ import { EnemyInstance } from '../../models/Enemy.js';
 import { WorldMap } from '../../models/WorldMap.js';
 import { DynamicBotParameters } from '../BotTypes.js';
 import { SpatialKnowledge } from './SpatialKnowledge.js';
-import { GrowthMilestones, ThreatDistribution, StagnationState } from './SituationalPerception.js';
+import { GrowthMilestones, ThreatDistribution, ConfinementState } from './SituationalPerception.js';
 import { EpisodicMemory } from './EpisodicMemory.js';
+import { ProgressWindow } from './ProgressLedger.js';
 import type { MapSituationSummary } from './MapSituationEvaluator.js';
 
 export interface TacticalDragonHead {
@@ -18,7 +19,7 @@ export interface TacticalDragonHead {
 
 /**
  * 認知ユニットが毎ターン生成する、世界の客観的事実のスナップショット。
- * 戦略ユニット（Strategic Planner）はこれのみを参照して意思決定を行う。
+ * 戦略ユニット（Strategic Planner / Strategic Commander）はこれのみを参照して意思決定を行う。
  */
 export interface TacticalSnapshot {
   /** 空間トポロジー、ゾーン、開削点、墓パズルの構造化知識 */
@@ -27,8 +28,10 @@ export interface TacticalSnapshot {
   milestones: GrowthMilestones;
   /** 脅威・危険度分布 */
   threats: ThreatDistribution;
-  /** ヒートマップ・局所停滞・拘束状況 */
-  stagnation: StagnationState;
+  /** 物理的完全拘束・脱出手段の評価 */
+  confinement: ConfinementState;
+  /** 長い窓での移動・戦果進捗（認知層が計算、上位指揮官とミッションが参照） */
+  progress: ProgressWindow;
   /** プレイヤーの客観的状態 */
   player: {
     pos: Position;
@@ -56,7 +59,7 @@ export interface TacticalSnapshot {
   };
   /** 生存敵リスト */
   livingEnemies: EnemyInstance[];
-  /** エピソード記憶（到達不能、スタック、訪問履歴） */
+  /** エピソード記憶（到達不能、台帳） */
   memory: EpisodicMemory;
   /** 動的戦術パラメータ（目標STR, 目標EXP等） */
   params: DynamicBotParameters;

@@ -382,11 +382,6 @@ export class DemoAndAutoPlayController {
           this.stopDemoMode();
           return;
         }
-      } else {
-        // 自走検証モード: 終了させず、ボットにスタック状態を通知してターゲットロック解除や自力脱出（安全徘徊）を促す
-        if (this.demoStuckFrames >= 20) {
-          this.demoBot.handleStuckRescue?.();
-        }
       }
     } else {
       this.lastDemoPos = { ...curPos };

@@ -13,33 +13,24 @@ export class CashInGoldMission implements IStrategicMission {
   public readonly name: string;
   public readonly maxTurns = 100;
   public turnsElapsed = 0;
+  public startTurn?: number;
   public status: MissionStatus = 'ACTIVE';
   public completionReason?: MissionCompletionReason;
   public subMode: 'RETURNING_HOME' | 'COMPLETED_CASHIN' = 'RETURNING_HOME';
-  private initialGold: number | null = null;
-  private initialExperience: number | null = null;
 
-  constructor(goldAmount: number) {
-    this.name = `🪙 コイン一括換金帰還 [所持: ${goldAmount}G]`;
+  constructor(private readonly initialGoldAmount: number) {
+    this.name = `🪙 コイン一括換金帰還 [所持: ${initialGoldAmount}G]`;
   }
 
-  private ensureInitialized(engine: GameEngine): void {
+  public evaluateStatus(snapshot: TacticalSnapshot, engine: GameEngine): MissionStatus {
     const player = engine.getPlayer();
-    if (this.initialGold === null) {
-      this.initialGold = player.gold;
-      this.initialExperience = player.experience;
-    }
-  }
-
-  public evaluateStatus(_snapshot: TacticalSnapshot, engine: GameEngine): MissionStatus {
-    this.ensureInitialized(engine);
-    const player = engine.getPlayer();
+    const start = this.startTurn ?? snapshot.totalTurns;
+    const gains = snapshot.progress.substantiveGainsSince(start);
+    const gainedExp = gains.some(g => g.kind === 'EXP_UP' || g.kind === 'GOLD_CASHED');
 
     // 我が家に到達して換金完了 (player.gold === 0 かつ EXP 増加または初期所持あり)
     if (player.gold === 0) {
-      const gainedExp = this.initialExperience !== null && player.experience > this.initialExperience;
-      const cashedOut = (this.initialGold !== null && this.initialGold > 0) || gainedExp;
-      if (cashedOut) {
+      if (this.initialGoldAmount > 0 || gainedExp) {
         this.subMode = 'COMPLETED_CASHIN';
         this.completionReason = 'OBJECTIVE_ACHIEVED';
         return 'COMPLETED';
@@ -49,7 +40,6 @@ export class CashInGoldMission implements IStrategicMission {
     }
 
     if (this.turnsElapsed >= this.maxTurns) {
-      const gainedExp = this.initialExperience !== null && player.experience > this.initialExperience;
       this.completionReason = gainedExp ? 'PARTIAL_PROGRESS' : 'NO_PROGRESS_TIMEOUT';
       return 'ABORTED';
     }
@@ -58,7 +48,6 @@ export class CashInGoldMission implements IStrategicMission {
   }
 
   public generateDirective(snapshot: TacticalSnapshot, engine: GameEngine): StrategicDirective {
-    this.ensureInitialized(engine);
     this.subMode = 'RETURNING_HOME';
     const player = engine.getPlayer();
     const map = snapshot.map;

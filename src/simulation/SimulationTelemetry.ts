@@ -56,6 +56,9 @@ export interface SingleRunRecord {
     breachShortcutsUsed: number;
     terminalMissionId?: string;
     terminalZoneId?: string;
+    maxTurnsWithoutSubstantiveGain?: number;
+    commanderLevelCounts?: Record<string, number>;
+    giveUpSource?: string;
   };
 }
 
@@ -126,6 +129,9 @@ export interface SimulationSummaryReport {
     crownEscapeSuccessRate?: number;
     avgBreachShortcutsUsed: number;
     terminalMissionBreakdown: Record<string, number>;
+    avgMaxTurnsWithoutSubstantiveGain?: number;
+    commanderLevelCounts?: Record<string, number>;
+    giveUpSources?: Record<string, number>;
   };
 }
 

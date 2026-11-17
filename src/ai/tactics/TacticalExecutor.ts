@@ -162,12 +162,20 @@ export class TacticalExecutor {
       }
     }
 
-    // 0-C. 膠着・周回（カルーセルループ）の能動打開（王冠脱出フェーズおよび致死敵への一撃必殺攻撃中は除外）
+    // 0-C. 膠着・短周期周回（カルーセルループ）の能動打開（王冠脱出フェーズ、8歩調整中、および致死敵への一撃必殺攻撃中は除外）
     const isCrownEscapePhase =
       Boolean(dragon && (dragon.isAllHeadsDefeated || dragon.heads.every(h => !h.isAlive))) ||
       player.holdItem === 'CROWN' ||
       map.getItem(player.pos) === 'CROWN';
-    if (!isCrownEscapePhase && !isDirectOneShotAttack && (this.nav.oscillationCount >= 2 || snapshot.memory.pingPongCount >= 2)) {
+    const isShortCycleStalled =
+      (snapshot.progress?.cycle !== null && snapshot.progress?.cycle !== undefined && snapshot.progress.cycle.period <= 4) ||
+      (snapshot.progress?.turnsSinceNewTile ?? 0) >= 12;
+    if (
+      !isCrownEscapePhase &&
+      !isDirectOneShotAttack &&
+      directive.type !== 'UNLOCK_CHEST_8STEP' &&
+      isShortCycleStalled
+    ) {
       const circlingAction = TacticalCombat.tryBreakCirclingLoop(player, map, enemies, dragon, this.nav, params);
       if (circlingAction) {
         return {
@@ -542,7 +550,6 @@ export class TacticalExecutor {
       const safePivotDir = this.findAdjacentSafePivot(curPos, map, enemies, dragon, player);
       if (safePivotDir) {
         this.pivotTurns++;
-        this.nav.resetPingPong();
         return {
           action: { type: 'MOVE', dir: safePivotDir },
           description: `🚶 8歩周期ピボット移動 [歩数:${S}/8, 試行:${this.pivotTurns}/8]`,
@@ -578,7 +585,6 @@ export class TacticalExecutor {
         // パリティが合う場合 (S = 1, 3, 5) のみ歩数稼ぎピボット往復
         const safePivotDir = this.findAdjacentSafePivot(curPos, map, enemies, dragon, player, chestPos);
         if (safePivotDir) {
-          this.nav.resetPingPong();
           return {
             action: { type: 'MOVE', dir: safePivotDir },
             description: `🚶 8歩周期調整ピボット往復 [歩数:${S}/8]`,

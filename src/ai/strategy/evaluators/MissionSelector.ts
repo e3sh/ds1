@@ -11,7 +11,9 @@ import { PrepareDragonAssaultMission } from '../missions/PrepareDragonAssaultMis
 import { RelocateHomeMission } from '../missions/RelocateHomeMission.js';
 import { DragonReadinessAssessment, ReadinessEvaluator } from './ReadinessEvaluator.js';
 import { CrownEscapeMission } from '../missions/CrownEscapeMission.js';
-import { ExploreWanderMission } from '../missions/ExploreWanderMission.js';
+import { ExploreFrontierMission } from '../missions/ExploreFrontierMission.js';
+import { StrategicBreakMission } from '../missions/StrategicBreakMission.js';
+import type { ForcedMissionOrder, PhaseWaiver } from '../command/CommanderTypes.js';
 import { Position } from '../../../models/Types.js';
 import { WorldMap } from '../../../models/WorldMap.js';
 import { ThreatEvaluator } from '../../../systems/ThreatEvaluator.js';
@@ -24,6 +26,13 @@ import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js
  * 最適な長期的作戦（StrategicMission）を選定する。
  */
 export class MissionSelector {
+  public static createForcedMission(order: ForcedMissionOrder): IStrategicMission {
+    if (order.kind === 'EXPLORE_FRONTIER') {
+      return new ExploreFrontierMission(order.target);
+    }
+    return new StrategicBreakMission(order.mode, order.mode === 'BREACH' ? order.target : null);
+  }
+
   public static selectNextMission(
     snapshot: TacticalSnapshot,
     engine: GameEngine,
@@ -31,7 +40,7 @@ export class MissionSelector {
     relocateDone?: boolean,
     prepTurns: number = 0,
     cooldownMissions?: Set<string>,
-    precomputed?: { readyForDragon?: boolean; assessment?: DragonReadinessAssessment }
+    precomputed?: { readyForDragon?: boolean; assessment?: DragonReadinessAssessment; waivers?: ReadonlySet<PhaseWaiver> }
   ): IStrategicMission {
     const player = engine.getPlayer();
     const map = snapshot.map;
@@ -165,6 +174,7 @@ export class MissionSelector {
         includeHeldKeyInChestCheck: true,
         precomputedReady: precomputed?.readyForDragon,
         precomputedAssessment: precomputed?.assessment,
+        waivers: precomputed?.waivers,
       });
       if (prepMission) {
         return prepMission;
@@ -226,8 +236,8 @@ export class MissionSelector {
       return new HarvestPowerStoneMission(stonePos);
     }
 
-    // ⑩ フォールバック: 安全探索徘徊
-    return new ExploreWanderMission();
+    // ⑩ フォールバック: 未踏フロンティア遠征探索
+    return new ExploreFrontierMission();
   }
 
   public static hasReachableChests(_map: WorldMap, snapshot: TacticalSnapshot): boolean {
@@ -304,7 +314,12 @@ export class MissionSelector {
     return nearest;
   }
 
-  public static isReadyForDragon(snapshot: TacticalSnapshot, engine: GameEngine, prepTurns: number = 0): boolean {
+  public static isReadyForDragon(
+    snapshot: TacticalSnapshot,
+    engine: GameEngine,
+    prepTurns: number = 0,
+    waivers?: ReadonlySet<PhaseWaiver>
+  ): boolean {
     const player = engine.getPlayer();
     const dragon = engine.getDragon();
     const hasSword = player.hasSword;
@@ -320,12 +335,19 @@ export class MissionSelector {
     const canBreak = !player.hasDeath && player.magic >= 1 && player.experience >= 4000;
     const items = MapSituationEvaluator.get(snapshot).items;
     const noReachablePotion = items.nearbyPotionCountWithin15 === 0 && items.nearestPotion === null;
-    const hasDragonAssaultMagic = player.magic >= 3 || (noReachablePotion && player.magic >= 1);
-    const hasEnoughHp = player.hp >= player.maxHp * 0.50 || player.hp >= 15000;
+    const waiveMagic = waivers?.has('MAGIC_STOCK') ?? false;
+    const waiveDefense = waivers?.has('DEFENSE_EXP') ?? false;
+    const waiveHpFull = waivers?.has('HP_FULL') ?? false;
+
+    const hasDragonAssaultMagic = player.magic >= 3 || ((noReachablePotion || waiveMagic) && player.magic >= 1);
+    const hasEnoughHp = waiveHpFull
+      ? (player.hp >= player.maxHp * 0.35 || player.hp >= 8000)
+      : (player.hp >= player.maxHp * 0.50 || player.hp >= 15000);
 
     // 防御力（EXP）の適正判定: ドラゴン決戦で即死しないための十分なEXP
     const requiredDefenseExp = snapshot.params.targetDefenseExp ?? 12000;
     const hasEnoughDefense =
+      waiveDefense ||
       player.experience >= requiredDefenseExp ||
       (canDiagonal && (prepTurns >= 25 || snapshot.totalTurns >= 600 || (noReachablePotion && player.gold === 0)));
 
@@ -347,6 +369,7 @@ export class MissionSelector {
       includeHeldKeyInChestCheck?: boolean;
       precomputedReady?: boolean;
       precomputedAssessment?: DragonReadinessAssessment;
+      waivers?: ReadonlySet<PhaseWaiver>;
     } = {}
   ): IStrategicMission | null {
     const player = engine.getPlayer();
@@ -359,8 +382,8 @@ export class MissionSelector {
     const slayOnCooldown = cooldownMissions?.has('SLAY_DRAGON') ?? false;
 
     const itemsAll = MapSituationEvaluator.get(snapshot, engine).items;
-    const assessment = options.precomputedAssessment ?? ReadinessEvaluator.evaluateDragonReadiness(snapshot, engine, prepTurns);
-    const readyForDragon = options.precomputedReady ?? this.isReadyForDragon(snapshot, engine, prepTurns);
+    const assessment = options.precomputedAssessment ?? ReadinessEvaluator.evaluateDragonReadiness(snapshot, engine, prepTurns, options.waivers);
+    const readyForDragon = options.precomputedReady ?? this.isReadyForDragon(snapshot, engine, prepTurns, options.waivers);
 
     if (options.prioritizeImmediateSlay && readyForDragon && (assessment.isFullyPrepared || prepOnCooldown) && !slayOnCooldown) {
       return new SlayDragonMission();

@@ -24,6 +24,11 @@ export class SlayDragonMission implements IStrategicMission {
   public status: MissionStatus = 'ACTIVE';
   public completionReason?: MissionCompletionReason;
   public subMode: 'DROPPING_ITEM' | 'RETREATING_HEAL' | 'RESUPPLY_MP' | 'ATTACKING_HEAD' | 'APPROACHING_SPOT' = 'APPROACHING_SPOT';
+  public readonly auditProfile = {
+    graceTurns: 48,
+    tabooable: true,
+    maxEscalation: 'TERMINAL' as const,
+  };
   private initialLivingHeads: number | null = null;
 
   private ensureInitialized(engine: GameEngine): void {

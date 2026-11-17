@@ -33,111 +33,24 @@ export interface CirclingContext {
  * 動的パラメータに基づいて最適な安全経路を算出する。
  */
 export class AdaptiveNavigator {
-  // 1. 直近訪問座標履歴 (ピンポン・周回検知用)
-  private recentPositions: Position[] = [];
-  private readonly MAX_HISTORY_LEN: number = 32;
-
-  // 1-B. 訪問ヒートマップ (時間減衰型熱量マップ: 座標キー "x,y" => 熱量)
-  public heatMap: Map<string, number> = new Map();
-  private readonly HEAT_ADD: number = 10.0;
-  private readonly HEAT_DECAY: number = 0.85;
-
-  // 1-C. 開拓履歴・新規マス停滞ターン追跡 (物理的詰み検知用)
-  private visitedTilesEver: Set<string> = new Set();
-  public turnsSinceNewTile: number = 0;
-  public consecutiveSwordBlockedTurns: number = 0;
-  public consecutiveFarmBlockedTurns: number = 0;
-
-  // 2. 統合振動・停滞カウンタ
-  public oscillationCount: number = 0;
-  public pingPongCount: number = 0;
-
-  // 3. ワープ往復防止タブー
+  // 1. ワープ往復防止タブー
   private recentWarpTiles: { pos: Position; turnsRemaining: number }[] = [];
 
-  // 5. 危険ゾーン退避タイル記憶
+  // 2. 危険ゾーン退避タイル記憶
   public recentEvadedTile: Position | null = null;
   public recentEvadedTurns: number = 0;
 
-  // 6. 強制安全徘徊フラグ (スタック救出時)
-  public forceWanderTurns: number = 0;
+  constructor(private readonly memory?: EpisodicMemory) {}
 
   // ==========================================================================
   // 状態追跡 & ターン更新
   // ==========================================================================
 
   /**
-   * 毎ターンの開始時にプレイヤーの現在地を記録し、停滞やピンポンを検知
+   * 毎ターンの開始時にワープ・退避タイマーを減衰させる
+   * （位置・ヒートマップ・新規マス追跡は EpisodicMemory / MovementLedger に一元化済み）
    */
-  public updateTurn(playerPos: Position): void {
-    // A. 訪問履歴記録
-    this.recentPositions.push({ ...playerPos });
-    if (this.recentPositions.length > this.MAX_HISTORY_LEN) {
-      this.recentPositions.shift();
-    }
-
-    // A-2. 訪問ヒートマップの減衰と現在地への熱量加算
-    for (const [key, heat] of this.heatMap.entries()) {
-      const decayed = heat * this.HEAT_DECAY;
-      if (decayed < 0.2) {
-        this.heatMap.delete(key);
-      } else {
-        this.heatMap.set(key, decayed);
-      }
-    }
-    const curKey = `${playerPos.x},${playerPos.y}`;
-    this.heatMap.set(curKey, (this.heatMap.get(curKey) ?? 0) + this.HEAT_ADD);
-
-    // A-3. 新規未踏マス開拓の追跡
-    if (this.visitedTilesEver.has(curKey)) {
-      this.turnsSinceNewTile++;
-    } else {
-      this.visitedTilesEver.add(curKey);
-      this.turnsSinceNewTile = 0;
-    }
-
-    // B. ピンポン往復 (A -> B -> A) および狭小ループの厳格検知
-    const rLen = this.recentPositions.length;
-    let isPingPong = false;
-    let isLooping = false;
-
-    const prev1 = rLen >= 2 ? this.recentPositions[rLen - 2] : null;
-    const isStationary = prev1 !== null && playerPos.x === prev1.x && playerPos.y === prev1.y;
-
-    if (!isStationary) {
-      if (rLen >= 3) {
-        const prev2 = this.recentPositions[rLen - 3];
-        if (playerPos.x === prev2.x && playerPos.y === prev2.y) {
-          isPingPong = true;
-        }
-      }
-
-      if (!isPingPong && rLen >= 4) {
-        const prev3 = this.recentPositions[rLen - 4];
-        if (playerPos.x === prev3.x && playerPos.y === prev3.y) {
-          isLooping = true;
-        }
-      }
-
-      if (!isPingPong && !isLooping && rLen >= 5) {
-        const prev4 = this.recentPositions[rLen - 5];
-        if (playerPos.x === prev4.x && playerPos.y === prev4.y) {
-          isLooping = true;
-        }
-      }
-    }
-
-    if (isPingPong) {
-      this.pingPongCount++;
-      this.oscillationCount++;
-    } else if (isLooping) {
-      this.oscillationCount++;
-    } else {
-      this.pingPongCount = Math.max(0, this.pingPongCount - 1);
-      this.oscillationCount = Math.max(0, this.oscillationCount - 1);
-    }
-
-    // C. タブー・退避・強制徘徊タイマーの減衰
+  public updateTurn(_playerPos?: Position): void {
     for (let i = this.recentWarpTiles.length - 1; i >= 0; i--) {
       this.recentWarpTiles[i].turnsRemaining--;
       if (this.recentWarpTiles[i].turnsRemaining <= 0) {
@@ -151,14 +64,10 @@ export class AdaptiveNavigator {
         this.recentEvadedTile = null;
       }
     }
-
-    if (this.forceWanderTurns > 0) {
-      this.forceWanderTurns--;
-    }
   }
 
   // ==========================================================================
-  // タブー＆スタック救出操作
+  // タブー操作
   // ==========================================================================
 
   public recordWarpEvent(fromPos: Position, _toPos: Position): void {
@@ -169,43 +78,22 @@ export class AdaptiveNavigator {
     return this.recentWarpTiles.some(w => w.pos.x === pos.x && w.pos.y === pos.y);
   }
 
-  public triggerRescue(turns: number = 4): void {
-    this.forceWanderTurns = turns;
-    this.oscillationCount = 0;
-    this.pingPongCount = 0;
-  }
-
-  /**
-   * 8歩周期調整や意図的待機によるピンポン誤検知をリセット
-   */
-  public resetPingPong(): void {
-    this.oscillationCount = 0;
-    this.pingPongCount = 0;
-  }
-
   // ==========================================================================
-  // 訪問ヒートマップ操作 & 周回カルーセル検知
+  // 訪問ヒートマップ参照 & 障害物周回カルーセル検知
   // ==========================================================================
 
   /**
    * 指定座標の訪問熱量を取得
    */
   public getHeat(pos: Position): number {
-    return this.heatMap.get(`${pos.x},${pos.y}`) ?? 0;
+    return this.memory?.movement.getHeat(pos) ?? 0;
   }
 
   /**
    * 指定座標の周囲（radius）の総熱量を取得
    */
   public getNeighborhoodHeat(pos: Position, map: WorldMap, radius: number = 1): number {
-    let total = 0;
-    for (let dy = -radius; dy <= radius; dy++) {
-      for (let dx = -radius; dx <= radius; dx++) {
-        const p = map.wrapPosition({ x: pos.x + dx, y: pos.y + dy });
-        total += this.getHeat(p);
-      }
-    }
-    return total;
+    return this.memory?.movement.getNeighborhoodHeat(pos, map, radius) ?? 0;
   }
 
   /**
@@ -259,317 +147,6 @@ export class AdaptiveNavigator {
 
     return null;
   }
-
-  /**
-   * 序盤の剣回収前ハマり（物理的詰み）の検知
-   *
-   * 条件:
-   * 1. 剣未所持 (!player.hasSword) かつ BREAK / JUMP / FLY 魔法が使えない
-   * 2. マップ上のすべての剣 (SWORD) への経路が到達不能 (findPath === null)
-   * 3. 岩を動かす指輪 (RING) も未所持かつ到達可能な RING も存在しない
-   * 4. 訪問ヒートマップによる局所熱量飽和 (周辺半径2の総熱量 >= 40 かつ 現在地熱量 >= 12)、
-   *    または新規未踏マスへの移動が 35 ターン以上発生していない
-   */
-  public detectEarlySwordTrap(
-    player: Player,
-    map: WorldMap,
-    enemies: EnemyInstance[],
-    params: DynamicBotParameters,
-    dragon?: Dragon
-  ): boolean {
-    if (player.hasSword) {
-      this.consecutiveSwordBlockedTurns = 0;
-      return false;
-    }
-    if (MagicSystem.canCast(player, 'BREAK').allowed) return false;
-    if (MagicSystem.canCast(player, 'JUMP').allowed) return false;
-    if (MagicSystem.canCast(player, 'FLY').allowed) return false;
-
-    const curPos = player.pos;
-    // 剣が足元にあるなら詰みではない
-    if (map.getItem(curPos) === 'SWORD') {
-      this.consecutiveSwordBlockedTurns = 0;
-      return false;
-    }
-
-    // 1. 訪問ヒートマップの局所飽和チェック（軽量な事前判定）
-    const curHeat = this.getHeat(curPos);
-    const neighborhoodHeat = this.getNeighborhoodHeat(curPos, map, 2);
-    const isHeatSaturated = curHeat >= 11 && neighborhoodHeat >= 48 && this.turnsSinceNewTile >= 10;
-    const isLongStagnant = this.turnsSinceNewTile >= 45 && neighborhoodHeat >= 42;
-
-    if (!isHeatSaturated && !isLongStagnant) {
-      return false;
-    }
-
-    // 2. マップ上のすべての剣 (SWORD) を列挙（一時ブラックリストを無視して真の到達性を検査）
-    const swordPositions: Position[] = [];
-    const ringPositions: Position[] = [];
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        const p = { x, y };
-        const item = map.getItem(p);
-        if (item === 'SWORD') {
-          swordPositions.push(p);
-        } else if (item === 'RING') {
-          ringPositions.push(p);
-        }
-      }
-    }
-
-    // 剣が1本でも到達可能なら詰みではない
-    for (const swordPos of swordPositions) {
-      const dir = this.findPath(curPos, swordPos, map, player, enemies, params, { dragon });
-      if (dir !== null) {
-        this.consecutiveSwordBlockedTurns = 0;
-        return false;
-      }
-    }
-
-    // 未所持だが到達可能な指輪 (RING) があり、指輪を持てば剣へ到達できる可能性がある場合は除外
-    if (player.holdItem !== 'RING') {
-      for (const ringPos of ringPositions) {
-        const dirToRing = this.findPath(curPos, ringPos, map, player, enemies, params, { dragon });
-        if (dirToRing !== null) {
-          const testPlayerWithRing = { ...player, holdItem: 'RING' } as Player;
-          const canReachSwordWithRing = swordPositions.some(
-            sp => this.findPath(ringPos, sp, map, testPlayerWithRing, enemies, params, { dragon }) !== null
-          );
-          if (canReachSwordWithRing) {
-            this.consecutiveSwordBlockedTurns = 0;
-            return false;
-          }
-        }
-      }
-    }
-
-    this.consecutiveSwordBlockedTurns++;
-
-    // 3. 静的地形（壁・岩）自体で完全に封鎖されているか確認（敵を除外しても経路がない場合は即時確定）
-    const isStaticallySealed = swordPositions.every(
-      sp => this.findPath(curPos, sp, map, player, [], params, { dragon }) === null
-    );
-
-    if (isStaticallySealed && isHeatSaturated) {
-      return true;
-    }
-
-    // 敵による封鎖も含め、長期間（新規未踏マスなし55ターン以上）完全にハマっている場合も詰み確定
-    if (isLongStagnant && this.consecutiveSwordBlockedTurns >= 15) {
-      return true;
-    }
-
-    return false;
-  }
-  /**
-   * 訪問ヒートマップ・往復履歴に基づく総合停滞判定
-   */
-  public isStagnated(player: Player, map: WorldMap): boolean {
-    const curHeat = this.getHeat(player.pos);
-    const neighborhoodHeat = this.getNeighborhoodHeat(player.pos, map, 1);
-    const isHeatHigh = curHeat >= 11 || neighborhoodHeat >= 35;
-    const isStuckWithoutNewTile = this.turnsSinceNewTile >= 12;
-    const isPingPong = this.pingPongCount >= 2 || this.oscillationCount >= 2;
-    return (isHeatHigh && isStuckWithoutNewTile) || isPingPong || neighborhoodHeat >= 45;
-  }
-
-  /**
-   * 袋小路・敵封鎖による完全拘束・孤立ハマり（Incarceration Trap）の検知
-   *
-   * 1マスの完全静止だけでなく、2〜3マスを往復・循環して袋小路から出られない閉域ループも確実に検知。
-   *
-   * 条件:
-   * 1. 周辺総熱量が極限飽和 (neighborhoodHeat >= 52.0、2〜3マス往復でも合計は約66.7に収束)
-   * 2. 新規マス開拓なしターン数が 18 ターン以上継続
-   * 3. 直近 18 ターンの訪問マスが「高々 3 種類以下」（小閉域ループ）
-   * 4. 閉域から外部へ抜ける脱出路が、壁または安全に倒せない敵（turnsToKill > 8）で完全に塞がれている
-   */
-  public detectIncarcerationTrap(
-    player: Player,
-    map: WorldMap,
-    enemies: EnemyInstance[]
-  ): boolean {
-    const curPos = player.pos;
-
-    // 1. 周辺総熱量（半径2）の飽和チェック (1〜3マス往復でも20ターン前後で55〜66に収束)
-    const neighborhoodHeat = this.getNeighborhoodHeat(curPos, map, 2);
-    if (neighborhoodHeat < 52.0) {
-      return false;
-    }
-
-    // 2. 新規未踏マスの開拓停滞チェック (最低18ターン以上同一局所エリアに滞留)
-    if (this.turnsSinceNewTile < 18) {
-      return false;
-    }
-
-    // 3. 直近の移動履歴が「高々 3 種類以下」の閉域ループかチェック
-    const rLen = this.recentPositions.length;
-    if (rLen < 18) {
-      return false;
-    }
-    const recentSlice = this.recentPositions.slice(-18);
-    const uniquePositions = new Set(recentSlice.map(p => `${p.x},${p.y}`));
-    if (uniquePositions.size > 3) {
-      return false;
-    }
-
-    // 4. 閉域内の各マスから、外部へ安全に脱出できる出口が存在するか検査
-    const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
-    const effectiveDef = Math.floor(player.experience * 1.0);
-
-    for (const posKey of uniquePositions) {
-      const [px, py] = posKey.split(',').map(Number);
-      const cellPos = { x: px, y: py };
-
-      for (const d of cardDirs) {
-        const nextPos = map.wrapPosition(MovementSystem.getNextPosition(cellPos, d));
-        const nextKey = `${nextPos.x},${nextPos.y}`;
-
-        // すでに閉域内部のマスであれば、内部移動なので外部脱出路ではない
-        if (uniquePositions.has(nextKey)) continue;
-
-        const baseTile = map.getBaseTile(nextPos);
-        const objTile = map.getObject(nextPos);
-
-        // 壁や墓（オブジェクトなし）は進入不能
-        if (baseTile === 'WALL_STATIC') continue;
-        if (baseTile === 'GRAVE' && objTile === 'NONE') continue;
-
-        // 岩（BLOCK）がある場合、BREAK可能なら脱出経路になり得るので除外
-        if (objTile === 'BLOCK') {
-          if (MagicSystem.canCast(player, 'BREAK').allowed) return false;
-          if (player.holdItem === 'RING') {
-            const pushDest = map.wrapPosition(MovementSystem.getNextPosition(nextPos, d));
-            if (map.isPushDestinationValid(pushDest, enemies)) return false;
-          }
-          continue;
-        }
-
-        // 敵がいるマス
-        const enemy = enemies.find(e => e.isAlive && e.pos.x === nextPos.x && e.pos.y === nextPos.y);
-        if (enemy) {
-          if (player.holdItem === 'CROSS') continue;
-          const details = ThreatEvaluator.evaluateThreatDetails(player, enemy);
-          // 安全に短手数（8ターン以内）で倒せる敵なら、殴り倒して脱出できるため除外
-          if (details.defenseThreat === 'NO_DAMAGE' && details.turnsToKill <= 8) {
-            return false;
-          }
-          continue;
-        }
-
-        // 敵も障害物もない空き床が存在する場合：
-        // ただし、そのマスが即死敵の直角隣接（進入した瞬間に即死するマス）でないか確認
-        const isLethalDeathTrap = enemies.some(e => {
-          if (!e.isAlive || e.isPermanentlyFrozen || e.frozenTimer > 0) return false;
-          if (map.getTorusDistance(nextPos, e.pos).manhattan !== 1) return false;
-          return Math.max(0, e.atk - effectiveDef) >= player.hp;
-        });
-
-        // 即死デストラップではない安全な空き床が1つでもあれば、外部へ脱出可能
-        if (!isLethalDeathTrap) {
-          return false;
-        }
-      }
-    }
-
-    // 閉域内の全マスから外部への脱出路が完全に遮断されている
-    return true;
-  }
-
-  /**
-   * 序盤 RESOURCE_FARM 時の資源遮断・攻撃力不足ハマり（物理的詰み）の検知
-   *
-   * 条件:
-   * 1. 剣所持直後 (player.hasSword && player.strength <= 10)
-   * 2. 魔法（BREAK/JUMP/FLY）および指輪（RING）が未所持・使用不能
-   * 3. マップ上の全有効資源（宝箱、石、鍵、コイン、指輪）への経路がすべて到達不能 (findPath === null)
-   * 4. 安全に撃破可能な敵（被ダメ0 かつ turnsToKill <= 8）がマップ上に存在しない
-   * 5. 局所熱量飽和または長期停滞
-   */
-  public detectEarlyResourceFarmTrap(
-    player: Player,
-    map: WorldMap,
-    enemies: EnemyInstance[],
-    params: DynamicBotParameters,
-    dragon?: Dragon
-  ): boolean {
-    if (!player.hasSword || player.strength > 10) {
-      this.consecutiveFarmBlockedTurns = 0;
-      return false;
-    }
-    if (MagicSystem.canCast(player, 'BREAK').allowed) return false;
-    if (MagicSystem.canCast(player, 'JUMP').allowed) return false;
-    if (MagicSystem.canCast(player, 'FLY').allowed) return false;
-    if (player.holdItem === 'RING') return false;
-
-    const curPos = player.pos;
-
-    // 1. 訪問ヒートマップの局所飽和チェック
-    const curHeat = this.getHeat(curPos);
-    const neighborhoodHeat = this.getNeighborhoodHeat(curPos, map, 2);
-    const isHeatSaturated = curHeat >= 11 && neighborhoodHeat >= 45 && this.turnsSinceNewTile >= 10;
-    const isLongStagnant = this.turnsSinceNewTile >= 35 && neighborhoodHeat >= 40;
-
-    if (!isHeatSaturated && !isLongStagnant) {
-      return false;
-    }
-
-    // 2. マップ上の全主要育成資源（宝箱、パワーストーン、鍵、コイン、指輪）を列挙
-    const resourcePositions: Position[] = [];
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        const p = { x, y };
-        if (p.x === curPos.x && p.y === curPos.y) continue;
-        if (map.getObject(p) === 'CHEST') {
-          resourcePositions.push(p);
-          continue;
-        }
-        const item = map.getItem(p);
-        if (item === 'POWER_STONE' || item === 'KEY' || item === 'COIN' || item === 'RING') {
-          resourcePositions.push(p);
-        }
-      }
-    }
-
-    // 資源が1つでも到達可能なら詰みではない
-    for (const resPos of resourcePositions) {
-      const dir = this.findPath(curPos, resPos, map, player, enemies, params, { dragon });
-      if (dir !== null) {
-        this.consecutiveFarmBlockedTurns = 0;
-        return false;
-      }
-    }
-
-    // 安全に撃破可能な敵（被ダメ0 かつ turnsToKill <= 8）が生存していれば、排除して道が開ける可能性があるため除外
-    const hasSafeKillableEnemy = enemies.some(e => {
-      if (!e.isAlive || e.isPermanentlyFrozen) return false;
-      const details = ThreatEvaluator.evaluateThreatDetails(player, e);
-      return details.defenseThreat === 'NO_DAMAGE' && details.turnsToKill <= 8;
-    });
-    if (hasSafeKillableEnemy) {
-      this.consecutiveFarmBlockedTurns = 0;
-      return false;
-    }
-
-    this.consecutiveFarmBlockedTurns++;
-
-    // 静的地形で全資源が完全に封鎖されている場合は即時確定
-    const isStaticallySealed = resourcePositions.every(
-      rp => this.findPath(curPos, rp, map, player, [], params, { dragon }) === null
-    );
-
-    if (isStaticallySealed && isHeatSaturated) {
-      return true;
-    }
-
-    // 敵による封鎖も含め、12ターン以上連続で全資源が遮断されている場合は詰み確定
-    if (isLongStagnant && this.consecutiveFarmBlockedTurns >= 12) {
-      return true;
-    }
-
-    return false;
-  }
-
 
   // ==========================================================================
   // トポロジー適応型 BFS 経路探索
@@ -879,18 +456,19 @@ export class AdaptiveNavigator {
         }
 
         // 直前マスへの逆戻り抑制:
-        // this.recentPositions の末尾 (rLen - 1) は現在地 player.pos
+        // recentPositions の末尾 (rLen - 1) は現在地 player.pos
         // 1手前の座標 (rLen - 2) への逆戻りには +100、2手前の座標 (rLen - 3) には +50 のペナルティ
         if (!(nextPos.x === to.x && nextPos.y === to.y) && current.firstDir === null) {
-          const rLen = this.recentPositions.length;
+          const recentPositions = this.memory?.movement.getRecentPositions(4) ?? [];
+          const rLen = recentPositions.length;
           if (rLen >= 2) {
-            const prev1 = this.recentPositions[rLen - 2];
+            const prev1 = recentPositions[rLen - 2];
             if (nextPos.x === prev1.x && nextPos.y === prev1.y) {
               stepCost += 100;
             }
           }
           if (rLen >= 3) {
-            const prev2 = this.recentPositions[rLen - 3];
+            const prev2 = recentPositions[rLen - 3];
             if (nextPos.x === prev2.x && nextPos.y === prev2.y) {
               stepCost += 50;
             }
@@ -980,32 +558,32 @@ export class AdaptiveNavigator {
       if (dragon && this.isDragonFireLine(nextPos, dragon, map)) penalty += 80;
 
       // 直近訪問履歴に対する段階的再訪ペナルティ
-      // this.recentPositions の末尾 (length - 1) は現在地 player.pos
-      const rLen = this.recentPositions.length;
+      const recentPositions = this.memory?.movement.getRecentPositions(6) ?? [];
+      const rLen = recentPositions.length;
       if (rLen >= 2) {
         // 1ターン前 (直前マス): 180度Uターン・往復を強力に抑止
-        const p1 = this.recentPositions[rLen - 2];
+        const p1 = recentPositions[rLen - 2];
         if (p1.x === nextPos.x && p1.y === nextPos.y) {
           penalty += 140;
         }
       }
       if (rLen >= 3) {
         // 2ターン前
-        const p2 = this.recentPositions[rLen - 3];
+        const p2 = recentPositions[rLen - 3];
         if (p2.x === nextPos.x && p2.y === nextPos.y) {
           penalty += 70;
         }
       }
       if (rLen >= 4) {
         // 3ターン前
-        const p3 = this.recentPositions[rLen - 4];
+        const p3 = recentPositions[rLen - 4];
         if (p3.x === nextPos.x && p3.y === nextPos.y) {
           penalty += 35;
         }
       }
       if (rLen >= 5) {
         // 4ターン前
-        const p4 = this.recentPositions[rLen - 5];
+        const p4 = recentPositions[rLen - 5];
         if (p4.x === nextPos.x && p4.y === nextPos.y) {
           penalty += 15;
         }
@@ -1133,15 +711,16 @@ export class AdaptiveNavigator {
         penalty += map.getTorusDistance(nextPos, map.realHomePos).manhattan * 3;
       }
       // 直前マスへの逆戻り（ピンポン）抑止
-      const rLen = this.recentPositions.length;
+      const recentPositions = this.memory?.movement.getRecentPositions(4) ?? [];
+      const rLen = recentPositions.length;
       if (rLen >= 2) {
-        const lastP = this.recentPositions[rLen - 2];
+        const lastP = recentPositions[rLen - 2];
         if (nextPos.x === lastP.x && nextPos.y === lastP.y) {
           penalty += 200;
         }
       }
       if (rLen >= 3) {
-        const p2 = this.recentPositions[rLen - 3];
+        const p2 = recentPositions[rLen - 3];
         if (nextPos.x === p2.x && nextPos.y === p2.y) {
           penalty += 100;
         }
@@ -1273,12 +852,7 @@ export class AdaptiveNavigator {
   }
 
   public clearPositionHistory(): void {
-    this.recentPositions = [];
-    this.heatMap.clear();
-    this.turnsSinceNewTile = 0;
-    this.oscillationCount = 0;
-    this.pingPongCount = 0;
-    this.forceWanderTurns = 0;
+    this.memory?.clearPositionHistory();
   }
 
   public getAdjacentDirection(from: Position, to: Position, map: WorldMap): Direction | null {

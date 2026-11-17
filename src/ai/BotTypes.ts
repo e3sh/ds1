@@ -20,6 +20,20 @@ export type BotAction =
 export type GraveSealPolicy = 'AUTO' | 'NONE' | 'NEAR_HOME' | 'ALL';
 export type GraveSealTiming = 'EARLY' | 'PRE_DRAGON' | 'IMMEDIATE';
 
+export interface CommanderConfig {
+  windowSize: number;
+  defaultGraceTurns: number;
+  loopNewTileTurns: number;
+  loopUniqueRatio: number;
+  churnWindowTurns: number;
+  churnSwitchCount: number;
+  debounceTurns: number;
+  memoryTurns: number;
+  recoveryNewTiles16: number;
+  retargetTabooTurns: number;
+  missionTabooTurns: number;
+}
+
 export interface BotStrategyTuning {
   graveSealPolicy?: GraveSealPolicy;
   graveSealTiming?: GraveSealTiming;
@@ -30,6 +44,7 @@ export interface BotStrategyTuning {
   homeRelocateTargetDistMin?: number;
   homeRelocateTargetDistMax?: number;
   targetDefenseExp?: number;
+  commander?: Partial<CommanderConfig>;
 }
 
 /** マップ幾何サイズから導出される正規化距離スケール */
@@ -76,6 +91,7 @@ export interface DynamicBotParameters {
   homeRelocateDistMax: number;
   graveSealPolicy: GraveSealPolicy;
   enableGiveUp?: boolean;
+  commander?: Partial<CommanderConfig>;
 }
 
 export interface AutoPlayBotOptions {

@@ -1,11 +1,13 @@
 import { GameEngine } from '../../core/GameEngine.js';
+import { Position } from '../../models/Types.js';
 import { TacticalSnapshot } from '../perception/TacticalSnapshot.js';
 import { StrategicDirective } from './StrategicDirective.js';
+import type { EscalationLevel } from './command/CommanderTypes.js';
 
 export type MissionStatus = 'ACTIVE' | 'COMPLETED' | 'FAILED' | 'ABORTED';
 
 /**
- * ミッション終了時の詳細理由（実質的な目的達成・部分前進・停滞・喪失・緊急中断を区別）
+ * ミッション終了時の詳細理由（実質的な目的達成・部分前進・停滞・喪失・緊急中断・上位指揮官介入を区別）
  */
 export type MissionCompletionReason =
   | 'OBJECTIVE_ACHIEVED'
@@ -13,7 +15,17 @@ export type MissionCompletionReason =
   | 'NO_PROGRESS_TIMEOUT'
   | 'NO_PROGRESS_BLOCKED'
   | 'TARGET_LOST'
-  | 'INTERRUPTED_BY_EMERGENCY';
+  | 'INTERRUPTED_BY_EMERGENCY'
+  | 'COMMANDER_OVERRIDE';
+
+export interface MissionAuditProfile {
+  /** 実質的な戦果がないまま許容するターン数 */
+  graceTurns: number;
+  /** Commander が禁止（Taboo）にできるか（CROWN_ESCAPE 等は false） */
+  tabooable: boolean;
+  /** 使ってよい打開段階の上限 */
+  maxEscalation: EscalationLevel;
+}
 
 /**
  * 中長期的な作戦の基底インターフェース。
@@ -28,12 +40,20 @@ export interface IStrategicMission {
   readonly maxTurns: number;
   /** 開始からの経過ターン数 */
   turnsElapsed: number;
+  /** ミッション開始時の総ターン数（台帳からの進捗判定用） */
+  startTurn?: number;
   /** 現在のステータス */
   status: MissionStatus;
   /** ミッション終了時の詳細理由（目的達成度・中断理由） */
   completionReason?: MissionCompletionReason;
   /** ミッション内部サブモード（状態遷移追跡・検証用） */
   subMode?: string;
+  /** 監査プロファイル（未指定時はデフォルト値が適用される） */
+  readonly auditProfile?: MissionAuditProfile;
+  /** 現在の主ターゲット座標（L1 RETARGET 時の禁止対象） */
+  readonly currentTarget?: Position | null;
+  /** 現在の対象ゾーンID（L1 RETARGET 時の禁止対象） */
+  readonly zoneId?: string;
 
   /**
    * ミッションの継続可否および完了判定。毎ターン呼び出される。

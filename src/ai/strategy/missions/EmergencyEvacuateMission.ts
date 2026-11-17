@@ -17,6 +17,11 @@ export class EmergencyEvacuateMission implements IStrategicMission {
   public status: MissionStatus = 'ACTIVE';
   public completionReason?: MissionCompletionReason;
   public subMode: 'CASTING_ESCAPE' | 'EVADING_DANGER' = 'EVADING_DANGER';
+  public readonly auditProfile = {
+    graceTurns: 24,
+    tabooable: false,
+    maxEscalation: 'TERMINAL' as const,
+  };
 
   public evaluateStatus(snapshot: TacticalSnapshot, _engine: GameEngine): MissionStatus {
     // 致命的危機が解除されたか判定

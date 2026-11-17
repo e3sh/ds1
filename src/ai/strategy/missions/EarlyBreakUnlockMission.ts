@@ -16,11 +16,10 @@ export class EarlyBreakUnlockMission implements IStrategicMission {
   public readonly name: string;
   public readonly maxTurns = 35;
   public turnsElapsed = 0;
+  public startTurn?: number;
   public status: MissionStatus = 'ACTIVE';
   public completionReason?: MissionCompletionReason;
   public subMode: 'HUNTING_SAFE_ENEMY' | 'SEARCHING_ENEMY' = 'HUNTING_SAFE_ENEMY';
-  private initialExperience: number | null = null;
-  private initialGold: number | null = null;
   private trackedEnemyId: string | null = null;
   private lastEnemyPos: Position | null = null;
   private lastEnemyDist: number = Infinity;
@@ -30,17 +29,12 @@ export class EarlyBreakUnlockMission implements IStrategicMission {
     this.name = targetExp > 4000 ? '⚔️ 決戦前防御EXP稼ぎ作戦' : '⛏️ BREAK解禁EXP稼ぎ作戦';
   }
 
-  private ensureInitialized(engine: GameEngine): void {
-    if (this.initialExperience === null) {
-      this.initialExperience = engine.getPlayer().experience;
-      this.initialGold = engine.getPlayer().gold;
-    }
-  }
-
   public evaluateStatus(snapshot: TacticalSnapshot, engine: GameEngine): MissionStatus {
-    this.ensureInitialized(engine);
     const player = engine.getPlayer();
-    const gainedExp = this.initialExperience !== null && player.experience > this.initialExperience;
+    const start = this.startTurn ?? snapshot.totalTurns;
+    const gains = snapshot.progress.substantiveGainsSince(start);
+    const gainedExp = gains.some(g => g.kind === 'EXP_UP' || g.kind === 'GOLD_CASHED');
+    const gainedExpOrGold = gainedExp || gains.some(g => g.kind === 'GOLD_PICKUP');
 
     if (player.experience >= this.targetExp) {
       this.completionReason = 'OBJECTIVE_ACHIEVED';
@@ -50,11 +44,7 @@ export class EarlyBreakUnlockMission implements IStrategicMission {
       this.completionReason = 'TARGET_LOST';
       return 'ABORTED';
     }
-    if (
-      this.turnsElapsed >= 10 &&
-      player.experience <= (this.initialExperience ?? player.experience) &&
-      player.gold <= (this.initialGold ?? player.gold)
-    ) {
+    if (this.turnsElapsed >= 10 && !gainedExpOrGold) {
       if (this.lastEnemyPos) {
         snapshot.memory.markTargetUnreachable(this.lastEnemyPos, 30, snapshot.totalTurns);
       }
@@ -102,7 +92,6 @@ export class EarlyBreakUnlockMission implements IStrategicMission {
   }
 
   public generateDirective(snapshot: TacticalSnapshot, engine: GameEngine): StrategicDirective {
-    this.ensureInitialized(engine);
     const player = engine.getPlayer();
     const map = snapshot.map;
 

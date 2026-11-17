@@ -25,15 +25,17 @@ export class BootstrapSwordMission implements IStrategicMission {
       return 'COMPLETED';
     }
     if (this.turnsElapsed >= this.maxTurns) {
-      this.completionReason = snapshot.stagnation?.isEarlySwordTrapped ? 'NO_PROGRESS_BLOCKED' : 'NO_PROGRESS_TIMEOUT';
+      const trapped = MapSituationEvaluator.get(snapshot, engine).items.isEarlySwordTrapped;
+      this.completionReason = trapped ? 'NO_PROGRESS_BLOCKED' : 'NO_PROGRESS_TIMEOUT';
       return 'FAILED';
     }
     return 'ACTIVE';
   }
 
   public generateDirective(snapshot: TacticalSnapshot, engine: GameEngine): StrategicDirective {
+    const items = MapSituationEvaluator.get(snapshot, engine).items;
     // 序盤の剣回収前ハマり（物理的詰み）検知
-    if (snapshot.stagnation.isEarlySwordTrapped) {
+    if (items.isEarlySwordTrapped) {
       this.completionReason = 'NO_PROGRESS_BLOCKED';
       this.status = 'FAILED';
       return {
@@ -58,7 +60,7 @@ export class BootstrapSwordMission implements IStrategicMission {
     }
 
     // マップ上の剣を探す (認知層のマップサマリを参照)
-    const swordPos = MapSituationEvaluator.get(snapshot, engine).items.nearestSword;
+    const swordPos = items.nearestSword;
     if (swordPos) {
       this.subMode = 'APPROACHING_SWORD';
       return {

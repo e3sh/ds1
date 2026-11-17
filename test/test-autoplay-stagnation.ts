@@ -32,11 +32,12 @@ console.log('Testing 1: Breakthrough Combat on stagnation with killable enemy...
 
   const bot = new AutoPlayBot();
 
-  // ヒートマップを人為的に高熱化して停滞状態をシミュレート（15ターン同一マス停留）
+  // 15ターン同一マス停留で未踏停滞状態をシミュレート
   for (let i = 0; i < 15; i++) {
-    (bot as any).nav.updateTurn(player.pos);
+    bot.episodicMemory.recordStep(player.pos, i + 1);
   }
-  assert.strictEqual((bot as any).nav.isStagnated(player, map), true, 'Player should be detected as stagnated');
+  const win = bot.episodicMemory.buildProgressWindow(15, map);
+  assert.ok(win.turnsSinceNewTile >= 12, 'Player should be detected as stagnated (turnsSinceNewTile >= 12)');
 
   // アクション決定
   const action = bot.step(engine);

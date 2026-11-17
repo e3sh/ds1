@@ -10,6 +10,12 @@ import { DirectiveArbiter } from './arbitration/DirectiveArbiter.js';
 import { MissionSelector } from './evaluators/MissionSelector.js';
 import { TacticalExecutionResult, TacticalExecutionStatus } from '../tactics/TacticalExecutor.js';
 import { Position } from '../../models/Types.js';
+import type {
+  CommanderOrders,
+  MissionHistoryEntry,
+  MissionReport,
+  PhaseWaiver,
+} from './command/CommanderTypes.js';
 
 /**
  * StrategicPlanner (戦略ユニット司令塔)
@@ -24,12 +30,13 @@ import { Position } from '../../models/Types.js';
  */
 export class StrategicPlanner {
   public activeMission: IStrategicMission | null = null;
-  public missionHistory: { missionId: string; status: MissionStatus; reason?: MissionCompletionReason; turns: number }[] = [];
+  public missionHistory: MissionHistoryEntry[] = [];
   public totalGraveSealTurns: number = 0;
   public graveSealDone: boolean = false;
   public relocateDone: boolean = false;
   public defensePrepTurns: number = 0;
   private missionCooldowns: Map<string, number> = new Map();
+  private activeWaivers: ReadonlySet<PhaseWaiver> = new Set();
 
   // 要件2: 戦術フィードバック状態管理
   public lastTacticalStatus: TacticalExecutionStatus | null = null;
@@ -106,9 +113,90 @@ export class StrategicPlanner {
   }
 
   /**
+   * 上位指揮官（StrategicCommander）向けの現状レポートを生成する
+   */
+  public getMissionReport(): MissionReport {
+    return {
+      activeMissionId: this.activeMission?.id ?? null,
+      activeAuditProfile: this.activeMission?.auditProfile ?? null,
+      activeTarget: this.activeMission?.currentTarget ?? null,
+      activeZoneId: this.activeMission?.zoneId ?? null,
+      recentHistory: this.missionHistory.slice(-24),
+    };
+  }
+
+  /**
+   * 上位指揮官からの命令書（CommanderOrders）をプランナー状態へ反映する
+   */
+  public applyOrders(orders: CommanderOrders, snapshot: TacticalSnapshot): void {
+    this.activeWaivers = orders.waivers;
+
+    for (const [id, untilTurn] of orders.tabooMissions.entries()) {
+      const existing = this.missionCooldowns.get(id) ?? 0;
+      if (untilTurn > existing) {
+        this.missionCooldowns.set(id, untilTurn);
+      }
+    }
+
+    for (const t of orders.tabooTargets) {
+      const duration = Math.max(1, t.untilTurn - snapshot.totalTurns);
+      snapshot.memory.markTargetUnreachable(t.pos, duration, snapshot.totalTurns);
+    }
+
+    for (const z of orders.tabooZones) {
+      const duration = Math.max(1, z.untilTurn - snapshot.totalTurns);
+      snapshot.memory.markZoneUnreachable(z.zoneId, duration, snapshot.totalTurns);
+    }
+
+    const isProtectedMission =
+      this.activeMission?.id === 'CROWN_ESCAPE' ||
+      this.activeMission?.id === 'EMERGENCY_EVACUATE';
+
+    if (!isProtectedMission && orders.forcedMission) {
+      const expectedId =
+        orders.forcedMission.kind === 'EXPLORE_FRONTIER' ? 'EXPLORE_FRONTIER' : 'STRATEGIC_BREAK';
+      if (!this.activeMission || this.activeMission.id !== expectedId) {
+        if (this.activeMission) {
+          this.activeMission.status = 'ABORTED';
+          this.activeMission.completionReason = 'COMMANDER_OVERRIDE';
+          this.activeMission.onAborted?.(snapshot, `上位指揮官命令による強制切替 -> ${expectedId}`);
+          this.recordMissionHistory(this.activeMission, 'ABORTED', 'COMMANDER_OVERRIDE', snapshot);
+        }
+        this.activeMission = MissionSelector.createForcedMission(orders.forcedMission);
+        this.activeMission.startTurn = snapshot.totalTurns;
+      }
+    } else if (
+      !isProtectedMission &&
+      this.activeMission &&
+      orders.tabooMissions.has(this.activeMission.id)
+    ) {
+      this.activeMission.status = 'ABORTED';
+      this.activeMission.completionReason = 'COMMANDER_OVERRIDE';
+      this.activeMission.onAborted?.(snapshot, '上位指揮官によるミッション禁止');
+      this.recordMissionHistory(this.activeMission, 'ABORTED', 'COMMANDER_OVERRIDE', snapshot);
+      this.activeMission = null;
+    }
+  }
+
+  /**
    * 毎ターンの戦略判断ルーチン
    */
-  public planTurn(snapshot: TacticalSnapshot, engine: GameEngine): StrategicDirective {
+  public planTurn(
+    snapshot: TacticalSnapshot,
+    engine: GameEngine,
+    orders?: CommanderOrders
+  ): StrategicDirective {
+    if (orders?.giveUp) {
+      return {
+        type: 'GIVE_UP',
+        priority: 100,
+        reason: orders.giveUp.reason,
+      };
+    }
+    if (orders) {
+      this.applyOrders(orders, snapshot);
+    }
+
     const dragon = engine.getDragon();
     const isAllHeadsDefeated = Boolean(
       dragon && (dragon.isAllHeadsDefeated || dragon.heads.every(h => !h.isAlive))
@@ -123,16 +211,17 @@ export class StrategicPlanner {
             this.activeMission.status = 'COMPLETED';
             this.activeMission.completionReason = 'OBJECTIVE_ACHIEVED';
             this.activeMission.onCompleted?.(snapshot);
-            this.recordMissionHistory(this.activeMission, 'COMPLETED', 'OBJECTIVE_ACHIEVED', snapshot.totalTurns);
+            this.recordMissionHistory(this.activeMission, 'COMPLETED', 'OBJECTIVE_ACHIEVED', snapshot);
           } else {
             const reason = this.activeMission.completionReason ?? 'INTERRUPTED_BY_EMERGENCY';
             this.activeMission.status = 'ABORTED';
             this.activeMission.completionReason = reason;
             this.activeMission.onAborted?.(snapshot, '全ドラゴン頭撃破による王冠脱出へ強制移行');
-            this.recordMissionHistory(this.activeMission, 'ABORTED', reason, snapshot.totalTurns);
+            this.recordMissionHistory(this.activeMission, 'ABORTED', reason, snapshot);
           }
         }
         this.activeMission = new CrownEscapeMission();
+        this.activeMission.startTurn = snapshot.totalTurns;
       }
     } else if (snapshot.threats.isLethalDanger || snapshot.threats.isPinchHp) {
       // 1-B. 緊急危機介入 (HPピンチまたは即死敵隣接 ※王冠脱出局面以外)
@@ -141,9 +230,10 @@ export class StrategicPlanner {
           this.activeMission.status = 'ABORTED';
           this.activeMission.completionReason = 'INTERRUPTED_BY_EMERGENCY';
           this.activeMission.onAborted?.(snapshot, '緊急退避による割り込み中断');
-          this.recordMissionHistory(this.activeMission, 'ABORTED', 'INTERRUPTED_BY_EMERGENCY', snapshot.totalTurns);
+          this.recordMissionHistory(this.activeMission, 'ABORTED', 'INTERRUPTED_BY_EMERGENCY', snapshot);
         }
         this.activeMission = new EmergencyEvacuateMission();
+        this.activeMission.startTurn = snapshot.totalTurns;
       }
     }
 
@@ -162,7 +252,7 @@ export class StrategicPlanner {
     if (canDamageDragon && hasDiagonal) {
       this.defensePrepTurns++;
     }
-    const readyForDragon = MissionSelector.isReadyForDragon(snapshot, engine, this.defensePrepTurns);
+    const readyForDragon = MissionSelector.isReadyForDragon(snapshot, engine, this.defensePrepTurns, this.activeWaivers);
     const canTransitionToPrep =
       readyForDragon ||
       canDamageDragon ||
@@ -178,11 +268,13 @@ export class StrategicPlanner {
       this.activeMission.id !== 'EMERGENCY_EVACUATE' &&
       this.activeMission.id !== 'CASH_IN_GOLD' &&
       this.activeMission.id !== 'EARLY_BREAK_UNLOCK' &&
+      this.activeMission.id !== 'EXPLORE_FRONTIER' &&
+      this.activeMission.id !== 'STRATEGIC_BREAK' &&
       player.holdItem !== 'POWER_STONE' &&
       !(player.holdItem === 'KEY' && MissionSelector.hasNearbyChest(player.pos, snapshot.map, 8, snapshot))
     ) {
       const activeCooldowns = this.getActiveCooldowns(snapshot.totalTurns);
-      const assessment = ReadinessEvaluator.evaluateDragonReadiness(snapshot, engine, this.defensePrepTurns);
+      const assessment = ReadinessEvaluator.evaluateDragonReadiness(snapshot, engine, this.defensePrepTurns, this.activeWaivers);
       const nextMission =
         MissionSelector.selectDragonPrepMission(snapshot, engine, {
           relocateDone: this.relocateDone,
@@ -192,21 +284,26 @@ export class StrategicPlanner {
           includeHeldKeyInChestCheck: false,
           precomputedReady: readyForDragon,
           precomputedAssessment: assessment,
+          waivers: this.activeWaivers,
         }) ?? this.selectNextMission(snapshot, engine, { readyForDragon, assessment });
 
-      // 同じミッションを再生成してチャタリングを起こす場合は中断しない
-      if (nextMission.id !== this.activeMission.id) {
+      // 同じミッションを再生成してチャタリングを起こす場合やクールダウン中は中断しない
+      if (nextMission.id !== this.activeMission.id && !activeCooldowns.has(nextMission.id)) {
         const reason: MissionCompletionReason =
           this.activeMission.completionReason ??
           (this.activeMission.turnsElapsed > 1 ? 'PARTIAL_PROGRESS' : 'INTERRUPTED_BY_EMERGENCY');
         this.activeMission.onAborted?.(snapshot, '戦力準備・決戦移行のため作戦切替');
-        this.recordMissionHistory(this.activeMission, 'ABORTED', reason, snapshot.totalTurns);
+        this.recordMissionHistory(this.activeMission, 'ABORTED', reason, snapshot);
         this.activeMission = nextMission;
+        this.activeMission.startTurn = snapshot.totalTurns;
       }
     }
 
     // 2. 現行ミッションのコミットメント評価
     if (this.activeMission) {
+      if (this.activeMission.startTurn === undefined) {
+        this.activeMission.startTurn = snapshot.totalTurns;
+      }
       if (this.activeMission.id === 'SEAL_GRAVE') {
         this.totalGraveSealTurns++;
         if (this.totalGraveSealTurns >= 60) {
@@ -239,7 +336,7 @@ export class StrategicPlanner {
         const reason: MissionCompletionReason =
           this.activeMission.completionReason ??
           (status === 'COMPLETED' ? 'OBJECTIVE_ACHIEVED' : 'NO_PROGRESS_TIMEOUT');
-        this.recordMissionHistory(this.activeMission, status, reason, snapshot.totalTurns);
+        this.recordMissionHistory(this.activeMission, status, reason, snapshot);
         this.activeMission = null;
       }
     }
@@ -247,6 +344,7 @@ export class StrategicPlanner {
     // 3. 次期最適ミッションの調停・選定 (Mission Arbiter)
     this.activeMission = this.selectNextMission(snapshot, engine);
     this.activeMission.turnsElapsed = 1;
+    this.activeMission.startTurn = snapshot.totalTurns;
     const rawDirective = this.activeMission.generateDirective(snapshot, engine);
     return this.arbitrateDirectives(rawDirective, snapshot, engine);
   }
@@ -258,13 +356,22 @@ export class StrategicPlanner {
     mission: IStrategicMission,
     status: MissionStatus,
     reason: MissionCompletionReason | undefined,
-    totalTurns: number
+    snapshot: TacticalSnapshot
   ): void {
+    const totalTurns = snapshot.totalTurns;
+    const startTurn = mission.startTurn ?? Math.max(0, totalTurns - mission.turnsElapsed);
+    const substantiveGains = snapshot.progress
+      ? snapshot.progress.substantiveGainsSince(startTurn).length
+      : 0;
+
     this.missionHistory.push({
       missionId: mission.id,
       status,
       reason,
       turns: mission.turnsElapsed,
+      startTurn,
+      endTurn: totalTurns,
+      substantiveGains,
     });
 
     if (reason === 'NO_PROGRESS_TIMEOUT' || reason === 'NO_PROGRESS_BLOCKED') {
@@ -317,7 +424,7 @@ export class StrategicPlanner {
       this.relocateDone,
       this.defensePrepTurns,
       activeCooldowns,
-      precomputed
+      { ...precomputed, waivers: this.activeWaivers }
     );
   }
 

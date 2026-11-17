@@ -246,4 +246,36 @@ const forbiddenImportsInLogic = [
   console.log('✓ 7. Strategy layer purity verified: No raw map loops (for let x/y) in src/ai/strategy.');
 }
 
+// 8. 上位指揮官 (src/ai/strategy/command) と認知層台帳/状態評価 (SituationalPerception, EpisodicMemory, *Ledger) の依存方向ルール
+{
+  const commandDir = path.join(baseDir, 'src', 'ai', 'strategy', 'command');
+  const commandFiles = fs.existsSync(commandDir) ? getTsFiles(commandDir) : [];
+  for (const filePath of commandFiles) {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const rel = path.relative(baseDir, filePath).replace(/\\/g, '/');
+    assert.ok(
+      !/^\s*import\b.*(\/tactics\/|AdaptiveNavigator)/m.test(content),
+      `[Violation] ${rel}: StrategicCommander must not import tactics layer or AdaptiveNavigator.`
+    );
+  }
+
+  const purePerceptionFiles = [
+    'SituationalPerception.ts',
+    'EpisodicMemory.ts',
+    'MovementLedger.ts',
+    'ProgressLedger.ts',
+  ].map(name => path.join(baseDir, 'src', 'ai', 'perception', name));
+
+  for (const filePath of purePerceptionFiles) {
+    if (!fs.existsSync(filePath)) continue;
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const rel = path.relative(baseDir, filePath).replace(/\\/g, '/');
+    assert.ok(
+      !/^\s*import\b.*AdaptiveNavigator/m.test(content),
+      `[Violation] ${rel}: Pure perception module must not depend on AdaptiveNavigator.`
+    );
+  }
+  console.log('✓ 8. StrategicCommander & Perception dependency boundary verified.');
+}
+
 console.log('--- ✓ All Architecture & Dependency Rules Passed Successfully! ---');

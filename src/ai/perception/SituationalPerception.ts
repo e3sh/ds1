@@ -22,13 +22,15 @@ export interface GrowthMilestones {
   isStrCapped: boolean;         // STR >= 655,350 (カンスト到達)
 }
 
-export interface StagnationState {
-  currentHeat: number;
-  neighborhoodHeat: number;
-  turnsSinceNewTile: number;
-  isStagnated: boolean;
-  isPhysicallyTrapped: boolean;
-  isEarlySwordTrapped: boolean;
+export type ConfinementKind = 'NONE' | 'SEALED_ADJACENT' | 'SMALL_POCKET';
+export type EscapeMeans = 'RETURN' | 'JUMP' | 'BREAK' | 'FREEZE' | 'FLASH' | 'BUMP' | 'DROP_CROWN_FOR_BREAK';
+
+export interface ConfinementState {
+  kind: ConfinementKind;
+  reachableSafeTiles: number;
+  escapeMeans: EscapeMeans[];
+  /** 敵ではなく静的地形（壁・岩・墓）のみで完全に閉塞しているか */
+  isStaticallySealed: boolean;
 }
 
 export interface ThreatDistribution {
@@ -77,84 +79,158 @@ export class SituationalPerception {
   }
 
   /**
-   * ヒートマップおよび移動履歴に基づく停滞・拘束状況の認知評価
+   * 物理的完全拘束（四方閉塞・極小安全ポケット）および脱出手段の一元評価
    */
-  public static evaluateStagnation(
+  public static evaluateConfinement(
     player: Player,
     map: WorldMap,
-    enemies: EnemyInstance[],
-    nav: any,
-    dragon?: Dragon,
-    params?: DynamicBotParameters
-  ): StagnationState {
+    enemies: EnemyInstance[]
+  ): ConfinementState {
     const curPos = player.pos;
-    const currentHeat = nav.getHeat ? nav.getHeat(curPos) : 0;
-    const neighborhoodHeat = nav.getNeighborhoodHeat ? nav.getNeighborhoodHeat(curPos, map, 2) : 0;
-    const turnsSinceNewTile = nav.turnsSinceNewTile ?? 0;
-    const isStagnated = nav.isStagnated ? nav.isStagnated(player, map) : (neighborhoodHeat >= 45 || turnsSinceNewTile >= 15);
+    const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
+    const effectiveDef = Math.floor(player.experience * 1.0);
+    const canBreak = MagicSystem.canCast(player, 'BREAK').allowed;
 
-    // 物理的完全拘束（四方が壁・岩で真に塞がれ、歩いて行ける安全床が3マス以下）の厳密検査
-    let isPhysicallyTrapped = false;
-    if (turnsSinceNewTile >= 18 && neighborhoodHeat >= 50) {
-      const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
-      const effectiveDef = Math.floor(player.experience * 1.0);
+    const isAdjacentPassable = (adjPos: Position): boolean => {
+      const base = map.getBaseTile(adjPos);
+      const obj = map.getObject(adjPos);
+      if (base === 'WALL_STATIC') return false;
+      if (base === 'GRAVE' && obj === 'NONE') return false;
+      if (obj === 'BLOCK' && !canBreak) return false;
+
+      const enemy = enemies.find(e => e.isAlive && e.pos.x === adjPos.x && e.pos.y === adjPos.y);
+      if (enemy) {
+        const details = ThreatEvaluator.evaluateThreatDetails(player, enemy);
+        if (details.defenseThreat !== 'NO_DAMAGE' || details.turnsToKill > 8) return false;
+      }
+
+      const isLethalTrap = enemies.some(e => {
+        if (!e.isAlive || e.isPermanentlyFrozen || (e.frozenTimer ?? 0) > 0) return false;
+        if (map.getTorusDistance(adjPos, e.pos).manhattan !== 1) return false;
+        return Math.max(0, e.atk - effectiveDef) >= player.hp;
+      });
+      return !isLethalTrap;
+    };
+
+    const isSealedAdjacent = cardDirs.every(d => {
+      const adjPos = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
+      return !isAdjacentPassable(adjPos);
+    });
+
+    let kind: ConfinementKind = 'NONE';
+    let reachableSafeTiles = 0;
+
+    if (isSealedAdjacent) {
+      kind = 'SEALED_ADJACENT';
+      reachableSafeTiles = 1;
+    } else {
+      // 安全床BFS（最大10マスまで探索し、3マス以下の小閉域か判定）
       const visited = new Set<string>();
       const queue: Position[] = [curPos];
       visited.add(`${curPos.x},${curPos.y}`);
 
-      let walkableCount = 0;
-      while (queue.length > 0 && walkableCount < 10) {
+      while (queue.length > 0 && reachableSafeTiles < 10) {
         const curr = queue.shift()!;
-        walkableCount++;
+        reachableSafeTiles++;
 
         for (const d of cardDirs) {
           const nextPos = map.wrapPosition(MovementSystem.getNextPosition(curr, d));
           const key = `${nextPos.x},${nextPos.y}`;
           if (visited.has(key)) continue;
-
-          const base = map.getBaseTile(nextPos);
-          const obj = map.getObject(nextPos);
-          if (base === 'WALL_STATIC') continue;
-          if (base === 'GRAVE' && obj === 'NONE') continue;
-          if (obj === 'BLOCK' && !MagicSystem.canCast(player, 'BREAK').allowed) continue;
-
-          // 倒せない敵がいるマスは進入不能
-          const enemy = enemies.find(e => e.isAlive && e.pos.x === nextPos.x && e.pos.y === nextPos.y);
-          if (enemy) {
-            const details = ThreatEvaluator.evaluateThreatDetails(player, enemy);
-            if (details.defenseThreat !== 'NO_DAMAGE' || details.turnsToKill > 8) continue;
-          }
-
-          // 即死敵の直角隣接（進入即死トラップ）は進入不能
-          const isLethalDeathTrap = enemies.some(e => {
-            if (!e.isAlive || e.isPermanentlyFrozen || (e.frozenTimer ?? 0) > 0) return false;
-            if (map.getTorusDistance(nextPos, e.pos).manhattan !== 1) return false;
-            return Math.max(0, e.atk - effectiveDef) >= player.hp;
-          });
-          if (isLethalDeathTrap) continue;
-
+          if (!isAdjacentPassable(nextPos)) continue;
           visited.add(key);
           queue.push(nextPos);
         }
       }
 
-      // 歩いて行ける安全床が高々3マス以下の閉域空間に閉じ込められている場合のみ完全拘束
-      isPhysicallyTrapped = walkableCount <= 3;
+      if (reachableSafeTiles <= 3) {
+        kind = 'SMALL_POCKET';
+      }
     }
 
-    // 序盤の剣回収前ハマり（物理的詰み）検知
-    const isEarlySwordTrapped = !player.hasSword && nav.detectEarlySwordTrap
-      ? Boolean(nav.detectEarlySwordTrap(player, map, enemies, params ?? { targetStr: 0, targetDefenseExp: 0 } as any, dragon))
-      : false;
+    if (kind === 'NONE') {
+      return { kind: 'NONE', reachableSafeTiles, escapeMeans: [], isStaticallySealed: false };
+    }
 
-    return {
-      currentHeat,
-      neighborhoodHeat,
-      turnsSinceNewTile,
-      isStagnated,
-      isPhysicallyTrapped,
-      isEarlySwordTrapped,
-    };
+    // 静的地形（壁・墓・BREAK不可岩）のみで四方が塞がれているか（敵の一時的な包囲と区別）
+    const isStaticallySealed =
+      kind === 'SEALED_ADJACENT' &&
+      cardDirs.every(d => {
+        const adjPos = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
+        const base = map.getBaseTile(adjPos);
+        const obj = map.getObject(adjPos);
+        if (base === 'WALL_STATIC') return true;
+        if (base === 'GRAVE' && obj === 'NONE') return true;
+        if (obj === 'BLOCK' && !canBreak) return true;
+        return false;
+      });
+
+    // 脱出手段の列挙
+    const escapeMeans: EscapeMeans[] = [];
+    if (MagicSystem.canCast(player, 'RETURN').allowed && !player.isFlying) {
+      escapeMeans.push('RETURN');
+    }
+    if (MagicSystem.canCast(player, 'JUMP').allowed) {
+      escapeMeans.push('JUMP');
+    }
+    if (canBreak) {
+      const hasAdjBlock = cardDirs.some(d => {
+        const adjPos = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
+        return map.getObject(adjPos) === 'BLOCK';
+      });
+      if (hasAdjBlock) {
+        escapeMeans.push('BREAK');
+      }
+    }
+
+    const hasAdjActiveEnemy = cardDirs.some(d => {
+      const adjPos = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
+      return enemies.some(
+        e => e.isAlive && !e.isPermanentlyFrozen && (e.frozenTimer ?? 0) <= 0 && e.pos.x === adjPos.x && e.pos.y === adjPos.y
+      );
+    });
+    const canSpendMagicForControl = !player.hasDeath && (player.experience < 4000 ? player.magic > 0 : player.magic > 1);
+    if (hasAdjActiveEnemy && canSpendMagicForControl) {
+      const allHomes = map.getAllHomePositions();
+      const isNearHome = allHomes.some(h => map.getTorusDistance(curPos, h).chebyshev <= 2);
+      if (!isNearHome && MagicSystem.canCast(player, 'FREEZE').allowed) {
+        escapeMeans.push('FREEZE');
+      }
+      if (MagicSystem.canCast(player, 'FLASH').allowed) {
+        escapeMeans.push('FLASH');
+      }
+    }
+
+    // 強行突破（短手数で撃破可能な隣接敵）
+    for (const d of cardDirs) {
+      const adjPos = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
+      const enemy = enemies.find(e => e.isAlive && e.pos.x === adjPos.x && e.pos.y === adjPos.y);
+      if (!enemy) continue;
+      const details = ThreatEvaluator.evaluateThreatDetails(player, enemy);
+      const canBump =
+        details.attackThreat === 'ONE_SHOT' ||
+        (details.turnsToKill <= 5 &&
+          details.damageToEnemy > 1 &&
+          details.attackThreat !== 'INEFFECTIVE' &&
+          details.damageToPlayer < player.hp);
+      if (canBump) {
+        escapeMeans.push('BUMP');
+        break;
+      }
+    }
+
+    // 王冠所持中なら、足元に王冠を一時ドロップして手ぶらになり BREAK/魔法 を詠唱できる可能性がある
+    if (
+      player.holdItem === 'CROWN' &&
+      map.getItem(curPos) === 'NONE' &&
+      !player.hasDeath &&
+      player.experience >= 4000 &&
+      player.magic >= 1
+    ) {
+      escapeMeans.push('DROP_CROWN_FOR_BREAK');
+    }
+
+    return { kind, reachableSafeTiles, escapeMeans, isStaticallySealed };
   }
 
   /**
@@ -174,20 +250,17 @@ export class SituationalPerception {
 
     const pPos = player.pos;
 
-    // 直角隣接および近傍の敵を走査
     for (const enemy of enemies) {
       if (!enemy.isAlive || enemy.isPermanentlyFrozen) continue;
 
       const dist = map.getTorusDistance(pPos, enemy.pos);
 
-      // 近傍敵 (距離 <= 12) の最大ATK
       if (dist.manhattan <= 12) {
         if (enemy.atk > maxNearEnemyAtk) {
           maxNearEnemyAtk = enemy.atk;
         }
       }
 
-      // マンハッタン距離1（直角隣接）の即死級敵 (LETHAL)
       if (dist.manhattan === 1 && !enemy.isPermanentlyFrozen && (enemy.frozenTimer ?? 0) <= 0) {
         const threat = ThreatEvaluator.evaluateThreatDetails(player, enemy);
         if (threat.defenseThreat === 'LETHAL') {
@@ -196,7 +269,6 @@ export class SituationalPerception {
       }
     }
 
-    // ドラゴンブレス射線上か判定
     let isOnDragonFireLine = false;
     if (dragon && dragon.heads.some(h => h.isAlive)) {
       for (const h of dragon.heads) {

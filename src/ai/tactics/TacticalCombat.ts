@@ -170,7 +170,7 @@ export class TacticalCombat {
   }
 
   /**
-   * 停滞（ヒートマップ飽和・往復・未踏停滞）検知時の安全敵撃破突破（Breakthrough Combat）
+   * 停滞（短周期往復・周回）検知時の安全敵撃破突破（Breakthrough Combat）
    * 厳格制約: turnsToKill <= 5 && damageToEnemy > 1 && attackThreat !== 'INEFFECTIVE'
    */
   public static tryBreakthroughCombat(
@@ -183,9 +183,6 @@ export class TacticalCombat {
   ): { action: BotAction; description: string } | null {
     if (!player.hasSword) return null;
     if (player.holdItem === 'CROSS') return null;
-
-    // 停滞していない場合は通常行動に任せる
-    if (!nav.isStagnated(player, map)) return null;
 
     const curPos = player.pos;
     const adjacentTargets = this.getAdjacentEnemies(curPos, enemies, map);

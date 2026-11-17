@@ -1,6 +1,7 @@
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
 import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
 import { GameEngine } from '../../../core/GameEngine.js';
+import type { PhaseWaiver } from '../command/CommanderTypes.js';
 
 export interface DragonReadinessAssessment {
   isFullyPrepared: boolean;
@@ -21,16 +22,22 @@ export class ReadinessEvaluator {
   public static evaluateDragonReadiness(
     snapshot: TacticalSnapshot,
     engine: GameEngine,
-    prepTurns: number
+    prepTurns: number,
+    waivers?: ReadonlySet<PhaseWaiver>
   ): DragonReadinessAssessment {
     const player = engine.getPlayer();
     const map = snapshot.map;
     const dragon = engine.getDragon();
 
+    const waiveDefense = waivers?.has('DEFENSE_EXP') ?? false;
+    const waiveMagic = waivers?.has('MAGIC_STOCK') ?? false;
+    const waiveRelocation = waivers?.has('RELOCATION') ?? false;
+    const waiveHpFull = waivers?.has('HP_FULL') ?? false;
+
     const items = MapSituationEvaluator.get(snapshot).items;
     const nearbyReachablePotionCount = items.nearbyPotionCountWithin15;
     const noReachablePotion = nearbyReachablePotionCount === 0 && items.nearestPotion === null;
-    const hasMinimumCombatMagic = player.magic >= 3 || (noReachablePotion && player.magic >= 1);
+    const hasMinimumCombatMagic = player.magic >= 3 || ((noReachablePotion || waiveMagic) && player.magic >= 1);
 
     // 準備にターンを費やしすぎた場合 (35ターン超過) で、最低限のMP (原則>=3、ポーション枯渇時は>=1) かつ斜め移動・BREAK習得済みなら決戦へフォールスルー
     const isReadyBase = snapshot.milestones.canDiagonal && snapshot.milestones.canBreak && hasMinimumCombatMagic;
@@ -51,7 +58,7 @@ export class ReadinessEvaluator {
 
     // 1-B. 床上コインの一括回収評価 (斜め移動 EXP 12,000 未満、または防御EXP未達時のEXP育成)
     const needExpForDiagonal = player.experience < 12000 || !snapshot.milestones.canDiagonal;
-    const needExpForDefense = player.experience < snapshot.params.targetDefenseExp && prepTurns < 30;
+    const needExpForDefense = !waiveDefense && player.experience < snapshot.params.targetDefenseExp && prepTurns < 30;
     const hasReachableCoins = items.nearestCoin !== null;
     const progConfig = player.activeProgressionConfig;
     const isExponentialCoinMode =
@@ -64,14 +71,12 @@ export class ReadinessEvaluator {
     const needsCoinSweep = isExponentialCoinMode && hasReachableCoins && (needExpForDiagonal || needExpForDefense);
 
     // 2. マップ上のポーション残存数とMPプール評価
-    // 近傍（距離 <= 15）にある安全なポーションのみをカウントし、遠方ポーションのための全マップ横断を防止
-    // MP が minDragonMagic (3) 未満の場合は原則必要だが、到達可能ポーションが全て枯渇している場合は無限準備ループを避ける
     const targetMagic = nearbyReachablePotionCount > 0 ? Math.min(snapshot.params.maxTargetMagic, 6) : snapshot.params.minDragonMagic;
-    const needsPotionSweep = !noReachablePotion && (player.magic < 3 || (nearbyReachablePotionCount > 0 && player.magic < targetMagic && prepTurns < 25));
+    const needsPotionSweep = !waiveMagic && !noReachablePotion && (player.magic < 3 || (nearbyReachablePotionCount > 0 && player.magic < targetMagic && prepTurns < 25));
 
     // 3. 前線基地移転評価
     let needsRelocation = false;
-    if (snapshot.params.enableHomeRelocation && dragon && dragon.defeatedHeadsCount === 0) {
+    if (!waiveRelocation && snapshot.params.enableHomeRelocation && dragon && dragon.defeatedHeadsCount === 0) {
       const distHomeToDragon = map.getTorusDistance(map.realHomePos, dragon.centerPos).chebyshev;
       const hasRing = player.holdItem === 'RING' || this.hasMapRing(map, snapshot);
       if (distHomeToDragon >= snapshot.params.homeRelocateDistMin && hasRing && prepTurns < 30) {
@@ -79,8 +84,10 @@ export class ReadinessEvaluator {
       }
     }
 
-    // 4. HP十分性チェック (最大HPの70%以上または30,000以上)
-    const hasEnoughHp = player.hp >= player.maxHp * 0.70 || player.hp >= 30000;
+    // 4. HP十分性チェック (最大HPの70%以上または30,000以上。見切り時は緩和)
+    const hasEnoughHp = waiveHpFull
+      ? (player.hp >= player.maxHp * 0.35 || player.hp >= 8000)
+      : (player.hp >= player.maxHp * 0.70 || player.hp >= 30000);
 
     const isFullyPrepared = !needsGoldCashIn && !needsPotionSweep && !needsCoinSweep && !needsRelocation && hasEnoughHp;
 

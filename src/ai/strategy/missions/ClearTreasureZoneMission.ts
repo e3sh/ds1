@@ -18,24 +18,20 @@ export class ClearTreasureZoneMission implements IStrategicMission {
   public readonly name: string;
   public readonly maxTurns = 75;
   public turnsElapsed = 0;
+  public startTurn?: number;
   public status: MissionStatus = 'ACTIVE';
   public completionReason?: MissionCompletionReason;
   public subMode: 'BREACHING_ENTRY' | 'COLLECTING_DROP' | 'FETCHING_KEY' | 'OPENING_CHEST' | 'EXHAUSTED' = 'OPENING_CHEST';
 
+  public readonly auditProfile = {
+    graceTurns: 40,
+    tabooable: true,
+    maxEscalation: 'TERMINAL' as const,
+  };
+
   private lastTargetChestPos: Position | null = null;
   private lastTargetChestDist: number = Infinity;
   private targetChestTurns: number = 0;
-
-  private initialActualChests: number | null = null;
-  private initialStrength: number | null = null;
-  private initialExperience: number | null = null;
-  private initialGold: number | null = null;
-  private initialMagic: number | null = null;
-  private lastProgressChests: number | null = null;
-  private lastProgressGold: number = 0;
-  private lastProgressStrength: number = 0;
-  private turnsWithoutProgress: number = 0;
-  private lastTrackedTurn: number = -1;
 
   constructor(public readonly zoneId: string) {
     this.name = zoneId === 'GLOBAL_ALL'
@@ -43,63 +39,16 @@ export class ClearTreasureZoneMission implements IStrategicMission {
       : `📦 宝物庫ゾーン攻略 [Zone: ${zoneId}]`;
   }
 
-  private getCurrentActualChests(snapshot: TacticalSnapshot, engine: GameEngine): number {
-    if (this.zoneId !== 'GLOBAL_ALL') {
-      const zone = snapshot.spatial.treasureZones.get(this.zoneId);
-      if (zone) {
-        return zone.remainingChests;
-      }
-    }
-    return MapSituationEvaluator.get(snapshot, engine).items.totalActualChests;
-  }
-
-  private ensureInitialized(snapshot: TacticalSnapshot, engine: GameEngine): void {
-    if (this.initialActualChests === null) {
-      const player = engine.getPlayer();
-      const curChests = this.getCurrentActualChests(snapshot, engine);
-      this.initialActualChests = curChests;
-      this.initialStrength = player.strength;
-      this.initialExperience = player.experience;
-      this.initialGold = player.gold;
-      this.initialMagic = player.magic;
-      this.lastProgressChests = curChests;
-      this.lastProgressGold = player.gold;
-      this.lastProgressStrength = player.strength;
-    }
-  }
-
-  private hasMadeProgress(snapshot: TacticalSnapshot, engine: GameEngine): boolean {
-    const player = engine.getPlayer();
-    const curActual = this.getCurrentActualChests(snapshot, engine);
-    return (
-      (this.initialActualChests !== null && curActual < this.initialActualChests) ||
-      (this.initialStrength !== null && player.strength > this.initialStrength) ||
-      (this.initialExperience !== null && player.experience > this.initialExperience) ||
-      (this.initialGold !== null && player.gold > this.initialGold) ||
-      (this.initialMagic !== null && player.magic > this.initialMagic)
-    );
+  private hasMadeProgress(snapshot: TacticalSnapshot): boolean {
+    const start = this.startTurn ?? snapshot.totalTurns;
+    return snapshot.progress.substantiveGainsSince(start).length > 0;
   }
 
   public evaluateStatus(snapshot: TacticalSnapshot, engine: GameEngine): MissionStatus {
-    this.ensureInitialized(snapshot, engine);
     const player = engine.getPlayer();
-    const curActual = this.getCurrentActualChests(snapshot, engine);
-    if (snapshot.totalTurns !== this.lastTrackedTurn) {
-      this.lastTrackedTurn = snapshot.totalTurns;
-      const madeStepProgress =
-        (this.lastProgressChests !== null && curActual < this.lastProgressChests) ||
-        player.gold > this.lastProgressGold ||
-        player.strength > this.lastProgressStrength;
-      if (madeStepProgress) {
-        this.turnsWithoutProgress = 0;
-      } else {
-        this.turnsWithoutProgress++;
-      }
-      this.lastProgressChests = curActual;
-      this.lastProgressGold = player.gold;
-      this.lastProgressStrength = player.strength;
-    }
-    const madeProgress = this.hasMadeProgress(snapshot, engine);
+    const madeProgress = this.hasMadeProgress(snapshot);
+    const lastGainTurn = snapshot.progress.lastSubstantiveGain?.turn ?? (this.startTurn ?? snapshot.totalTurns);
+    const turnsWithoutProgress = Math.max(0, snapshot.totalTurns - Math.max(this.startTurn ?? 0, lastGainTurn));
 
     // パワーストーンを所持した場合は奉納ミッションへ引き継ぐため完了
     if (player.holdItem === 'POWER_STONE') {
@@ -142,7 +91,7 @@ export class ClearTreasureZoneMission implements IStrategicMission {
 
     // 規定ターン超過時: 順調に攻略が進んでいる場合は自己BANせず PARTIAL_PROGRESS で完了して次ターン即継続可能にする
     if (this.turnsElapsed >= this.maxTurns) {
-      if (madeProgress && this.turnsWithoutProgress < 25) {
+      if (madeProgress && turnsWithoutProgress < 25) {
         this.completionReason = 'PARTIAL_PROGRESS';
         return 'COMPLETED';
       }
@@ -174,7 +123,6 @@ export class ClearTreasureZoneMission implements IStrategicMission {
   }
 
   public generateDirective(snapshot: TacticalSnapshot, engine: GameEngine): StrategicDirective {
-    this.ensureInitialized(snapshot, engine);
     const player = engine.getPlayer();
     const map = snapshot.map;
     const isGlobal = this.zoneId === 'GLOBAL_ALL';
@@ -352,7 +300,7 @@ export class ClearTreasureZoneMission implements IStrategicMission {
         };
       }
       // 到達可能な鍵がマップ上にない場合は即座にアボート
-      this.completionReason = this.hasMadeProgress(snapshot, engine) ? 'PARTIAL_PROGRESS' : 'NO_PROGRESS_BLOCKED';
+      this.completionReason = this.hasMadeProgress(snapshot) ? 'PARTIAL_PROGRESS' : 'NO_PROGRESS_BLOCKED';
       this.status = 'ABORTED';
       this.subMode = 'EXHAUSTED';
       return {
@@ -464,7 +412,7 @@ export class ClearTreasureZoneMission implements IStrategicMission {
           reason: `ゾーン ${this.zoneId} 内の到達可能宝箱が完了したため鍵を手放し手ぶら回収へ移行`,
         };
       } else {
-        this.completionReason = this.hasMadeProgress(snapshot, engine) ? 'PARTIAL_PROGRESS' : 'NO_PROGRESS_BLOCKED';
+        this.completionReason = this.hasMadeProgress(snapshot) ? 'PARTIAL_PROGRESS' : 'NO_PROGRESS_BLOCKED';
         this.status = 'ABORTED';
         return {
           type: 'WANDER_SAFELY',
@@ -491,7 +439,7 @@ export class ClearTreasureZoneMission implements IStrategicMission {
       if (this.zoneId !== 'GLOBAL_ALL') {
         snapshot.memory.markZoneUnreachable(this.zoneId, 30, snapshot.totalTurns);
       }
-      this.completionReason = this.hasMadeProgress(snapshot, engine) ? 'PARTIAL_PROGRESS' : 'NO_PROGRESS_BLOCKED';
+      this.completionReason = this.hasMadeProgress(snapshot) ? 'PARTIAL_PROGRESS' : 'NO_PROGRESS_BLOCKED';
       this.status = 'ABORTED';
       this.subMode = 'EXHAUSTED';
     }

@@ -19,40 +19,19 @@ export class PrepareDragonAssaultMission implements IStrategicMission {
   public readonly name = '⚔️ 決戦前リソース備蓄・最終調整作戦';
   public readonly maxTurns = 120;
   public turnsElapsed = 0;
+  public startTurn?: number;
   public status: MissionStatus = 'ACTIVE';
   public completionReason?: MissionCompletionReason;
   public subMode: 'DROPPING_JUNK' | 'CASHING_GOLD' | 'COLLECTING_COIN' | 'COLLECTING_POTION' | 'HEALING_AT_HOME' | 'READY_IDLE' = 'COLLECTING_POTION';
 
-  private initialMagic: number | null = null;
-  private initialExperience: number | null = null;
-  private initialHp: number | null = null;
-  private initialGold: number | null = null;
-
-  private ensureInitialized(engine: GameEngine): void {
-    const player = engine.getPlayer();
-    if (this.initialMagic === null) {
-      this.initialMagic = player.magic;
-      this.initialExperience = player.experience;
-      this.initialHp = player.hp;
-      this.initialGold = player.gold;
-    }
-  }
-
-  private hasMadeProgress(engine: GameEngine): boolean {
-    const player = engine.getPlayer();
-    return (
-      (this.initialMagic !== null && player.magic > this.initialMagic) ||
-      (this.initialExperience !== null && player.experience > this.initialExperience) ||
-      (this.initialHp !== null && player.hp > this.initialHp) ||
-      (this.initialGold !== null && player.gold > this.initialGold) ||
-      (this.initialGold !== null && this.initialGold > 0 && player.gold < this.initialGold)
-    );
+  private hasMadeProgress(snapshot: TacticalSnapshot): boolean {
+    const start = this.startTurn ?? snapshot.totalTurns;
+    return snapshot.progress.substantiveGainsSince(start).length > 0;
   }
 
   public evaluateStatus(snapshot: TacticalSnapshot, engine: GameEngine): MissionStatus {
-    this.ensureInitialized(engine);
     const player = engine.getPlayer();
-    const madeProgress = this.hasMadeProgress(engine);
+    const madeProgress = this.hasMadeProgress(snapshot);
     const assessment = ReadinessEvaluator.evaluateDragonReadiness(snapshot, engine, this.turnsElapsed);
 
     if (assessment.isFullyPrepared) {
@@ -89,10 +68,6 @@ export class PrepareDragonAssaultMission implements IStrategicMission {
       !assessment.needsRelocation &&
       this.turnsElapsed >= (hasChestKeySupply ? 10 : 3)
     ) {
-      if (madeProgress) {
-        this.completionReason = 'PARTIAL_PROGRESS';
-        return 'COMPLETED';
-      }
       this.completionReason = 'NO_PROGRESS_BLOCKED';
       return 'ABORTED';
     }
@@ -111,7 +86,6 @@ export class PrepareDragonAssaultMission implements IStrategicMission {
   }
 
   public generateDirective(snapshot: TacticalSnapshot, engine: GameEngine): StrategicDirective {
-    this.ensureInitialized(engine);
     const player = engine.getPlayer();
     const map = snapshot.map;
 

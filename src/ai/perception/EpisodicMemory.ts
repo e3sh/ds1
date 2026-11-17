@@ -1,4 +1,7 @@
 import { Position } from '../../models/Types.js';
+import { WorldMap } from '../../models/WorldMap.js';
+import { MovementLedger } from './MovementLedger.js';
+import { ProgressLedger, ProgressWindow, TurnSample } from './ProgressLedger.js';
 
 export interface UnreachableTarget {
   pos: Position;
@@ -8,35 +11,38 @@ export interface UnreachableTarget {
 /**
  * EpisodicMemory (エピソード記憶)
  *
- * 過去の移動履歴、訪問頻度、一時的に到達不能と判定された座標のブラックリスト、
- * および膠着・ピンポン発生箇所の記憶を管理する。
+ * 移動履歴・訪問熱量（MovementLedger）、戦果履歴（ProgressLedger）、
+ * および一時的に到達不能と判定された座標・ゾーンのブラックリストを管理する。
  */
 export class EpisodicMemory {
   private unreachableTargets: Map<string, number> = new Map();
   private unreachableZones: Map<string, number> = new Map();
-  private positionHistory: Position[] = [];
-  private readonly maxHistorySize: number = 30;
-  private visitCounts: Map<string, number> = new Map();
-  public pingPongCount: number = 0;
-  public oscillationCount: number = 0;
+
+  public readonly movement: MovementLedger = new MovementLedger();
+  public readonly progress: ProgressLedger = new ProgressLedger();
 
   private toKey(pos: Position): string {
     return `${pos.x},${pos.y}`;
   }
 
   /**
-   * 毎ターンの移動記録更新
+   * 毎ターンの状態・移動記録を一括更新する
+   */
+  public recordTurn(sample: TurnSample): void {
+    const isNewTile = this.movement.recordPosition(sample.pos, sample.turn);
+    this.progress.recordTurn(sample, isNewTile);
+    this.purgeExpiredBlacklists(sample.turn);
+  }
+
+  /**
+   * 座標のみの記録（テストや互換用途）
    */
   public recordStep(pos: Position, currentTurn: number): void {
-    const key = this.toKey(pos);
-    this.visitCounts.set(key, (this.visitCounts.get(key) ?? 0) + 1);
+    this.movement.recordPosition(pos, currentTurn);
+    this.purgeExpiredBlacklists(currentTurn);
+  }
 
-    this.positionHistory.push({ ...pos });
-    if (this.positionHistory.length > this.maxHistorySize) {
-      this.positionHistory.shift();
-    }
-
-    // 期限切れブラックリストのパージ
+  private purgeExpiredBlacklists(currentTurn: number): void {
     for (const [k, expireTurn] of this.unreachableTargets.entries()) {
       if (currentTurn >= expireTurn) {
         this.unreachableTargets.delete(k);
@@ -47,8 +53,10 @@ export class EpisodicMemory {
         this.unreachableZones.delete(z);
       }
     }
+  }
 
-    this.detectPingPong();
+  public buildProgressWindow(currentTurn: number, map: WorldMap, windowSize: number = 48): ProgressWindow {
+    return this.progress.buildWindow(currentTurn, this.movement, map, windowSize);
   }
 
   /**
@@ -107,53 +115,7 @@ export class EpisodicMemory {
     this.unreachableTargets.clear();
   }
 
-  /**
-   * 2マス間往復 (Ping-Pong) および 3〜4マス周回 (Oscillation) の検知
-   */
-  private detectPingPong(): void {
-    const len = this.positionHistory.length;
-    if (len < 4) return;
-
-    const p0 = this.positionHistory[len - 1];
-    const p1 = this.positionHistory[len - 2];
-    const p2 = this.positionHistory[len - 3];
-    const p3 = this.positionHistory[len - 4];
-
-    // A -> B -> A -> B (2マス往復)
-    if (p0.x === p2.x && p0.y === p2.y && p1.x === p3.x && p1.y === p3.y) {
-      this.pingPongCount++;
-    } else {
-      if (this.pingPongCount > 0) {
-        this.pingPongCount = Math.max(0, this.pingPongCount - 1);
-      }
-    }
-
-    // A -> B -> C -> A (3マス周回)
-    if (len >= 6) {
-      const p4 = this.positionHistory[len - 5];
-      const p5 = this.positionHistory[len - 6];
-      if (p0.x === p3.x && p0.y === p3.y && p1.x === p4.x && p1.y === p4.y && p2.x === p5.x && p2.y === p5.y) {
-        this.oscillationCount++;
-      } else {
-        if (this.oscillationCount > 0) {
-          this.oscillationCount = Math.max(0, this.oscillationCount - 1);
-        }
-      }
-    }
-  }
-
-  public getVisitCount(pos: Position): number {
-    return this.visitCounts.get(this.toKey(pos)) ?? 0;
-  }
-
-  public resetPingPong(): void {
-    this.pingPongCount = 0;
-    this.oscillationCount = 0;
-  }
-
   public clearPositionHistory(): void {
-    this.positionHistory = [];
-    this.pingPongCount = 0;
-    this.oscillationCount = 0;
+    this.movement.clearPositionHistory();
   }
 }

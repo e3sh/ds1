@@ -182,7 +182,8 @@ console.log('Testing 3: EpisodicMemory unreachable marking and ping-pong detecti
   memory.recordStep({ x: 1, y: 2 }, 2);
   memory.recordStep({ x: 1, y: 1 }, 3);
   memory.recordStep({ x: 1, y: 2 }, 4);
-  assert.ok(memory.pingPongCount >= 1, '2マス往復が正しくカウントされること');
+  const cycle = memory.movement.detectCycle();
+  assert.strictEqual(cycle?.period, 2, '2マス往復が周期2として正しく検知されること');
 
   console.log('✓ 3. EpisodicMemory verified.');
 }
@@ -210,19 +211,14 @@ console.log('Testing 4: StrategicPlanner mission selection, commitment, and emer
     const enemies = enemiesOverride ?? [];
     const milestones = SituationalPerception.evaluateMilestones(player, mockParams);
     const threats = threatsOverride ?? SituationalPerception.evaluateThreats(player, map, enemies, undefined, mockParams);
-    const stagnation = {
-      currentHeat: 0,
-      neighborhoodHeat: 0,
-      turnsSinceNewTile: 0,
-      isStagnated: false,
-      isPhysicallyTrapped: false,
-      isEarlySwordTrapped: false,
-    };
+    const confinement = SituationalPerception.evaluateConfinement(player, map, enemies);
+    const progress = memory.buildProgressWindow(0, map);
     return {
       spatial,
       milestones,
       threats,
-      stagnation,
+      confinement,
+      progress,
       player: {
         pos: { ...player.pos },
         hp: player.hp,
@@ -508,6 +504,7 @@ console.log('Testing 7: TacticalStallResolver & Eight-step chain protection...')
   map.setBaseTile({ x: 5, y: 6 }, 'WALL_STATIC');
   map.setBaseTile({ x: 4, y: 5 }, 'WALL_STATIC');
   map.setBaseTile({ x: 6, y: 5 }, 'WALL_STATIC');
+  snapshot.confinement = SituationalPerception.evaluateConfinement(player, map, []);
 
   const rawDirective = {
     type: 'NAVIGATE_TO_POSITION' as const,
@@ -844,10 +841,13 @@ console.log('Testing 9: CrownEscapeMission pre-pickup FLASH, safe temporary drop
       frozenTimer: 0,
     } as any;
 
+    const mem96 = new EpisodicMemory();
     const snap96: TacticalSnapshot = {
       spatial: new SpatialKnowledge(m96),
       milestones: SituationalPerception.evaluateMilestones(p96, mockParams),
       threats: SituationalPerception.evaluateThreats(p96, m96, [trapEnemy], undefined, mockParams),
+      confinement: SituationalPerception.evaluateConfinement(p96, m96, [trapEnemy]),
+      progress: mem96.buildProgressWindow(5, m96),
       player: {
         pos: { ...p96.pos },
         hp: p96.hp,
@@ -864,7 +864,7 @@ console.log('Testing 9: CrownEscapeMission pre-pickup FLASH, safe temporary drop
         stepCountSinceStone: 0,
       },
       livingEnemies: [trapEnemy],
-      memory: new EpisodicMemory(),
+      memory: mem96,
       params: mockParams,
       map: m96,
       totalTurns: 5,
@@ -1081,12 +1081,10 @@ console.log('Testing 11: StrategicPlanner maintains CashInGold & PrepareDragonAs
 
   const spatial11 = new SpatialKnowledge(m11);
   const memory11 = new EpisodicMemory();
-  const makeSnap11 = (turn: number): TacticalSnapshot => ({
-    spatial: spatial11,
-    milestones: SituationalPerception.evaluateMilestones(p11, mockParams),
-    threats: SituationalPerception.evaluateThreats(p11, m11, [], undefined, mockParams),
-    player: {
-      pos: { ...p11.pos },
+  const makeSnap11 = (turn: number): TacticalSnapshot => {
+    memory11.recordTurn({
+      turn,
+      pos: p11.pos,
       hp: p11.hp,
       maxHp: p11.maxHp,
       strength: p11.strength,
@@ -1095,17 +1093,40 @@ console.log('Testing 11: StrategicPlanner maintains CashInGold & PrepareDragonAs
       gold: p11.gold,
       holdItem: p11.holdItem,
       hasSword: p11.hasSword,
-      isFlying: p11.isFlying,
-      canDiagonal: p11.canDiagonal,
-      hasDeath: p11.hasDeath,
-      stepCountSinceStone: p11.stepCountSinceStone,
-    },
-    livingEnemies: [],
-    memory: memory11,
-    params: mockParams,
-    map: m11,
-    totalTurns: turn,
-  });
+      remainingChests: 0,
+      dragonTotalHeadHp: 0,
+      dragonDefeatedHeads: 0,
+      crownsDelivered: p11.crowns,
+      homePos: m11.realHomePos,
+    });
+    return {
+      spatial: spatial11,
+      milestones: SituationalPerception.evaluateMilestones(p11, mockParams),
+      threats: SituationalPerception.evaluateThreats(p11, m11, [], undefined, mockParams),
+      confinement: SituationalPerception.evaluateConfinement(p11, m11, []),
+      progress: memory11.buildProgressWindow(turn, m11),
+      player: {
+        pos: { ...p11.pos },
+        hp: p11.hp,
+        maxHp: p11.maxHp,
+        strength: p11.strength,
+        experience: p11.experience,
+        magic: p11.magic,
+        gold: p11.gold,
+        holdItem: p11.holdItem,
+        hasSword: p11.hasSword,
+        isFlying: p11.isFlying,
+        canDiagonal: p11.canDiagonal,
+        hasDeath: p11.hasDeath,
+        stepCountSinceStone: p11.stepCountSinceStone,
+      },
+      livingEnemies: [],
+      memory: memory11,
+      params: mockParams,
+      map: m11,
+      totalTurns: turn,
+    };
+  };
 
   const planner11 = new StrategicPlanner();
   const cashMission = new CashInGoldMission(5);
@@ -1194,6 +1215,8 @@ console.log('Testing 12: CrownEscapeMission prevents FLASH-pickup-drop MP deplet
     spatial: spatial12,
     milestones: SituationalPerception.evaluateMilestones(p12, mockParams),
     threats: SituationalPerception.evaluateThreats(p12, m12, enemies, undefined, mockParams),
+    confinement: SituationalPerception.evaluateConfinement(p12, m12, enemies),
+    progress: memory12.buildProgressWindow(turn, m12),
     player: {
       pos: { ...p12.pos },
       hp: p12.hp,
@@ -1642,10 +1665,11 @@ console.log('Testing 14: Preventing long-range FREEZE whiffs and wasteful FLASH 
   p14b.magic = 5;
   p14b.hasDeath = false;
 
-  const nav14b = new AdaptiveNavigator();
+  const mem14b = new EpisodicMemory();
+  const nav14b = new AdaptiveNavigator(mem14b);
   // 現在地 (10,10) と周辺にヒートを蓄積させて detectObstacleCircling を発火させる
   for (let i = 0; i < 40; i++) {
-    nav14b.updateTurn(i % 2 === 0 ? { x: 9, y: 10 } : p14b.pos);
+    mem14b.recordStep(i % 2 === 0 ? { x: 9, y: 10 } : p14b.pos, i + 1);
   }
   p14b.pos = { x: 10, y: 10 };
 

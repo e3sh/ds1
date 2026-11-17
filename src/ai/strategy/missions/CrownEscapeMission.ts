@@ -24,6 +24,11 @@ export class CrownEscapeMission implements IStrategicMission {
   public status: MissionStatus = 'ACTIVE';
   public completionReason?: MissionCompletionReason;
   public subMode: 'ACQUIRING_CROWN' | 'CLEARING_RETURN_BLOCK' | 'CLEARING_RETURN_ENEMY' | 'CARRYING_TO_HOME' = 'ACQUIRING_CROWN';
+  public readonly auditProfile = {
+    graceTurns: 64,
+    tabooable: false,
+    maxEscalation: 'BREACH' as const,
+  };
 
   private initialCrownsDelivered: number | null = null;
   private clearingBlockPos: Position | null = null;

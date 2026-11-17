@@ -34,6 +34,8 @@ import './test-ai-perception-strategy.js';
 import './test-autoplay-v2-integration.js';
 import './systems/MapProfiler.test.js';
 import './test-renderer-switching.js';
+import './test-autoplay-stagnation.js';
+import './test-strategic-commander.js';
 
 
 

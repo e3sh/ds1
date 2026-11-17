@@ -110,8 +110,8 @@ src/
 │   ├── EightStepController.ts # 8歩周期確定開錠チェーン制御
 │   ├── BotTypes.ts            # ボットフェーズ・動的パラメータ型定義
 │   ├── utils/                 # 汎用データ構造 (MinHeap.ts)
-│   ├── perception/            # 認知層 (SpatialKnowledge, SituationalPerception, MapSituationEvaluator, EpisodicMemory, TacticalSnapshot)
-│   ├── strategy/              # 戦略層 (StrategicPlanner, MissionSelector, ReadinessEvaluator, DirectiveArbiter, missions/)
+│   ├── perception/            # 認知層 (SpatialKnowledge, SituationalPerception, MapSituationEvaluator, EpisodicMemory, MovementLedger, ProgressLedger, TacticalSnapshot)
+│   ├── strategy/              # 戦略層 (command/StrategicCommander, StrategicPlanner, MissionSelector, ReadinessEvaluator, DirectiveArbiter, missions/)
 │   └── tactics/               # 戦術層 (TacticalExecutor, TacticalCombat, ItemSwapTactics)
 ├── simulation/            # ヘッドレスシミュレーション基盤
 │   ├── SimulationRunner.ts    # 高速バッチ実行オーケストレータ
@@ -413,12 +413,12 @@ classDiagram
         +AdaptiveNavigator nav
         +EightStepController eightStepController
         +TacticalContext context
+        +StrategicCommander commander
         +StrategicPlanner strategicPlanner
         +TacticalExecutor tacticalExecutor
         +EpisodicMemory episodicMemory
         +decideAction(engine) BotAction
         +step(engine) BotAction
-        +handleStuckRescue() void
         +getTutorialMessage() string
     }
 
@@ -433,11 +433,15 @@ classDiagram
         SituationalPerception
         MapSituationEvaluator
         EpisodicMemory
+        MovementLedger
+        ProgressLedger
         TacticalSnapshot
     }
 
     class StrategyLayer {
         <<module>>
+        StrategicCommander
+        ProgressAuditor
         StrategicPlanner
         MissionSelector
         ReadinessEvaluator
@@ -467,8 +471,8 @@ classDiagram
 ```
 
 #### コアアルゴリズム
-1. **PST 3層分離＆ミッション駆動プランニング**:
-   認知層（`MapSituationEvaluator` ほか）が `TacticalSnapshot` を生成し、戦略層（`StrategicPlanner` / `MissionSelector` / `DirectiveArbiter`）が12種の `IStrategicMission` と `StrategicDirective` を調停・発行、戦術層（`TacticalExecutor`）が具体的な1手の `BotAction` を遂行する。表示・字幕用の `BotPhase`（`BOOTSTRAP` / `GRAVE_SEAL` / `RESOURCE_FARM` / `RELOCATE_HOME` / `DRAGON_SLAY` / `CROWN_ESCAPE`）はアクティブミッションから同期される。
+1. **PST 3層分離＆上位指揮官による作戦監察**:
+   認知層（`MapSituationEvaluator` / `MovementLedger` / `ProgressLedger` ほか）が `TacticalSnapshot`（`ProgressWindow` / `ConfinementState` を含む）を生成し、上位指揮官（`StrategicCommander`）が48ターン窓の戦果を監査して段階的打開命令を発行、戦略層（`StrategicPlanner` / `MissionSelector` / `DirectiveArbiter`）が13種の `IStrategicMission` と `StrategicDirective` を調停・発行、戦術層（`TacticalExecutor`）が具体的な1手の `BotAction` を遂行する。表示・字幕用の `BotPhase`（`BOOTSTRAP` / `GRAVE_SEAL` / `RESOURCE_FARM` / `RELOCATE_HOME` / `DRAGON_SLAY` / `CROWN_ESCAPE`）はアクティブミッションから同期される。
 2. **幾何スケール連動と動的パラメータ導出 (`TacticalContext`)**:
    マップ解像度（32x32〜64x64）、トポロジー、進行度から `TacticalScale`（近傍・中距離・遠征半径）と `DynamicBotParameters` を動的算出。
 3. **訪問ヒートマップによる周回ループ打開 (`TacticalCombat` / `AdaptiveNavigator`)**:
@@ -528,4 +532,4 @@ stateDiagram-v2
 ```
 
 - **シームレス操作権引き継ぎ (Takeover)**: プレイヤーが手動操作中に行き詰まった際や、ボットの攻略手順を確認したい際に、その場のマップ・HP・所持品を完全保持したまま自走を開始・解除可能。
-- **スタック救済 (`handleStuckRescue`)**: 自走検証中に身動き不能（同一座標20フレーム連続）となった場合、目標ロック・ブラックリスト・持ち替え状態をリセットし、強制安全徘徊へ移行して自力脱出する。
+- **自律スタック打開 (`StrategicCommander`)**: 移動台帳・戦果台帳の48ターン窓を監査し、無戦果の周回（LOOP）・作戦空回り（CHURN）・徒労（FRUITLESS）を検知した際にターゲット禁止→ミッション禁止→未踏地遠征→BREAK開通→魔法転移→条件見切り→終端判定と段階的に打開する。

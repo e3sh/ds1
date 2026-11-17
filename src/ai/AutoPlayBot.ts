@@ -22,6 +22,8 @@ import { MapSituationEvaluator } from './perception/MapSituationEvaluator.js';
 import { EpisodicMemory } from './perception/EpisodicMemory.js';
 import { TacticalSnapshot } from './perception/TacticalSnapshot.js';
 import { StrategicPlanner } from './strategy/StrategicPlanner.js';
+import { StrategicCommander } from './strategy/command/StrategicCommander.js';
+import { DEFAULT_COMMANDER_CONFIG } from './strategy/command/CommanderTypes.js';
 import { TacticalExecutor } from './tactics/TacticalExecutor.js';
 
 export * from './BotTypes.js';
@@ -52,7 +54,8 @@ export class AutoPlayBot {
   public currentTargetDesc: string = '初期化中';
   public lastDecidedActionDesc: string = '待機';
 
-  // PST 3層アーキテクチャユニット
+  // PST 3層アーキテクチャユニット + 上位指揮官
+  public readonly commander: StrategicCommander;
   public readonly strategicPlanner: StrategicPlanner;
   public readonly tacticalExecutor: TacticalExecutor;
   public readonly episodicMemory: EpisodicMemory;
@@ -62,11 +65,12 @@ export class AutoPlayBot {
   constructor(opts: AutoPlayBotOptions = {}) {
     this.opts = opts;
     this.profile = opts.profile ?? 'STANDARD';
-    this.nav = new AdaptiveNavigator();
+    this.episodicMemory = new EpisodicMemory();
+    this.nav = new AdaptiveNavigator(this.episodicMemory);
     this.eightStepController = new EightStepController(this.nav);
+    this.commander = new StrategicCommander();
     this.strategicPlanner = new StrategicPlanner();
     this.tacticalExecutor = new TacticalExecutor(this.nav, this.eightStepController);
-    this.episodicMemory = new EpisodicMemory();
   }
 
   public setPhase(newPhase: BotPhase): void {
@@ -126,11 +130,6 @@ export class AutoPlayBot {
     return action;
   }
 
-  public handleStuckRescue(): void {
-    this.nav.triggerRescue(4);
-    this.currentTargetDesc = '⚠️ スタック救出: 連続安全徘徊';
-  }
-
   public formatAction(action: BotAction): string {
     switch (action.type) {
       case 'MOVE': return `移動 [${action.dir}]`;
@@ -181,7 +180,8 @@ export class AutoPlayBot {
       case 'EARLY_BREAK_UNLOCK':
       case 'CASH_IN_GOLD':
       case 'PREPARE_DRAGON_ASSAULT':
-      case 'EXPLORE_WANDER':
+      case 'EXPLORE_FRONTIER':
+      case 'STRATEGIC_BREAK':
       default:
         this.setPhase('RESOURCE_FARM');
         break;
@@ -215,6 +215,9 @@ export class AutoPlayBot {
       strategyTuning: this.opts.strategyTuning,
       enableGiveUp: this.opts.enableGiveUp,
     });
+    if (this.opts.strategyTuning?.commander) {
+      this.params.commander = this.opts.strategyTuning.commander;
+    }
     MagicSystem.updatePassiveSkills(player);
 
     // BREAK 解禁検知
@@ -223,9 +226,8 @@ export class AutoPlayBot {
       this.episodicMemory.clearAllUnreachableTargets();
     }
 
-    // ナビゲータおよびエピソード記憶のターン更新
-    this.nav.updateTurn(player.pos);
-    this.episodicMemory.recordStep(player.pos, this.totalTurns);
+    // ナビゲータのタイマー更新
+    this.nav.updateTurn();
 
     // 1. 【認知・知識ユニット (Perception & Knowledge)】
     if (!this.spatialKnowledge) {
@@ -235,14 +237,7 @@ export class AutoPlayBot {
 
     const milestones = SituationalPerception.evaluateMilestones(player, this.params, dragon);
     const threats = SituationalPerception.evaluateThreats(player, map, enemies, dragon, this.params);
-    const stagnation = SituationalPerception.evaluateStagnation(
-      player,
-      map,
-      enemies,
-      this.nav,
-      dragon,
-      this.params
-    );
+    const confinement = SituationalPerception.evaluateConfinement(player, map, enemies);
     const situation = MapSituationEvaluator.evaluate(
       player,
       map,
@@ -257,11 +252,35 @@ export class AutoPlayBot {
       this.spatialKnowledge
     );
 
+    // 台帳の更新と進捗窓の構築
+    const dragonTotalHeadHp = dragon ? dragon.heads.reduce((s, h) => s + (h.isAlive ? h.hp : 0), 0) : 0;
+    const dragonDefeatedHeads = dragon ? dragon.defeatedHeadsCount : 0;
+    this.episodicMemory.recordTurn({
+      turn: this.totalTurns,
+      pos: player.pos,
+      hp: player.hp,
+      maxHp: player.maxHp,
+      strength: player.strength,
+      experience: player.experience,
+      magic: player.magic,
+      gold: player.gold,
+      holdItem: player.holdItem,
+      hasSword: player.hasSword,
+      remainingChests: situation.items.totalActualChests,
+      dragonTotalHeadHp,
+      dragonDefeatedHeads,
+      crownsDelivered: player.crowns,
+      homePos: map.realHomePos,
+    });
+    const windowSize = this.params.commander?.windowSize ?? DEFAULT_COMMANDER_CONFIG.windowSize;
+    const progress = this.episodicMemory.buildProgressWindow(this.totalTurns, map, windowSize);
+
     const snapshot: TacticalSnapshot = {
       spatial: this.spatialKnowledge,
       milestones,
       threats,
-      stagnation,
+      confinement,
+      progress,
       situation,
       player: {
         pos: { ...player.pos },
@@ -300,8 +319,9 @@ export class AutoPlayBot {
       totalTurns: this.totalTurns,
     };
 
-    // 2. 【判断・指示：戦略ユニット (Strategic Planner)】
-    const directive = this.strategicPlanner.planTurn(snapshot, engine);
+    // 2. 【監察・判断・指示：上位指揮官 & 戦略ユニット (Commander & Strategic Planner)】
+    const orders = this.commander.review(snapshot, this.strategicPlanner.getMissionReport(), engine);
+    const directive = this.strategicPlanner.planTurn(snapshot, engine, orders);
     this.syncPhaseFromMission(this.strategicPlanner.activeMission?.id, dragon);
     const missionName = this.strategicPlanner.activeMission?.name ?? '作戦なし';
 

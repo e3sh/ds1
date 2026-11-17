@@ -12,6 +12,7 @@ import { Ghost } from '../../models/Ghost.js';
 import { GameEngine } from '../../core/GameEngine.js';
 import { ThreatEvaluator } from '../../systems/ThreatEvaluator.js';
 import { MovementSystem } from '../../systems/MovementSystem.js';
+import { MagicSystem } from '../../systems/MagicSystem.js';
 import { DynamicBotParameters } from '../BotTypes.js';
 import { AdaptiveNavigator } from '../AdaptiveNavigator.js';
 import { EpisodicMemory } from './EpisodicMemory.js';
@@ -83,6 +84,14 @@ export interface ItemReachabilitySummary {
   shouldContinueChestChain: boolean;
   bestOpportunisticItem: OpportunisticItemCandidate | null;
   getReachableChestsInZone: (zoneBounds: { x1: number; y1: number; x2: number; y2: number }) => Position[];
+  readonly isEarlySwordTrapped: boolean;
+}
+
+export interface ExplorationSummary {
+  /** 未訪問または最も訪問が古い到達可能マスの候補（現在地・周回重心から遠い順、最大8件） */
+  readonly frontierTargets: Position[];
+  /** 最も近い破壊可能な岩（BLOCK）の座標（保護された墓ブロックは除外） */
+  readonly nearestBreakableBlock: Position | null;
 }
 
 export interface AdjacentBlockInfo {
@@ -135,6 +144,7 @@ export interface LocalSurroundingsSummary {
 export interface MapSituationSummary {
   homeReachability: HomeReachabilitySummary;
   items: ItemReachabilitySummary;
+  exploration: ExplorationSummary;
   surroundings: LocalSurroundingsSummary;
   _stateKey: string;
 }
@@ -219,7 +229,7 @@ export class MapSituationEvaluator {
       player, map, enemies, dragon, ghosts, nav, resolvedParams
     );
 
-    const items = this.evaluateItems(
+    const { items, exploration } = this.evaluateItems(
       curPos, player, map, enemies, dragon, ghosts, nav, memory, resolvedParams, totalTurns, spatial
     );
 
@@ -230,6 +240,7 @@ export class MapSituationEvaluator {
     return {
       homeReachability,
       items,
+      exploration,
       surroundings,
       _stateKey: stateKey,
     };
@@ -515,7 +526,7 @@ export class MapSituationEvaluator {
     params: DynamicBotParameters,
     totalTurns: number,
     spatial?: SpatialKnowledge
-  ): ItemReachabilitySummary {
+  ): { items: ItemReachabilitySummary; exploration: ExplorationSummary } {
     const rawCrowns: { pos: Position; dist: number }[] = [];
     const swordsWithDist: { pos: Position; dist: number }[] = [];
     const fallbackSwordsWithDist: { pos: Position; dist: number }[] = [];
@@ -910,8 +921,14 @@ export class MapSituationEvaluator {
 
     let reachableCrownEvaluated = false;
     let cachedReachableCrown: CrownCandidate | null = null;
+    let earlySwordTrappedEvaluated = false;
+    let cachedEarlySwordTrapped = false;
+    let frontierEvaluated = false;
+    let cachedFrontierTargets: Position[] = [];
+    let nearestBlockEvaluated = false;
+    let cachedNearestBlock: Position | null = null;
 
-    return {
+    const itemsSummary: ItemReachabilitySummary = {
       crowns: {
         allFloorCrowns: crownCandidates,
         get reachableCrown(): CrownCandidate | null {
@@ -952,7 +969,96 @@ export class MapSituationEvaluator {
       shouldContinueChestChain,
       bestOpportunisticItem,
       getReachableChestsInZone,
+      get isEarlySwordTrapped(): boolean {
+        if (earlySwordTrappedEvaluated) return cachedEarlySwordTrapped;
+        earlySwordTrappedEvaluated = true;
+        if (
+          player.hasSword ||
+          map.getItem(curPos) === 'SWORD' ||
+          MagicSystem.canCast(player, 'BREAK').allowed ||
+          MagicSystem.canCast(player, 'JUMP').allowed ||
+          MagicSystem.canCast(player, 'FLY').allowed ||
+          swordsWithDist.length > 0
+        ) {
+          cachedEarlySwordTrapped = false;
+          return false;
+        }
+        if (player.holdItem !== 'RING' && ringsWithDist.length > 0 && fallbackSwordsWithDist.length > 0) {
+          const testPlayer = MapSituationEvaluator.clonePlayerWithHold(player, 'RING');
+          for (const r of ringsWithDist) {
+            for (const sw of fallbackSwordsWithDist) {
+              if (nav.findPath(r.pos, sw.pos, map, testPlayer, enemies, params, { dragon }) !== null) {
+                cachedEarlySwordTrapped = false;
+                return false;
+              }
+            }
+          }
+        }
+        cachedEarlySwordTrapped = true;
+        return true;
+      },
     };
+
+    const explorationSummary: ExplorationSummary = {
+      get frontierTargets(): Position[] {
+        if (frontierEvaluated) return cachedFrontierTargets;
+        frontierEvaluated = true;
+        const unvisited: { pos: Position; dist: number }[] = [];
+        const oldestVisited: { pos: Position; lastTurn: number; dist: number }[] = [];
+
+        for (let y = 0; y < map.height; y++) {
+          for (let x = 0; x < map.width; x++) {
+            const tileDist = bfsDist[y * map.width + x];
+            if (tileDist <= 0) continue;
+            const p: Position = { x, y };
+            if (memory.isTargetUnreachable(p, totalTurns)) continue;
+            const base = map.getBaseTile(p);
+            const obj = map.getObject(p);
+            if (base === 'WALL_STATIC' || (base === 'GRAVE' && obj === 'NONE')) continue;
+            if (obj === 'BLOCK' && !canBreakNow) continue;
+
+            if (!memory.movement.hasVisitedEver(p)) {
+              unvisited.push({ pos: p, dist: tileDist });
+            } else {
+              const lastTurn = memory.movement.getLastVisitedTurn(p) ?? 0;
+              oldestVisited.push({ pos: p, lastTurn, dist: tileDist });
+            }
+          }
+        }
+
+        if (unvisited.length > 0) {
+          unvisited.sort((a, b) => b.dist - a.dist);
+          cachedFrontierTargets = unvisited.slice(0, 8).map(u => u.pos);
+        } else {
+          oldestVisited.sort((a, b) => a.lastTurn - b.lastTurn || b.dist - a.dist);
+          cachedFrontierTargets = oldestVisited.slice(0, 8).map(o => o.pos);
+        }
+        return cachedFrontierTargets;
+      },
+      get nearestBreakableBlock(): Position | null {
+        if (nearestBlockEvaluated) return cachedNearestBlock;
+        nearestBlockEvaluated = true;
+        let bestPos: Position | null = null;
+        let bestDist = Infinity;
+        for (let y = 0; y < map.height; y++) {
+          for (let x = 0; x < map.width; x++) {
+            const p: Position = { x, y };
+            if (map.getObject(p) !== 'BLOCK') continue;
+            if (memory.isTargetUnreachable(p, totalTurns)) continue;
+            if (AdaptiveNavigator.isProtectedGraveBlock(p, map, map.tacticalMetadata)) continue;
+            const d = map.getTorusDistance(curPos, p).manhattan;
+            if (d < bestDist) {
+              bestDist = d;
+              bestPos = p;
+            }
+          }
+        }
+        cachedNearestBlock = bestPos;
+        return cachedNearestBlock;
+      },
+    };
+
+    return { items: itemsSummary, exploration: explorationSummary };
   }
 
   /**

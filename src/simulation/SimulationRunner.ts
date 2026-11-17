@@ -71,6 +71,7 @@ export class SimulationRunner {
       let turns = 0;
       let redundantFlashCount = 0;
       let crownPickupDropLoops = 0;
+      let maxTurnsWithoutSubstantiveGain = 0;
       let lastFlashTurn = -100;
       let lastFlashPos: { x: number; y: number } | null = null;
       let lastCrownPickupTurn = -100;
@@ -118,6 +119,10 @@ export class SimulationRunner {
         // スナップショット記録
         const player = afterPlayer;
         telemetry.recordTurnSnapshot(turns, player.experience, player.strength, player.hasSword);
+        const curNoGain = bot.episodicMemory.buildProgressWindow(bot.totalTurns, engine.getMap()).turnsSinceSubstantiveGain;
+        if (curNoGain > maxTurnsWithoutSubstantiveGain) {
+          maxTurnsWithoutSubstantiveGain = curNoGain;
+        }
 
         // Botが物理的詰みを検知してGiveUPした場合は3,000ターンを待たずに即座に終了
         if ('isGivenUp' in bot && bot.isGivenUp) {
@@ -181,6 +186,13 @@ export class SimulationRunner {
         const breachShortcutsUsed = bot.spatialKnowledge?.breachShortcuts.filter(s => s.isBreached).length ?? 0;
         const terminalMissionId = active?.id ?? 'NONE';
         const terminalZoneId = active && 'zoneId' in active ? (active as any).zoneId : undefined;
+        const commanderLevelCounts: Record<string, number> = {};
+        for (const v of bot.commander.verdicts) {
+          commanderLevelCounts[v.to] = (commanderLevelCounts[v.to] || 0) + 1;
+        }
+        const giveUpSource = bot.isGivenUp
+          ? (bot.commander.level === 'TERMINAL' ? 'COMMANDER_TERMINAL' : 'OTHER')
+          : undefined;
 
         pstMetrics = {
           missionTurns,
@@ -194,6 +206,9 @@ export class SimulationRunner {
           breachShortcutsUsed,
           terminalMissionId,
           terminalZoneId,
+          maxTurnsWithoutSubstantiveGain,
+          commanderLevelCounts,
+          giveUpSource,
         };
       }
 
@@ -305,6 +320,9 @@ export class SimulationRunner {
       let sumNoProgressSwitches = 0;
       let sumRedundantFlash = 0;
       let sumCrownLoops = 0;
+      let sumMaxNoGain = 0;
+      const totalCommanderLevelCounts: Record<string, number> = {};
+      const giveUpSources: Record<string, number> = {};
 
       for (const m of pstRecords) {
         totalShortcuts += m.breachShortcutsUsed;
@@ -313,6 +331,15 @@ export class SimulationRunner {
         sumNoProgressSwitches += m.noProgressSwitchCount ?? 0;
         sumRedundantFlash += m.redundantFlashCount ?? 0;
         sumCrownLoops += m.crownPickupDropLoops ?? 0;
+        sumMaxNoGain += m.maxTurnsWithoutSubstantiveGain ?? 0;
+        if (m.commanderLevelCounts) {
+          for (const [lvl, cnt] of Object.entries(m.commanderLevelCounts)) {
+            totalCommanderLevelCounts[lvl] = (totalCommanderLevelCounts[lvl] || 0) + (cnt as number);
+          }
+        }
+        if (m.giveUpSource) {
+          giveUpSources[m.giveUpSource] = (giveUpSources[m.giveUpSource] || 0) + 1;
+        }
 
         if (m.terminalMissionId) {
           const key = m.terminalZoneId ? `${m.terminalMissionId} [Zone:${m.terminalZoneId}]` : m.terminalMissionId;
@@ -370,6 +397,9 @@ export class SimulationRunner {
         crownEscapeSuccessRate,
         avgBreachShortcutsUsed: Math.round((totalShortcuts / pstRecords.length) * 10) / 10,
         terminalMissionBreakdown: terminalBreakdown,
+        avgMaxTurnsWithoutSubstantiveGain: Math.round(sumMaxNoGain / pstRecords.length),
+        commanderLevelCounts: totalCommanderLevelCounts,
+        giveUpSources,
       };
     }
 
