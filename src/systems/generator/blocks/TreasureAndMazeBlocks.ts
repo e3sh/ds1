@@ -244,6 +244,154 @@ export const TREASURE_16x16_GRAND_VAULT: ThemeBlockTemplate = {
   ],
 };
 
+/**
+ * 4x4 隙間なし高密度宝箱パック (12個)
+ */
+export const TREASURE_4x4_DENSE_PACK: ThemeBlockTemplate = {
+  id: 'treasure_4x4_dense_pack',
+  size: '4x4',
+  category: 'TREASURE',
+  weight: 2,
+  layout: [
+    '.CC.',
+    'CCCC',
+    'CCCC',
+    '.CC.',
+  ],
+  allowRotation: true,
+  allowFlip: true,
+  edgePorts: [
+    { direction: 'NORTH', cellIndex: 0, offsetInCell: 1 },
+    { direction: 'SOUTH', cellIndex: 0, offsetInCell: 1 },
+    { direction: 'WEST', cellIndex: 0, offsetInCell: 1 },
+    { direction: 'EAST', cellIndex: 0, offsetInCell: 1 },
+  ],
+  localTreasureHints: [
+    {
+      id: 'dense_pack_4x4',
+      bounds: { x1: 0, y1: 0, x2: 3, y2: 3 },
+      entryPorts: [{ x: 1, y: 0 }, { x: 2, y: 3 }],
+      chestCount: 12,
+      isEightStepOptimal: true,
+    },
+  ],
+};
+
+/**
+ * 8x8 隙間なし高密度宝物庫 (24個)
+ */
+export const TREASURE_8x8_SOLID_VAULT: ThemeBlockTemplate = {
+  id: 'treasure_8x8_solid_vault',
+  size: '8x8',
+  category: 'TREASURE',
+  weight: 2,
+  layout: [
+    '..####..',
+    '.#CCCC#.',
+    '.#CCCC#.',
+    '..CCCC..',
+    '..CCCC..',
+    '.#CCCC#.',
+    '.#CCCC#.',
+    '..####..',
+  ],
+  allowRotation: true,
+  allowFlip: true,
+  edgePorts: [
+    { direction: 'NORTH', cellIndex: 0, offsetInCell: 1 },
+    { direction: 'SOUTH', cellIndex: 0, offsetInCell: 1 },
+    { direction: 'WEST', cellIndex: 0, offsetInCell: 2 },
+    { direction: 'EAST', cellIndex: 0, offsetInCell: 2 },
+  ],
+  localTreasureHints: [
+    {
+      id: 'solid_vault_8x8',
+      bounds: { x1: 2, y1: 1, x2: 5, y2: 6 },
+      entryPorts: [{ x: 1, y: 3 }, { x: 6, y: 4 }],
+      chestCount: 24,
+      isEightStepOptimal: true,
+    },
+  ],
+};
+
+/**
+ * 8x8 二室連立高密度宝物庫 (20個)
+ */
+export const TREASURE_8x8_DOUBLE_CHAMBER: ThemeBlockTemplate = {
+  id: 'treasure_8x8_double_chamber',
+  size: '8x8',
+  category: 'TREASURE',
+  weight: 2,
+  layout: [
+    '..#..#..',
+    '.#CC#CC#',
+    '.#CC.CC#',
+    '..CC.CC.',
+    '.#CC.CC#',
+    '.#CC#CC#',
+    '..#..#..',
+    '........',
+  ],
+  allowRotation: true,
+  allowFlip: true,
+  edgePorts: [
+    { direction: 'NORTH', cellIndex: 0, offsetInCell: 1 },
+    { direction: 'SOUTH', cellIndex: 0, offsetInCell: 1 },
+    { direction: 'WEST', cellIndex: 0, offsetInCell: 2 },
+    { direction: 'EAST', cellIndex: 0, offsetInCell: 2 },
+  ],
+  localTreasureHints: [
+    {
+      id: 'double_chamber_8x8',
+      bounds: { x1: 2, y1: 1, x2: 6, y2: 5 },
+      entryPorts: [{ x: 1, y: 3 }, { x: 4, y: 2 }],
+      chestCount: 20,
+      isEightStepOptimal: true,
+    },
+  ],
+};
+
+/**
+ * 12x12 大宝物殿 (56個 + 金貨・パワーストーン)
+ */
+export const TREASURE_12x12_TREASURY: ThemeBlockTemplate = {
+  id: 'treasure_12x12_treasury',
+  size: '12x12',
+  category: 'TREASURE',
+  weight: 1,
+  layout: [
+    '..#......#..',
+    '.###.##.###.',
+    '.#CCCCCCCC#.',
+    '.#CCCCCCCC#.',
+    '..CCCCCCCC..',
+    '.#CC$SS$CC#.',
+    '.#CC$SS$CC#.',
+    '..CCCCCCCC..',
+    '.#CCCCCCCC#.',
+    '.#CCCCCCCC#.',
+    '.###.##.###.',
+    '..#......#..',
+  ],
+  allowRotation: true,
+  allowFlip: true,
+  edgePorts: [
+    { direction: 'NORTH', cellIndex: 1, offsetInCell: 1 },
+    { direction: 'SOUTH', cellIndex: 1, offsetInCell: 1 },
+    { direction: 'WEST', cellIndex: 1, offsetInCell: 1 },
+    { direction: 'EAST', cellIndex: 1, offsetInCell: 1 },
+  ],
+  localTreasureHints: [
+    {
+      id: 'treasury_12x12',
+      bounds: { x1: 2, y1: 2, x2: 9, y2: 9 },
+      entryPorts: [{ x: 1, y: 4 }, { x: 10, y: 7 }],
+      chestCount: 56,
+      isEightStepOptimal: true,
+    },
+  ],
+};
+
 // ============================================================================
 // 迷路・通路ブロック
 // ============================================================================
@@ -363,9 +511,13 @@ export const MAZE_12x12_SPIRAL: ThemeBlockTemplate = {
 
 export const ALL_TREASURE_AND_MAZE_BLOCKS: ThemeBlockTemplate[] = [
   TREASURE_4x4_ALCOVE,
+  TREASURE_4x4_DENSE_PACK,
   TREASURE_8x8_GALLERY,
   TREASURE_8x8_CHECKER,
+  TREASURE_8x8_SOLID_VAULT,
+  TREASURE_8x8_DOUBLE_CHAMBER,
   TREASURE_12x12_COMPLEX,
+  TREASURE_12x12_TREASURY,
   TREASURE_16x16_GRAND_VAULT,
   MAZE_4x4_CRANK,
   MAZE_4x4_CROSS,

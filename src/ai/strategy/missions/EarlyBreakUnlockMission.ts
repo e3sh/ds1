@@ -1,9 +1,11 @@
 import { GameEngine } from '../../../core/GameEngine.js';
+import { EnemyInstance } from '../../../models/Enemy.js';
 import { Position } from '../../../models/Types.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
+import { DEFAULT_HUNTING_PARAMS } from '../../TacticalContext.js';
 import { IStrategicMission, MissionCompletionReason, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
-import { ThreatEvaluator } from '../../../systems/ThreatEvaluator.js';
+import { ThreatEvaluator, ThreatPlayerStats } from '../../../systems/ThreatEvaluator.js';
 
 /**
  * EarlyBreakUnlockMission (BREAK解禁EXP稼ぎ作戦)
@@ -21,6 +23,7 @@ export class EarlyBreakUnlockMission implements IStrategicMission {
   public completionReason?: MissionCompletionReason;
   public subMode: 'HUNTING_SAFE_ENEMY' | 'SEARCHING_ENEMY' = 'HUNTING_SAFE_ENEMY';
   private trackedEnemyId: string | null = null;
+  private trackedEnemyTurns: number = 0;
   private lastEnemyPos: Position | null = null;
   private lastEnemyDist: number = Infinity;
   private turnsWithoutClosingGap: number = 0;
@@ -29,12 +32,61 @@ export class EarlyBreakUnlockMission implements IStrategicMission {
     this.name = targetExp > 4000 ? '⚔️ 決戦前防御EXP稼ぎ作戦' : '⛏️ BREAK解禁EXP稼ぎ作戦';
   }
 
+  /**
+   * 狩り対象の安全な最寄り敵を検索する共通ヘルパー
+   */
+  public static findNearestSafeEnemy(
+    player: ThreatPlayerStats & { pos: Position; canDiagonal?: boolean },
+    snapshot: TacticalSnapshot,
+    targetExp: number,
+    maxDistOverride?: number
+  ): { enemy: EnemyInstance; distance: number } | null {
+    const map = snapshot.map;
+    const h = snapshot.params.hunting ?? DEFAULT_HUNTING_PARAMS;
+    const canDiag = snapshot.milestones?.canDiagonal || Boolean(player.canDiagonal);
+    const maxDist =
+      maxDistOverride ??
+      (!canDiag
+        ? h.huntDistNoDiag
+        : targetExp > 4000
+          ? h.huntDistPostStr
+          : h.huntDistDiag);
+
+    let bestTarget: EnemyInstance | null = null;
+    let minDistance = Infinity;
+
+    for (const enemy of snapshot.livingEnemies) {
+      if (!enemy.isAlive || enemy.isPermanentlyFrozen) continue;
+      if (snapshot.memory.isTargetUnreachable(enemy.pos, snapshot.totalTurns)) continue;
+
+      const dist = map.getTorusDistance(player.pos, enemy.pos).manhattan;
+      if (dist > maxDist || dist >= minDistance) continue;
+
+      const details = ThreatEvaluator.evaluateThreatDetails(player, enemy);
+      const isDefenseSafe =
+        details.defenseThreat === 'NO_DAMAGE' ||
+        (details.defenseThreat !== 'LETHAL' &&
+          !details.hasDrain &&
+          details.damageToPlayer < player.hp * h.huntMaxDamageRatio);
+      if (!isDefenseSafe) continue;
+
+      const isAttackSafe =
+        details.attackThreat === 'ONE_SHOT' || details.turnsToKill <= h.huntMaxTurnsToKill;
+      if (!isAttackSafe) continue;
+
+      minDistance = dist;
+      bestTarget = enemy;
+    }
+
+    return bestTarget ? { enemy: bestTarget, distance: minDistance } : null;
+  }
+
   public evaluateStatus(snapshot: TacticalSnapshot, engine: GameEngine): MissionStatus {
     const player = engine.getPlayer();
+    const h = snapshot.params.hunting ?? DEFAULT_HUNTING_PARAMS;
     const start = this.startTurn ?? snapshot.totalTurns;
     const gains = snapshot.progress.substantiveGainsSince(start);
     const gainedExp = gains.some(g => g.kind === 'EXP_UP' || g.kind === 'GOLD_CASHED');
-    const gainedExpOrGold = gainedExp || gains.some(g => g.kind === 'GOLD_PICKUP');
 
     if (player.experience >= this.targetExp) {
       this.completionReason = 'OBJECTIVE_ACHIEVED';
@@ -44,47 +96,31 @@ export class EarlyBreakUnlockMission implements IStrategicMission {
       this.completionReason = 'TARGET_LOST';
       return 'ABORTED';
     }
-    if (this.turnsElapsed >= 10 && !gainedExpOrGold) {
+    const lastExpEvent = gains.filter(g => g.kind === 'EXP_UP').pop();
+    const lastExpTurn = lastExpEvent ? lastExpEvent.turn : start;
+    const turnsSinceExp = snapshot.totalTurns - lastExpTurn;
+
+    if (turnsSinceExp >= h.huntNoExpAbortTurns) {
       if (this.lastEnemyPos) {
-        snapshot.memory.markTargetUnreachable(this.lastEnemyPos, 30, snapshot.totalTurns);
-      }
-      this.completionReason = 'NO_PROGRESS_BLOCKED';
-      return 'ABORTED';
-    }
-    if (this.turnsWithoutClosingGap >= 8) {
-      if (this.lastEnemyPos) {
-        snapshot.memory.markTargetUnreachable(this.lastEnemyPos, 30, snapshot.totalTurns);
+        snapshot.memory.markTargetUnreachable(this.lastEnemyPos, h.huntUnreachableMarkTurns, snapshot.totalTurns);
       }
       this.completionReason = gainedExp ? 'PARTIAL_PROGRESS' : 'NO_PROGRESS_BLOCKED';
       return 'ABORTED';
     }
-    if (this.turnsElapsed >= this.maxTurns) {
+    if (this.turnsWithoutClosingGap >= h.huntNoGapCloseAbortTurns) {
+      if (this.lastEnemyPos) {
+        snapshot.memory.markTargetUnreachable(this.lastEnemyPos, h.huntUnreachableMarkTurns, snapshot.totalTurns);
+      }
+      this.completionReason = gainedExp ? 'PARTIAL_PROGRESS' : 'NO_PROGRESS_BLOCKED';
+      return 'ABORTED';
+    }
+    if (this.turnsElapsed >= h.huntMissionMaxTurns) {
       this.completionReason = gainedExp ? 'PARTIAL_PROGRESS' : 'NO_PROGRESS_TIMEOUT';
       return 'ABORTED';
     }
-    // 近傍に狩れる到達可能な安全敵（被ダメージ0または一撃撃破）がいるか
-    const map = snapshot.map;
-    const canDiag = snapshot.milestones.canDiagonal || player.canDiagonal;
-    const maxDist = !canDiag ? 8 : (this.targetExp > 4000 ? 45 : 18);
-    const hasTarget = snapshot.livingEnemies.some(enemy => {
-      if (!enemy.isAlive || enemy.isPermanentlyFrozen) return false;
-      if (snapshot.memory.isTargetUnreachable(enemy.pos, snapshot.totalTurns)) return false;
-      const dist = map.getTorusDistance(player.pos, enemy.pos).manhattan;
-      if (dist > maxDist) return false;
 
-      const details = ThreatEvaluator.evaluateThreatDetails(player, enemy);
-      // 防御視点: 被ダメージ0、または即死・大ダメージ・能力吸収が絶対にない安全な敵
-      const isDefenseSafe = details.defenseThreat === 'NO_DAMAGE' || (
-        details.defenseThreat !== 'LETHAL' &&
-        !details.hasDrain &&
-        details.damageToPlayer < player.hp * 0.15
-      );
-      if (!isDefenseSafe) return false;
-
-      // 攻撃視点: 一撃撃破可能、または4発以内で撃破可能
-      return details.attackThreat === 'ONE_SHOT' || details.turnsToKill <= 4;
-    });
-    if (!hasTarget) {
+    const found = EarlyBreakUnlockMission.findNearestSafeEnemy(player, snapshot, this.targetExp);
+    if (!found) {
       this.completionReason = gainedExp ? 'PARTIAL_PROGRESS' : 'NO_PROGRESS_BLOCKED';
       return 'ABORTED';
     }
@@ -93,43 +129,28 @@ export class EarlyBreakUnlockMission implements IStrategicMission {
 
   public generateDirective(snapshot: TacticalSnapshot, engine: GameEngine): StrategicDirective {
     const player = engine.getPlayer();
-    const map = snapshot.map;
+    const h = snapshot.params.hunting ?? DEFAULT_HUNTING_PARAMS;
+    const found = EarlyBreakUnlockMission.findNearestSafeEnemy(player, snapshot, this.targetExp);
 
-    let bestTarget = null;
-    let minDistance = Infinity;
-
-    const canDiag = snapshot.milestones.canDiagonal || player.canDiagonal;
-    const maxDist = !canDiag ? 8 : (this.targetExp > 4000 ? 45 : 18);
-    for (const enemy of snapshot.livingEnemies) {
-      if (!enemy.isAlive || enemy.isPermanentlyFrozen) continue;
-      if (snapshot.memory.isTargetUnreachable(enemy.pos, snapshot.totalTurns)) continue;
-
-      const details = ThreatEvaluator.evaluateThreatDetails(player, enemy);
-      const isDefenseSafe = details.defenseThreat === 'NO_DAMAGE' || (
-        details.defenseThreat !== 'LETHAL' &&
-        !details.hasDrain &&
-        details.damageToPlayer < player.hp * 0.15
-      );
-      if (!isDefenseSafe) continue;
-      const isSafe = details.attackThreat === 'ONE_SHOT' || details.turnsToKill <= 4;
-      if (!isSafe) continue;
-
-      const dist = map.getTorusDistance(player.pos, enemy.pos).manhattan;
-      if (dist < minDistance && dist <= maxDist) {
-        minDistance = dist;
-        bestTarget = enemy;
-      }
-    }
-
-    if (bestTarget) {
+    if (found) {
+      const bestTarget = found.enemy;
+      const minDistance = found.distance;
       if (this.trackedEnemyId === bestTarget.id) {
-        if (minDistance < this.lastEnemyDist) {
+        this.trackedEnemyTurns++;
+        if (this.trackedEnemyTurns >= h.huntTrackMaxTurns) {
+          // 一定ターン追っても倒せない場合は深追いをやめてブラックリスト化
+          snapshot.memory.markTargetUnreachable(bestTarget.pos, h.huntUnreachableMarkTurns, snapshot.totalTurns);
+          this.trackedEnemyId = null;
+          this.trackedEnemyTurns = 0;
+          this.turnsWithoutClosingGap = 0;
+        } else if (minDistance < this.lastEnemyDist) {
           this.turnsWithoutClosingGap = 0;
         } else {
           this.turnsWithoutClosingGap++;
         }
       } else {
         this.trackedEnemyId = bestTarget.id;
+        this.trackedEnemyTurns = 1;
         this.turnsWithoutClosingGap = 0;
       }
       this.lastEnemyDist = minDistance;

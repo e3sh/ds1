@@ -183,4 +183,43 @@ console.log('Testing 5: spawnHomePos is preserved across map serialization and d
   assert.strictEqual(map2.spawnHomePos.y, 7);
 }
 
+// Test 6: 複数HOMEをそれぞれ別に移動させたときの下地タイル個別復元
+console.log('Testing 6: Multiple HOMEs preserve and restore their underlying base tiles independently...');
+{
+  const map = new WorldMap();
+  // 2軒目のHOMEを (20, 20) に配置
+  map.setBaseTile({ x: 20, y: 20 }, 'HOME');
+  map.setObject({ x: 20, y: 20 }, 'NONE');
+  map.setItem({ x: 20, y: 20 }, 'NONE');
+
+  // それぞれの移動先を WARP と EMPTY に設定
+  map.setBaseTile({ x: 7, y: 6 }, 'WARP');
+  map.setObject({ x: 7, y: 6 }, 'NONE');
+  map.setItem({ x: 7, y: 6 }, 'NONE');
+
+  map.setBaseTile({ x: 20, y: 19 }, 'EMPTY');
+  map.setObject({ x: 20, y: 19 }, 'NONE');
+  map.setItem({ x: 20, y: 19 }, 'NONE');
+
+  // 1軒目を WARP 上へ移動し、2軒目を EMPTY 上へ移動
+  assert.strictEqual(map.moveTile({ x: 7, y: 7 }, { x: 7, y: 6 }), true);
+  assert.strictEqual(map.moveTile({ x: 20, y: 20 }, { x: 20, y: 19 }), true);
+
+  // さらに両方とも次のマスへ移動
+  map.setBaseTile({ x: 7, y: 5 }, 'EMPTY');
+  map.setObject({ x: 7, y: 5 }, 'NONE');
+  map.setItem({ x: 7, y: 5 }, 'NONE');
+  map.setBaseTile({ x: 20, y: 18 }, 'EMPTY');
+  map.setObject({ x: 20, y: 18 }, 'NONE');
+  map.setItem({ x: 20, y: 18 }, 'NONE');
+
+  assert.strictEqual(map.moveTile({ x: 7, y: 6 }, { x: 7, y: 5 }), true);
+  assert.strictEqual(map.moveTile({ x: 20, y: 19 }, { x: 20, y: 18 }), true);
+
+  // 1軒目の下地 WARP と 2軒目の下地 EMPTY が個別に復元されること
+  assert.strictEqual(map.getBaseTile({ x: 7, y: 6 }), 'WARP', '1軒目が通過したWARPタイルが復元されること');
+  assert.strictEqual(map.getBaseTile({ x: 20, y: 19 }), 'EMPTY', '2軒目が通過したEMPTYタイルが復元されること');
+  assert.strictEqual(map.getAllHomePositions().length, 2, '2軒のHOMEが維持されていること');
+}
+
 console.log('--- ✓ All Home Relocation & Dual-Home Respawn Tests Passed Successfully! ---');

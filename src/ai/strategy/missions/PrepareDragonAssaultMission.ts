@@ -128,8 +128,11 @@ export class PrepareDragonAssaultMission implements IStrategicMission {
       };
     }
 
-    // 3. コインまとめ回収 vs 我が家で一括換金の判定
-    const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
+    // 3. コインまとめ回収 vs 我が家で一括換金の判定 (コインでEXPが増えるモードのみ)
+    const coinGrantsExp = snapshot.params.coinGrantsExp !== false;
+    const estimatedGainedExp = coinGrantsExp
+      ? (player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold))
+      : 0;
     const afterExp = player.experience + estimatedGainedExp;
     const reachesMilestone =
       (player.experience < 4000 && afterExp >= 4000) ||
@@ -146,7 +149,7 @@ export class PrepareDragonAssaultMission implements IStrategicMission {
       this.turnsElapsed < 65 &&
       (distNearestCoin <= 10 || (player.experience < 12000 && this.turnsElapsed < 40));
 
-    if (player.gold > 0 && !canKeepSweepingCoins) {
+    if (coinGrantsExp && player.gold > 0 && !canKeepSweepingCoins) {
       this.subMode = 'CASHING_GOLD';
       return {
         type: 'NAVIGATE_TO_POSITION',

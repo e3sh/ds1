@@ -36,6 +36,7 @@ export interface ProceduralMapOptions {
   dragonPrefab?: DragonPrefabType;
   homePos?: Position;
   homePrefab?: HomePrefabType;
+  extraHomeCount?: number;
   tuningParams?: DungeonTuningParams;
 }
 

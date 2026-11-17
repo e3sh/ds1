@@ -1,4 +1,4 @@
-import { Position } from '../../models/Types.js';
+import { Position, ResolvedDungeonTuningParams } from '../../models/Types.js';
 import { WorldMap } from '../../models/WorldMap.js';
 import { Player } from '../../models/Player.js';
 import { SeedRandom } from '../../core/SeedRandom.js';
@@ -25,6 +25,7 @@ import {
   GRAVE_16x16_NECROPOLIS,
   TREASURE_16x16_GRAND_VAULT,
   TREASURE_12x12_COMPLEX,
+  TREASURE_12x12_TREASURY,
   MAZE_12x12_SPIRAL,
 } from './blocks/index.js';
 
@@ -73,6 +74,8 @@ export class HierarchicalThemeBlockGenerator {
     // 1. マップのクリア
     this.clearMap(map);
 
+    const isClassic = tuningParams.progressionConfig.ruleMode === 'CLASSIC';
+
     // 2. テーマブロックの選定
     const {
       dragonTemplate,
@@ -83,7 +86,7 @@ export class HierarchicalThemeBlockGenerator {
       subSlotSmallTemplates,
       subSlotMediumTemplates,
       maxInstancesPerBlock,
-    } = this.selectTemplatesForConfiguration(topology, options, rng);
+    } = this.selectTemplatesForConfiguration(topology, options, rng, isClassic);
 
     // 3. 16×16 マクロセル階層アロケーションの実行
     const allocator = new ThemeBlockAllocator(seed);
@@ -113,7 +116,10 @@ export class HierarchicalThemeBlockGenerator {
     this.activateBudgets(map, targetChests, targetGraves, placedBlocks, rng);
 
     // 8. 難易度別ブートストラップ導線保証（剣・鍵・指輪・十字架・壺・パワーストーン）
-    this.ensureBootstrapRequirements(map, difficulty, pacing, archetype, rng);
+    this.ensureBootstrapRequirements(map, difficulty, pacing, archetype, tuningParams, rng);
+
+    // 8.5. 複数HOME（家）の配置バリエーション（クラシック時、または一部シード）
+    this.placeAdditionalHomes(map, options, isClassic, rng);
 
     // 9. ワープゾーンネットワークの配置
     this.setupWarpNetwork(map, archetype, rng);
@@ -146,7 +152,8 @@ export class HierarchicalThemeBlockGenerator {
   private static selectTemplatesForConfiguration(
     topology: string,
     options: ProceduralMapOptions | undefined,
-    rng: SeedRandom
+    rng: SeedRandom,
+    isClassic: boolean = false
   ) {
     // 1. ドラゴンブロック選定
     let dragonTemplate: ThemeBlockTemplate;
@@ -169,19 +176,22 @@ export class HierarchicalThemeBlockGenerator {
       GRAVE_16x16_NECROPOLIS,
       TREASURE_16x16_GRAND_VAULT,
       TREASURE_12x12_COMPLEX,
+      TREASURE_12x12_TREASURY,
       MAZE_12x12_SPIRAL,
     ];
-    // トポロジーによる重み付け・優先順序付け
-    if (topology === 'SPIRAL_LABYRINTH') {
-      largePool = [MAZE_12x12_SPIRAL, TREASURE_12x12_COMPLEX, GRAVE_16x16_NECROPOLIS, TREASURE_16x16_GRAND_VAULT];
+    // トポロジー・ルールモードによる重み付け・優先順序付け
+    if (isClassic) {
+      largePool = [TREASURE_12x12_TREASURY, TREASURE_16x16_GRAND_VAULT, TREASURE_12x12_COMPLEX, GRAVE_16x16_NECROPOLIS, MAZE_12x12_SPIRAL];
+    } else if (topology === 'SPIRAL_LABYRINTH') {
+      largePool = [MAZE_12x12_SPIRAL, TREASURE_12x12_COMPLEX, TREASURE_12x12_TREASURY, GRAVE_16x16_NECROPOLIS, TREASURE_16x16_GRAND_VAULT];
     } else if (topology === 'STANDARD_ROOMS') {
-      largePool = [TREASURE_16x16_GRAND_VAULT, TREASURE_12x12_COMPLEX, GRAVE_16x16_NECROPOLIS, MAZE_12x12_SPIRAL];
+      largePool = [TREASURE_16x16_GRAND_VAULT, TREASURE_12x12_COMPLEX, TREASURE_12x12_TREASURY, GRAVE_16x16_NECROPOLIS, MAZE_12x12_SPIRAL];
     } else if (topology === 'FORTRESS_ARENA') {
-      largePool = [TREASURE_16x16_GRAND_VAULT, GRAVE_16x16_NECROPOLIS, TREASURE_12x12_COMPLEX, MAZE_12x12_SPIRAL];
+      largePool = [TREASURE_16x16_GRAND_VAULT, TREASURE_12x12_TREASURY, GRAVE_16x16_NECROPOLIS, TREASURE_12x12_COMPLEX, MAZE_12x12_SPIRAL];
     } else if (topology === 'NARROW_MAZE') {
       largePool = [MAZE_12x12_SPIRAL, TREASURE_12x12_COMPLEX, GRAVE_16x16_NECROPOLIS, TREASURE_16x16_GRAND_VAULT];
     }
-    const largeTemplates = rng.shuffle([...largePool]);
+    const largeTemplates = isClassic ? largePool : rng.shuffle([...largePool]);
 
     // トポロジーに応じた特定ブロックの配置上限（導線遮断・窒息の徹底防止および空間過多の防止）
     const maxInstancesPerBlock: Record<string, number> = {
@@ -209,6 +219,17 @@ export class HierarchicalThemeBlockGenerator {
         // 構造性のあるブロック（宝物庫・迷路・墓）を優先して部屋構造を形成
         if (b.category === 'TREASURE' || b.category === 'MAZE') weight = 3;
         else if (b.category === 'GRAVE') weight = 2;
+        if (isClassic) {
+          if (
+            b.id === 'treasure_8x8_solid_vault' ||
+            b.id === 'treasure_8x8_double_chamber' ||
+            b.id === 'cluster_8x8_stone_cavern' ||
+            b.id === 'cluster_8x8_grand_depot' ||
+            b.id === 'cluster_8x8_sanctuary_depot'
+          ) {
+            weight = 5;
+          }
+        }
         if (topology === 'PILLAR_GRID' && b.id === 'open_8x8_pillars') weight = 3;
         if (topology === 'SPIRAL_LABYRINTH' && b.id === 'maze_8x8_winding') weight = 4;
         return { ...b, weight };
@@ -225,6 +246,17 @@ export class HierarchicalThemeBlockGenerator {
         else if (b.category === 'TREASURE') weight = 3;
         else if (b.category === 'GRAVE') weight = 2;
         else if (b.id.startsWith('enclosed_')) weight = 3;
+        if (isClassic) {
+          if (
+            b.id === 'treasure_4x4_dense_pack' ||
+            b.id === 'cluster_4x4_stone_vein' ||
+            b.id === 'cluster_4x4_armory' ||
+            b.id === 'cluster_4x4_gold_pile' ||
+            b.id === 'cluster_4x4_potion_cellar'
+          ) {
+            weight = 5;
+          }
+        }
         if (topology === 'NARROW_MAZE' && b.id.startsWith('maze_')) weight = 5;
         return { ...b, weight };
       });
@@ -528,14 +560,20 @@ export class HierarchicalThemeBlockGenerator {
     difficulty: string,
     pacing: string,
     archetype: string,
+    tuningParams: ResolvedDungeonTuningParams,
     rng: SeedRandom
   ): void {
+    const isClassic = tuningParams.progressionConfig.ruleMode === 'CLASSIC';
+
     // 既存の重要アイテム位置をクリアして、難易度ごとの厳密な距離設計に再配置
+    // （CLASSIC時は遠方の装備品密集部屋のアイテムを温存するため、HOME周辺のみクリア）
     for (let y = 0; y < map.height; y++) {
       for (let x = 0; x < map.width; x++) {
         const item = map.getItem({ x, y });
         if (item === 'SWORD' || item === 'KEY' || item === 'RING') {
-          map.setItem({ x, y }, 'NONE');
+          if (!isClassic || map.getTorusDistance({ x, y }, map.homePos).chebyshev <= 6) {
+            map.setItem({ x, y }, 'NONE');
+          }
         }
       }
     }
@@ -652,10 +690,14 @@ export class HierarchicalThemeBlockGenerator {
       placeItemAtDistance('SWORD', 18, 30);
     }
 
-    // 十字架・壺・パワーストーンのカウントと不足分補充
+    // 十字架・壺・パワーストーン・装備品のカウントと不足分補充
     let crosses = 0;
     let potions = 0;
     let powerStones = 0;
+    let rings = 0;
+    let keys = 0;
+    let swords = 0;
+    let currentChests = 0;
 
     for (let y = 0; y < map.height; y++) {
       for (let x = 0; x < map.width; x++) {
@@ -663,13 +705,32 @@ export class HierarchicalThemeBlockGenerator {
         if (item === 'CROSS') crosses++;
         if (item === 'POTION') potions++;
         if (item === 'POWER_STONE') powerStones++;
+        if (item === 'RING') rings++;
+        if (item === 'KEY') keys++;
+        if (item === 'SWORD') swords++;
+        if (map.getObject({ x, y }) === 'CHEST') currentChests++;
       }
     }
 
-    const minCrosses = archetype === 'SANCTUARY' ? 4 : 1;
+    const minCrosses = archetype === 'SANCTUARY' ? 4 : (isClassic ? 3 : 1);
     while (crosses < minCrosses) {
-      placeItemAtDistance('CROSS', 2, 20);
+      placeItemAtDistance('CROSS', 2, 24);
       crosses++;
+    }
+
+    if (isClassic) {
+      while (rings < 2) {
+        placeItemAtDistance('RING', 8, 28);
+        rings++;
+      }
+      while (keys < 3) {
+        placeItemAtDistance('KEY', 8, 28);
+        keys++;
+      }
+      while (swords < 2) {
+        placeItemAtDistance('SWORD', 12, 30);
+        swords++;
+      }
     }
 
     while (potions < 2) {
@@ -677,9 +738,130 @@ export class HierarchicalThemeBlockGenerator {
       potions++;
     }
 
-    while (powerStones < 8) {
-      placeItemAtDistance('POWER_STONE', 3, 25);
-      powerStones++;
+    let minFloorPowerStones = 8;
+    if (isClassic) {
+      const requiredDefRatio = tuningParams.progressionConfig.dragonDefRatio ?? 1.0;
+      const requiredStr = Math.floor(450000 * requiredDefRatio);
+      const flatBonus = Math.max(1, tuningParams.progressionConfig.powerStoneFlatBonus ?? 2500);
+      const neededTotalStones = Math.ceil(Math.max(0, requiredStr - 10) / flatBonus);
+      minFloorPowerStones = Math.max(155, neededTotalStones - Math.floor(currentChests / 8) + 5);
+    }
+
+    if (powerStones < minFloorPowerStones) {
+      if (!isClassic) {
+        while (powerStones < minFloorPowerStones) {
+          placeItemAtDistance('POWER_STONE', 3, 25);
+          powerStones++;
+        }
+      } else {
+        // クラシック時: 既存鉱脈の周辺や壁際を中心に群生パターンで補充
+        const needed = minFloorPowerStones - powerStones;
+        const freeCandidates: Position[] = [];
+        for (let y = 0; y < map.height; y++) {
+          for (let x = 0; x < map.width; x++) {
+            const pos = { x, y };
+            if (!this.isCompletelyFree(map, x, y)) continue;
+            if (map.getTorusDistance(pos, map.dragonCenter).chebyshev <= 4) continue;
+            if (map.getTorusDistance(pos, map.homePos).chebyshev <= 2) continue;
+            freeCandidates.push(pos);
+          }
+        }
+        const shuffled = rng.shuffle(freeCandidates);
+        let placed = 0;
+        // まず小クラスタ（2〜4個の塊）として配置し、残りを単発配置
+        for (let i = 0; i < shuffled.length && placed < needed; i++) {
+          const seedPos = shuffled[i];
+          if (!this.isCompletelyFree(map, seedPos.x, seedPos.y)) continue;
+          map.setItem(seedPos, 'POWER_STONE');
+          placed++;
+
+          // 隣接マスにも群生させる（50%確率で最大3個まで隣接配置）
+          if (placed < needed && rng.chance(0.75)) {
+            const dirs = rng.shuffle([
+              { dx: 1, dy: 0 },
+              { dx: -1, dy: 0 },
+              { dx: 0, dy: 1 },
+              { dx: 0, dy: -1 },
+            ]);
+            for (const d of dirs) {
+              if (placed >= needed) break;
+              const np = map.wrapPosition({ x: seedPos.x + d.dx, y: seedPos.y + d.dy });
+              if (
+                this.isCompletelyFree(map, np.x, np.y) &&
+                map.getTorusDistance(np, map.dragonCenter).chebyshev > 4 &&
+                map.getTorusDistance(np, map.homePos).chebyshev > 2
+              ) {
+                map.setItem(np, 'POWER_STONE');
+                placed++;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * 複数HOME（家）の配置バリエーション
+   * メインのHOMEとは離れたエリアにサブHOME（1〜2軒）を追加配置する。
+   * map.homePos / initialHomePos / spawnHomePos はメインのまま維持する。
+   */
+  private static placeAdditionalHomes(
+    map: WorldMap,
+    options: ProceduralMapOptions | undefined,
+    isClassic: boolean,
+    rng: SeedRandom
+  ): void {
+    const extraCount =
+      options?.extraHomeCount !== undefined
+        ? options.extraHomeCount
+        : isClassic
+          ? rng.chance(0.5) ? 2 : 1
+          : rng.chance(0.25) ? 1 : 0;
+
+    if (extraCount <= 0) return;
+
+    const placedHomes: Position[] = [{ ...map.homePos }];
+    const candidates: Position[] = [];
+
+    for (let y = 0; y < map.height; y++) {
+      for (let x = 0; x < map.width; x++) {
+        const pos = { x, y };
+        if (!this.isCompletelyFree(map, x, y)) continue;
+        if (map.getTorusDistance(pos, map.dragonCenter).chebyshev <= 6) continue;
+
+        // 周囲4マスのうち少なくとも2マスが通行可能（孤立・封鎖防止）
+        let passableAdj = 0;
+        const adj = [
+          { x: x + 1, y },
+          { x: x - 1, y },
+          { x, y: y + 1 },
+          { x, y: y - 1 },
+        ];
+        for (const a of adj) {
+          const wp = map.wrapPosition(a);
+          if (this.isCompletelyFree(map, wp.x, wp.y)) {
+            passableAdj++;
+          }
+        }
+        if (passableAdj >= 2) {
+          candidates.push(pos);
+        }
+      }
+    }
+
+    const shuffled = rng.shuffle(candidates);
+    let added = 0;
+    for (const cand of shuffled) {
+      if (added >= extraCount) break;
+      const farEnough = placedHomes.every(h => map.getTorusDistance(cand, h).manhattan >= 18);
+      if (!farEnough) continue;
+
+      map.setBaseTile(cand, 'HOME');
+      map.setObject(cand, 'NONE');
+      map.setItem(cand, 'NONE');
+      placedHomes.push(cand);
+      added++;
     }
   }
 

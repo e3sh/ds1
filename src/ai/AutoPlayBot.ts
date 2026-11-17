@@ -213,11 +213,9 @@ export class AutoPlayBot {
     this.params = this.context.resolveParameters(this.currentPhase, player, dragon, enemies, {
       totalTurns: this.totalTurns,
       strategyTuning: this.opts.strategyTuning,
+      parameterOverrides: this.opts.parameterOverrides,
       enableGiveUp: this.opts.enableGiveUp,
     });
-    if (this.opts.strategyTuning?.commander) {
-      this.params.commander = this.opts.strategyTuning.commander;
-    }
     MagicSystem.updatePassiveSkills(player);
 
     // BREAK 解禁検知

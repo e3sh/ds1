@@ -102,8 +102,11 @@ export class ClearTreasureZoneMission implements IStrategicMission {
       return 'ABORTED';
     }
 
-    // 途中換金判定: 手ぶらで金貨を持ち、換金により BREAK(4000)/斜め(12000) マイルストーン達成・7G以上・またはSTR達成後の防御EXP不足解消時は換金へ移行
-    const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
+    // 途中換金判定: コインでEXPが増えるモード時のみ、BREAK/斜め/防御EXP解消のために帰還
+    const coinGrantsExp = snapshot.params.coinGrantsExp !== false;
+    const estimatedGainedExp = coinGrantsExp
+      ? (player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold))
+      : 0;
     const afterExp = player.experience + estimatedGainedExp;
     const reachesMilestoneFromGold =
       (player.experience < 4000 && afterExp >= 4000) ||
@@ -111,6 +114,7 @@ export class ClearTreasureZoneMission implements IStrategicMission {
     const canDamageDragon = player.hasSword && (player.strength >= snapshot.params.targetStr || snapshot.milestones.isStrCapped || snapshot.milestones.hasTargetStr);
     const hasEnoughDefense = player.experience >= Math.max(25000, snapshot.params.targetDefenseExp);
     if (
+      coinGrantsExp &&
       player.holdItem === 'NONE' &&
       player.gold > 0 &&
       (reachesMilestoneFromGold || player.gold >= 7 || (canDamageDragon && !hasEnoughDefense && player.gold >= 4))

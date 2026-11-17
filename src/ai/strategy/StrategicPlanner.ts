@@ -10,6 +10,11 @@ import { DirectiveArbiter } from './arbitration/DirectiveArbiter.js';
 import { MissionSelector } from './evaluators/MissionSelector.js';
 import { TacticalExecutionResult, TacticalExecutionStatus } from '../tactics/TacticalExecutor.js';
 import { Position } from '../../models/Types.js';
+import {
+  DEFAULT_HUNTING_PARAMS,
+  DEFAULT_MISSION_POLICY_PARAMS,
+  DEFAULT_READINESS_PARAMS,
+} from '../TacticalContext.js';
 import type {
   CommanderOrders,
   MissionHistoryEntry,
@@ -86,10 +91,12 @@ export class StrategicPlanner {
         this.consecutiveBlockedTurns = 1;
       }
 
-      // 同一ターゲットへの移動が 2〜3 ターン連続で PATH_BLOCKED となった場合
-      if (this.consecutiveBlockedTurns >= 2) {
+      // 同一ターゲットへの移動が連続で PATH_BLOCKED となった場合
+      const mp = snapshot.params.missionPolicy ?? DEFAULT_MISSION_POLICY_PARAMS;
+      const h = snapshot.params.hunting ?? DEFAULT_HUNTING_PARAMS;
+      if (this.consecutiveBlockedTurns >= mp.consecutiveBlockedAbortTurns) {
         // エピソード記憶（認知層）にブラックリスト登録
-        snapshot.memory.markTargetUnreachable(target, 30, snapshot.totalTurns);
+        snapshot.memory.markTargetUnreachable(target, h.huntUnreachableMarkTurns, snapshot.totalTurns);
 
         // 現行ミッションを即座に ABORTED として別作戦・別ターゲットへ強制転進
         if (this.activeMission) {
@@ -258,6 +265,10 @@ export class StrategicPlanner {
       canDamageDragon ||
       (player.hasSword && allChestsAndStonesExhausted);
 
+    const crownReserveMagic = Math.min(
+      snapshot.params.maxTargetMagic,
+      (snapshot.params.readiness ?? DEFAULT_READINESS_PARAMS).crownReserveMagic
+    );
     if (
       canTransitionToPrep &&
       this.activeMission &&
@@ -270,6 +281,7 @@ export class StrategicPlanner {
       this.activeMission.id !== 'EARLY_BREAK_UNLOCK' &&
       this.activeMission.id !== 'EXPLORE_FRONTIER' &&
       this.activeMission.id !== 'STRATEGIC_BREAK' &&
+      !(this.activeMission.id === 'CLEAR_TREASURE_ZONE' && player.magic < crownReserveMagic && !readyForDragon) &&
       player.holdItem !== 'POWER_STONE' &&
       !(player.holdItem === 'KEY' && MissionSelector.hasNearbyChest(player.pos, snapshot.map, 8, snapshot))
     ) {
@@ -305,8 +317,9 @@ export class StrategicPlanner {
         this.activeMission.startTurn = snapshot.totalTurns;
       }
       if (this.activeMission.id === 'SEAL_GRAVE') {
+        const mp = snapshot.params.missionPolicy ?? DEFAULT_MISSION_POLICY_PARAMS;
         this.totalGraveSealTurns++;
-        if (this.totalGraveSealTurns >= 60) {
+        if (this.totalGraveSealTurns >= mp.graveSealMaxTotalTurns) {
           this.graveSealDone = true;
           this.activeMission.status = 'ABORTED';
           this.activeMission.completionReason = 'NO_PROGRESS_TIMEOUT';
@@ -374,25 +387,26 @@ export class StrategicPlanner {
       substantiveGains,
     });
 
+    const mp = snapshot.params.missionPolicy ?? DEFAULT_MISSION_POLICY_PARAMS;
     if (reason === 'NO_PROGRESS_TIMEOUT' || reason === 'NO_PROGRESS_BLOCKED') {
       if (mission.id === 'PREPARE_DRAGON_ASSAULT') {
         this.defensePrepTurns = Math.max(this.defensePrepTurns, 40);
-        this.missionCooldowns.set('PREPARE_DRAGON_ASSAULT', totalTurns + 30);
+        this.missionCooldowns.set('PREPARE_DRAGON_ASSAULT', totalTurns + mp.cooldownPrepareDragonAssault);
       } else if (mission.id === 'RELOCATE_HOME') {
         this.relocateDone = true;
       } else if (mission.id === 'CLEAR_TREASURE_ZONE') {
-        this.missionCooldowns.set('CLEAR_TREASURE_ZONE', totalTurns + 20);
+        this.missionCooldowns.set('CLEAR_TREASURE_ZONE', totalTurns + mp.cooldownClearTreasureZone);
       } else if (mission.id === 'SLAY_DRAGON') {
-        this.missionCooldowns.set('SLAY_DRAGON', totalTurns + 15);
+        this.missionCooldowns.set('SLAY_DRAGON', totalTurns + mp.cooldownSlayDragon);
       } else if (mission.id === 'EARLY_BREAK_UNLOCK') {
-        this.missionCooldowns.set('EARLY_BREAK_UNLOCK', totalTurns + 50);
+        this.missionCooldowns.set('EARLY_BREAK_UNLOCK', totalTurns + mp.cooldownEarlyBreakNoProgress);
       } else if (mission.id === 'HARVEST_POWER_STONE') {
-        this.missionCooldowns.set('HARVEST_POWER_STONE', totalTurns + 20);
+        this.missionCooldowns.set('HARVEST_POWER_STONE', totalTurns + mp.cooldownHarvestPowerStone);
       } else if (mission.id === 'SEAL_GRAVE') {
-        this.missionCooldowns.set('SEAL_GRAVE', totalTurns + 80);
+        this.missionCooldowns.set('SEAL_GRAVE', totalTurns + mp.cooldownSealGrave);
       }
     } else if (reason === 'PARTIAL_PROGRESS' && mission.id === 'EARLY_BREAK_UNLOCK') {
-      this.missionCooldowns.set('EARLY_BREAK_UNLOCK', totalTurns + 30);
+      this.missionCooldowns.set('EARLY_BREAK_UNLOCK', totalTurns + mp.cooldownEarlyBreakPartial);
     }
   }
 

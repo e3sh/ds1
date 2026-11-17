@@ -20,6 +20,16 @@ export type BotAction =
 export type GraveSealPolicy = 'AUTO' | 'NONE' | 'NEAR_HOME' | 'ALL';
 export type GraveSealTiming = 'EARLY' | 'PRE_DRAGON' | 'IMMEDIATE';
 
+export type CommanderEscalationLevel =
+  | 'NOMINAL'
+  | 'RETARGET'
+  | 'MISSION_TABOO'
+  | 'FRONTIER_EXPEDITION'
+  | 'BREACH'
+  | 'RELOCATE'
+  | 'PHASE_WAIVER'
+  | 'TERMINAL';
+
 export interface CommanderConfig {
   windowSize: number;
   defaultGraceTurns: number;
@@ -32,6 +42,57 @@ export interface CommanderConfig {
   recoveryNewTiles16: number;
   retargetTabooTurns: number;
   missionTabooTurns: number;
+  confinedConfirmTurns: number;
+  probationTurns: Record<CommanderEscalationLevel, number>;
+}
+
+export interface ReadinessParams {
+  crownReserveMagic: number;
+  prepBypassTurnsNoChest: number;
+  prepBypassTurnsWithChest: number;
+  prepDefenseExpCutoffTurns: number;
+  prepPotionSweepCutoffTurns: number;
+  prepPotionSweepExtendedTurns: number;
+  prepTreasureMpFarmCutoffTurns: number;
+  prepRelocationCutoffTurns: number;
+  prepHpRatioNormal: number;
+  prepHpMinNormal: number;
+  readyHpRatioNormal: number;
+  readyHpMinNormal: number;
+  readyHpRatioWaived: number;
+  readyHpMinWaived: number;
+  readyDefenseFallbackPrepTurns: number;
+  readyDefenseFallbackTotalTurns: number;
+  stallDefenseRelaxTotalTurns: number;
+}
+
+export interface HuntingParams {
+  huntDistNoDiag: number;
+  huntDistDiag: number;
+  huntDistPostStr: number;
+  huntMaxTurnsToKill: number;
+  huntMaxDamageRatio: number;
+  huntMissionMaxTurns: number;
+  huntNoExpAbortTurns: number;
+  huntNoGapCloseAbortTurns: number;
+  huntTrackMaxTurns: number;
+  huntUnreachableMarkTurns: number;
+}
+
+export interface MissionPolicyParams {
+  coinCashInGoldThreshold: number;
+  coinCashInChainGoldThreshold: number;
+  coinCashInPrepGoldThreshold: number;
+  coinCashInLateGoldThreshold: number;
+  graveSealMaxTotalTurns: number;
+  consecutiveBlockedAbortTurns: number;
+  cooldownPrepareDragonAssault: number;
+  cooldownClearTreasureZone: number;
+  cooldownSlayDragon: number;
+  cooldownEarlyBreakNoProgress: number;
+  cooldownEarlyBreakPartial: number;
+  cooldownHarvestPowerStone: number;
+  cooldownSealGrave: number;
 }
 
 export interface BotStrategyTuning {
@@ -39,12 +100,18 @@ export interface BotStrategyTuning {
   graveSealTiming?: GraveSealTiming;
   nearHomeRadius?: number;
   maxTargetMagic?: number;
+  crownReserveMagic?: number;
   graveSealEarlyStr?: number;
   enableHomeRelocation?: boolean;
   homeRelocateTargetDistMin?: number;
   homeRelocateTargetDistMax?: number;
   targetDefenseExp?: number;
-  commander?: Partial<CommanderConfig>;
+  readiness?: Partial<ReadinessParams>;
+  hunting?: Partial<HuntingParams>;
+  missionPolicy?: Partial<MissionPolicyParams>;
+  commander?: Partial<Omit<CommanderConfig, 'probationTurns'>> & {
+    probationTurns?: Partial<Record<CommanderEscalationLevel, number>>;
+  };
 }
 
 /** マップ幾何サイズから導出される正規化距離スケール */
@@ -91,7 +158,12 @@ export interface DynamicBotParameters {
   homeRelocateDistMax: number;
   graveSealPolicy: GraveSealPolicy;
   enableGiveUp?: boolean;
-  commander?: Partial<CommanderConfig>;
+  /** コイン換金時に経験値(EXP)が加算されるか (false = CLASSIC / LINEAR) */
+  coinGrantsExp?: boolean;
+  readiness?: ReadinessParams;
+  hunting?: HuntingParams;
+  missionPolicy?: MissionPolicyParams;
+  commander?: CommanderConfig;
 }
 
 export interface AutoPlayBotOptions {

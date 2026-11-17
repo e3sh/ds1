@@ -64,15 +64,15 @@ export class TuningPresetResolver {
         expDefenseMitigationRatio: 1.0,
         powerStoneGrowthRate: 0,
         powerStoneFlatBonus: 2500,
-        dragonDefRatio: 0.025,
-        enemyAtkRatio: 0.025,
+        dragonDefRatio: 1.0,
+        enemyAtkRatio: 1.0,
       },
       resourceCapConfig: {
-        cross: { initial: 1, maxCap: 99 },
-        ring: { initial: 2, maxCap: 99 },
-        key: { initial: 2, maxCap: 99 },
-        sword: { initial: 1, maxCap: 99 },
-        chestCount: 100,
+        cross: { initial: 2, maxCap: 12 },
+        ring: { initial: 2, maxCap: 10 },
+        key: { initial: 3, maxCap: 12 },
+        sword: { initial: 2, maxCap: 6 },
+        chestCount: 260,
         graveCount: 20,
         ghostCount: 2,
         ghostMoveIntervalMs: 100,
@@ -310,7 +310,7 @@ export class TuningPresetResolver {
       if (overrides.progressionConfig) {
         if (overrides.progressionConfig.ruleMode) {
           resolved.progressionConfig.ruleMode = overrides.progressionConfig.ruleMode;
-          // CLASSIC ルール指定時の自動整合性調整
+          // CLASSIC ルール指定時の自動整合性調整（敵・ドラゴンの弱体化は行わず、固定加算で攻略可能な資源量を確保）
           if (overrides.progressionConfig.ruleMode === 'CLASSIC') {
             if (overrides.progressionConfig.coinScalingMode === undefined) {
               resolved.progressionConfig.coinScalingMode = 'LINEAR';
@@ -321,11 +321,41 @@ export class TuningPresetResolver {
             if (overrides.progressionConfig.powerStoneFlatBonus === undefined) {
               resolved.progressionConfig.powerStoneFlatBonus = 2500;
             }
-            if (overrides.progressionConfig.dragonDefRatio === undefined) {
-              resolved.progressionConfig.dragonDefRatio = 0.025;
+            // ペーシングにかかわらず固定加算(+2,500)で等倍ドラゴンを突破できる宝箱数を確保
+            if (overrides.resourceCapConfig?.chestCount === undefined) {
+              const baseChests = resolved.resourceCapConfig.chestCount;
+              if (baseChests <= 70) {
+                resolved.resourceCapConfig.chestCount = 240; // BLITZ相当
+              } else if (baseChests <= 110) {
+                resolved.resourceCapConfig.chestCount = 260; // STANDARD相当
+              } else {
+                resolved.resourceCapConfig.chestCount = Math.max(300, baseChests); // MARATHON相当
+              }
             }
-            if (overrides.progressionConfig.enemyAtkRatio === undefined) {
-              resolved.progressionConfig.enemyAtkRatio = 0.025;
+            // クラシック時は装備品の上限を緩和して複数配置可能にする
+            if (overrides.resourceCapConfig?.cross === undefined) {
+              resolved.resourceCapConfig.cross = {
+                initial: Math.max(resolved.resourceCapConfig.cross.initial, 2),
+                maxCap: Math.max(resolved.resourceCapConfig.cross.maxCap, 12),
+              };
+            }
+            if (overrides.resourceCapConfig?.ring === undefined) {
+              resolved.resourceCapConfig.ring = {
+                initial: Math.max(resolved.resourceCapConfig.ring.initial, 2),
+                maxCap: Math.max(resolved.resourceCapConfig.ring.maxCap, 10),
+              };
+            }
+            if (overrides.resourceCapConfig?.key === undefined) {
+              resolved.resourceCapConfig.key = {
+                initial: Math.max(resolved.resourceCapConfig.key.initial, 3),
+                maxCap: Math.max(resolved.resourceCapConfig.key.maxCap, 12),
+              };
+            }
+            if (overrides.resourceCapConfig?.sword === undefined) {
+              resolved.resourceCapConfig.sword = {
+                initial: Math.max(resolved.resourceCapConfig.sword.initial, 2),
+                maxCap: Math.max(resolved.resourceCapConfig.sword.maxCap, 6),
+              };
             }
           }
         }

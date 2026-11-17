@@ -12,7 +12,8 @@ export interface WorldMapSaveData {
   initialHomePos: Position;
   spawnHomePos?: Position;
   dragonCenter?: Position;
-  underHomeBaseTile: TileType;
+  underHomeBaseTile?: TileType;
+  underHomeBaseTiles?: [string, TileType][];
   warpPairs?: [string, Position][];
 }
 
@@ -30,7 +31,7 @@ export class WorldMap {
   public spawnHomePos: Position;
   public dragonCenter: Position;
   public tacticalMetadata?: MapTacticalMetadata;
-  private underHomeBaseTile: TileType = 'EMPTY';
+  private underHomeBaseTiles: Map<string, TileType> = new Map();
   private warpPairs: Map<string, Position> = new Map();
 
   constructor(width: number = WORLD_MAP_WIDTH, height: number = WORLD_MAP_HEIGHT) {
@@ -747,10 +748,14 @@ export class WorldMap {
     const f = this.wrapPosition(from);
     const t = this.wrapPosition(to);
 
-    // 家の移動
+    // 家の移動（複数HOME対応: 座標キーごとに下地タイルを個別管理）
     if (this.baseTiles[f.y][f.x] === 'HOME') {
-      this.baseTiles[f.y][f.x] = this.underHomeBaseTile;
-      this.underHomeBaseTile = this.baseTiles[t.y][t.x];
+      const fromKey = `${f.x},${f.y}`;
+      const toKey = `${t.x},${t.y}`;
+      const restoredTile = this.underHomeBaseTiles.get(fromKey) ?? 'EMPTY';
+      this.underHomeBaseTiles.delete(fromKey);
+      this.baseTiles[f.y][f.x] = restoredTile;
+      this.underHomeBaseTiles.set(toKey, this.baseTiles[t.y][t.x]);
       this.baseTiles[t.y][t.x] = 'HOME';
       if (f.x === this.homePos.x && f.y === this.homePos.y) {
         this.homePos = { ...t };
@@ -902,6 +907,7 @@ export class WorldMap {
     }
 
     // 下地を HOME に設定
+    this.underHomeBaseTiles.delete(`${p.x},${p.y}`);
     this.baseTiles[p.y][p.x] = 'HOME';
   }
 
@@ -926,7 +932,7 @@ export class WorldMap {
       initialHomePos: { ...this.initialHomePos },
       spawnHomePos: { ...this.spawnHomePos },
       dragonCenter: { ...this.dragonCenter },
-      underHomeBaseTile: this.underHomeBaseTile,
+      underHomeBaseTiles: Array.from(this.underHomeBaseTiles.entries()),
       warpPairs: Array.from(this.warpPairs.entries()).map(([k, v]) => [k, { ...v }]),
     };
   }
@@ -936,7 +942,14 @@ export class WorldMap {
     this.initialHomePos = { ...data.initialHomePos };
     this.spawnHomePos = data.spawnHomePos ? { ...data.spawnHomePos } : { ...this.initialHomePos };
     this.dragonCenter = data.dragonCenter ? { ...data.dragonCenter } : { x: 32, y: 32 };
-    this.underHomeBaseTile = data.underHomeBaseTile ?? 'EMPTY';
+    this.underHomeBaseTiles = new Map();
+    if (data.underHomeBaseTiles) {
+      for (const [k, v] of data.underHomeBaseTiles) {
+        this.underHomeBaseTiles.set(k, v);
+      }
+    } else if (data.underHomeBaseTile && data.underHomeBaseTile !== 'EMPTY') {
+      this.underHomeBaseTiles.set(`${this.homePos.x},${this.homePos.y}`, data.underHomeBaseTile);
+    }
     this.baseTiles = data.baseTiles.map(row => [...row]);
     this.objectTiles = data.objectTiles.map(row => [...row]);
     this.itemTiles = data.itemTiles.map(row => [...row]);

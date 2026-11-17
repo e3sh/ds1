@@ -27,17 +27,6 @@ const ESCALATION_ORDER: readonly EscalationLevel[] = [
   'TERMINAL',
 ];
 
-const PROBATION_TURNS: Record<EscalationLevel, number> = {
-  NOMINAL: 0,
-  RETARGET: 14,
-  MISSION_TABOO: 18,
-  FRONTIER_EXPEDITION: 24,
-  BREACH: 12,
-  RELOCATE: 14,
-  PHASE_WAIVER: 20,
-  TERMINAL: 0,
-};
-
 const WAIVER_PRIORITY: readonly PhaseWaiver[] = [
   'DEFENSE_EXP',
   'HP_FULL',
@@ -74,9 +63,14 @@ export class StrategicCommander {
     engine?: GameEngine
   ): CommanderOrders {
     const turn = snapshot.totalTurns;
+    const cmdOverride = snapshot.params.commander;
     const config: CommanderConfig = {
       ...DEFAULT_COMMANDER_CONFIG,
-      ...(snapshot.params as { commander?: Partial<CommanderConfig> }).commander,
+      ...cmdOverride,
+      probationTurns: {
+        ...DEFAULT_COMMANDER_CONFIG.probationTurns,
+        ...cmdOverride?.probationTurns,
+      },
     };
 
     this.purgeExpiredTaboos(turn);
@@ -100,7 +94,7 @@ export class StrategicCommander {
     }
     const isConfirmedConfined =
       audit.stallKind === 'CONFINED' &&
-      (snapshot.confinement.isStaticallySealed || this.confinedTurns >= 6);
+      (snapshot.confinement.isStaticallySealed || this.confinedTurns >= config.confinedConfirmTurns);
 
     if (isConfirmedConfined || isEarlySwordTrapped) {
       if (this.level !== 'TERMINAL') {
@@ -157,7 +151,7 @@ export class StrategicCommander {
     // 3. L1〜L6 滞在中: 観察期間満了による次段階へのエスカレーション
     if (this.level !== 'TERMINAL') {
       const curIdx = ESCALATION_ORDER.indexOf(this.level);
-      const probation = PROBATION_TURNS[this.level];
+      const probation = config.probationTurns[this.level] ?? DEFAULT_COMMANDER_CONFIG.probationTurns[this.level];
       const forcedDone = this.isForcedMissionNoLongerActive(report);
       if (turn - this.levelEnteredTurn >= probation || forcedDone) {
         this.escalateFromIndex(curIdx + 1, snapshot, report, audit, config, engine);

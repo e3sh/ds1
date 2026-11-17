@@ -16,8 +16,9 @@ import { StrategicBreakMission } from '../missions/StrategicBreakMission.js';
 import type { ForcedMissionOrder, PhaseWaiver } from '../command/CommanderTypes.js';
 import { Position } from '../../../models/Types.js';
 import { WorldMap } from '../../../models/WorldMap.js';
-import { ThreatEvaluator } from '../../../systems/ThreatEvaluator.js';
 import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
+import { ThreatPlayerStats } from '../../../systems/ThreatEvaluator.js';
+import { DEFAULT_MISSION_POLICY_PARAMS, DEFAULT_READINESS_PARAMS } from '../../TacticalContext.js';
 
 /**
  * MissionSelector (大局的ミッション選定モジュール)
@@ -87,6 +88,8 @@ export class MissionSelector {
     // ★重要: STR目標達成後は宝箱開錠ループに留めず、直ちに決戦準備評価へ直行！
     const canDamageDragon = player.hasSword && !needStr;
 
+    const mp = snapshot.params.missionPolicy ?? DEFAULT_MISSION_POLICY_PARAMS;
+
     if (!canDamageDragon) {
       // 序盤BREAK(EXP 4,000)解禁優先: 手ぶらで安全敵が近傍にいれば最速でBREAK習得へ
       if (
@@ -99,19 +102,20 @@ export class MissionSelector {
       }
 
       // ④-A. コイン換金帰還トリガー:
-      // STR未達時でも、手持ちコインが多く (gold >= 8)、または換金で BREAK (4000) / 斜め移動 (12000) 解禁可能な場合
-      if (player.gold > 0) {
+      // コインでEXPが増えるモード時のみ、マイルストーン到達または大量金貨で換金帰還する
+      const coinGrantsExp = snapshot.params.coinGrantsExp !== false;
+      if (coinGrantsExp && player.gold > 0) {
         const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
         const afterExp = player.experience + estimatedGainedExp;
         const reachesMilestone = (player.experience < 4000 && afterExp >= 4000) || (player.experience < 12000 && afterExp >= 12000);
-        const hasLargeGold = player.gold >= 8;
+        const hasLargeGold = player.gold >= mp.coinCashInGoldThreshold;
 
         if (reachesMilestone || hasLargeGold) {
-          // 鍵を持って周辺宝箱を開錠中（チェーン中）でなければ、またはコインが12枚以上溜まっていれば即換金
+          // 鍵を持って周辺宝箱を開錠中（チェーン中）でなければ、またはコインが閾値以上溜まっていれば即換金
           const isActivelyChaining =
             player.holdItem === 'KEY' &&
             (itemsAll.shouldContinueChestChain || itemsAll.hasChestWithin2To8);
-          if (!isActivelyChaining || player.gold >= 12) {
+          if (!isActivelyChaining || player.gold >= mp.coinCashInChainGoldThreshold) {
             return new CashInGoldMission(player.gold);
           }
         }
@@ -151,13 +155,17 @@ export class MissionSelector {
         }
       }
 
-      // ④-D. 到達可能な宝箱・鍵・石が無く、EXP < 4000 (BREAK未習得) の場合は床コイン回収・換金でBREAKを解禁
+      // ④-D. 到達可能な宝箱・鍵・石が無く、EXP < 4000 (BREAK未習得) の場合はEXP獲得手段へ
       if (player.experience < 4000) {
-        if (player.gold > 0) {
-          return new CashInGoldMission(player.gold);
-        }
-        if (!prepOnCooldown && itemsAll.nearestCoin !== null) {
-          return new PrepareDragonAssaultMission();
+        if (coinGrantsExp) {
+          if (player.gold > 0) {
+            return new CashInGoldMission(player.gold);
+          }
+          if (!prepOnCooldown && itemsAll.nearestCoin !== null) {
+            return new PrepareDragonAssaultMission();
+          }
+        } else if (!earlyBreakOnCooldown && this.hasSafeEnemyNearby(player, snapshot)) {
+          return new EarlyBreakUnlockMission(4000);
         }
       }
     }
@@ -199,8 +207,9 @@ export class MissionSelector {
     }
 
     // ⑥ コイン換金帰還判定:
-    // 手持ちコインを換金すれば重要マイルストーンに到達できる、またはコインが一定枚数以上
-    if (player.gold > 0) {
+    // コインでEXPが増えるモード時のみ、マイルストーン到達または一定枚数で帰還
+    const coinGrantsExp = snapshot.params.coinGrantsExp !== false;
+    if (coinGrantsExp && player.gold > 0) {
       const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
       const afterExp = player.experience + estimatedGainedExp;
       const hitsMilestone =
@@ -212,7 +221,7 @@ export class MissionSelector {
       // STR達成済みでEXP 12,000未満の時は、コインが1枚でもあれば早期決戦移行のため即座に換金
       const needExpForDragon = player.experience < 12000 && snapshot.milestones.hasTargetStr;
 
-      if (hitsMilestone || player.gold >= 4 || (needExpForDragon && player.gold >= 1)) {
+      if (hitsMilestone || player.gold >= mp.coinCashInLateGoldThreshold || (needExpForDragon && player.gold >= 1)) {
         return new CashInGoldMission(player.gold);
       }
     }
@@ -244,24 +253,13 @@ export class MissionSelector {
     return MapSituationEvaluator.get(snapshot).items.chests.length > 0;
   }
 
-  public static hasSafeEnemyNearby(player: any, snapshot: TacticalSnapshot, maxDistOverride?: number): boolean {
-    const map = snapshot.map;
-    const canDiag = snapshot.milestones?.canDiagonal || player.canDiagonal;
-    const maxDist = maxDistOverride ?? (!canDiag ? 8 : (snapshot.milestones.hasTargetStr ? 45 : 18));
-    return snapshot.livingEnemies.some(enemy => {
-      if (!enemy.isAlive || enemy.isPermanentlyFrozen) return false;
-      if (snapshot.memory.isTargetUnreachable(enemy.pos, snapshot.totalTurns)) return false;
-      const dist = map.getTorusDistance(player.pos, enemy.pos).manhattan;
-      if (dist > maxDist) return false;
-      const details = ThreatEvaluator.evaluateThreatDetails(player, enemy);
-      const isDefenseSafe = details.defenseThreat === 'NO_DAMAGE' || (
-        details.defenseThreat !== 'LETHAL' &&
-        !details.hasDrain &&
-        details.damageToPlayer < player.hp * 0.15
-      );
-      if (!isDefenseSafe) return false;
-      return details.attackThreat === 'ONE_SHOT' || details.turnsToKill <= 4;
-    });
+  public static hasSafeEnemyNearby(
+    player: ThreatPlayerStats & { pos: Position; canDiagonal?: boolean },
+    snapshot: TacticalSnapshot,
+    maxDistOverride?: number
+  ): boolean {
+    const targetExp = snapshot.milestones?.hasTargetStr ? snapshot.params.targetDefenseExp : 4000;
+    return EarlyBreakUnlockMission.findNearestSafeEnemy(player, snapshot, targetExp, maxDistOverride) !== null;
   }
 
   public static findNearestPowerStone(fromPos: Position, map: WorldMap, snapshot: TacticalSnapshot): Position | null {
@@ -339,17 +337,22 @@ export class MissionSelector {
     const waiveDefense = waivers?.has('DEFENSE_EXP') ?? false;
     const waiveHpFull = waivers?.has('HP_FULL') ?? false;
 
+    const r = snapshot.params.readiness ?? DEFAULT_READINESS_PARAMS;
     const hasDragonAssaultMagic = player.magic >= 3 || ((noReachablePotion || waiveMagic) && player.magic >= 1);
     const hasEnoughHp = waiveHpFull
-      ? (player.hp >= player.maxHp * 0.35 || player.hp >= 8000)
-      : (player.hp >= player.maxHp * 0.50 || player.hp >= 15000);
+      ? (player.hp >= player.maxHp * r.readyHpRatioWaived || player.hp >= r.readyHpMinWaived)
+      : (player.hp >= player.maxHp * r.readyHpRatioNormal || player.hp >= r.readyHpMinNormal);
 
     // 防御力（EXP）の適正判定: ドラゴン決戦で即死しないための十分なEXP
     const requiredDefenseExp = snapshot.params.targetDefenseExp ?? 12000;
     const hasEnoughDefense =
       waiveDefense ||
       player.experience >= requiredDefenseExp ||
-      (canDiagonal && (prepTurns >= 25 || snapshot.totalTurns >= 600 || (noReachablePotion && player.gold === 0)));
+      (canDiagonal && (
+        prepTurns >= r.readyDefenseFallbackPrepTurns ||
+        snapshot.totalTurns >= r.readyDefenseFallbackTotalTurns ||
+        (noReachablePotion && player.gold === 0)
+      ));
 
     return canDamageAllHeads && canDiagonal && canBreak && hasDragonAssaultMagic && hasEnoughHp && hasEnoughDefense;
   }
@@ -389,22 +392,33 @@ export class MissionSelector {
       return new SlayDragonMission();
     }
 
+    const r = snapshot.params.readiness ?? DEFAULT_READINESS_PARAMS;
+    const mp = snapshot.params.missionPolicy ?? DEFAULT_MISSION_POLICY_PARAMS;
+    const coinGrantsExp = snapshot.params.coinGrantsExp !== false;
+
     // 1. EXP不足 (< 12,000 または BREAK/斜め未習得)
     if (player.experience < 12000 || !snapshot.milestones.canDiagonal || !snapshot.milestones.canBreak) {
-      const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
-      const hitsBreak = player.experience < 4000 && player.experience + estimatedGainedExp >= 4000;
-      if (
-        player.gold > 0 &&
-        (player.experience + estimatedGainedExp >= 12000 || hitsBreak || player.gold >= 3)
-      ) {
-        return new CashInGoldMission(player.gold);
-      }
-      // 逃走敵追跡より確実な床コイン回収・一括換金を最優先
-      if (!prepOnCooldown && itemsAll.nearestCoin !== null) {
-        return new PrepareDragonAssaultMission();
-      }
-      if (player.gold > 0) {
-        return new CashInGoldMission(player.gold);
+      if (coinGrantsExp) {
+        const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
+        const hitsBreak = player.experience < 4000 && player.experience + estimatedGainedExp >= 4000;
+        if (
+          player.gold > 0 &&
+          (player.experience + estimatedGainedExp >= 12000 || hitsBreak || player.gold >= mp.coinCashInPrepGoldThreshold)
+        ) {
+          return new CashInGoldMission(player.gold);
+        }
+        // 逃走敵追跡より確実な床コイン回収・一括換金を最優先
+        if (!prepOnCooldown && itemsAll.nearestCoin !== null) {
+          return new PrepareDragonAssaultMission();
+        }
+        if (player.gold > 0) {
+          return new CashInGoldMission(player.gold);
+        }
+      } else {
+        // 非指数・コインEXPなしモード: 敵討伐によるEXP稼ぎを最優先
+        if (!earlyBreakOnCooldown && this.hasSafeEnemyNearby(player, snapshot)) {
+          return new EarlyBreakUnlockMission(Math.max(12000, snapshot.params.targetDefenseExp));
+        }
       }
 
       const hasKey = options.includeHeldKeyInChestCheck ? (player.holdItem === 'KEY' || this.hasReachableKey(map, snapshot)) : this.hasReachableKey(map, snapshot);
@@ -418,7 +432,7 @@ export class MissionSelector {
         return new ClearTreasureZoneMission('GLOBAL_ALL');
       }
       if (!earlyBreakOnCooldown && this.hasSafeEnemyNearby(player, snapshot)) {
-        return new EarlyBreakUnlockMission(12000);
+        return new EarlyBreakUnlockMission(Math.max(12000, snapshot.params.targetDefenseExp));
       }
       if (options.prioritizeImmediateSlay) {
         return null;
@@ -434,8 +448,17 @@ export class MissionSelector {
       return new PrepareDragonAssaultMission();
     }
 
+    // 2-B. 王冠フェーズ用の余剰MP備蓄のため、残存宝箱を開錠する
+    if (!clearZoneOnCooldown && assessment.needsTreasureMpFarm && !options.prioritizeImmediateSlay) {
+      const nearestZone = snapshot.spatial.getNearestUnclearedTreasureZone(player.pos, map, snapshot.memory, snapshot.totalTurns);
+      if (nearestZone) return new ClearTreasureZoneMission(nearestZone.id);
+      if (this.hasReachableChests(map, snapshot)) {
+        return new ClearTreasureZoneMission('GLOBAL_ALL');
+      }
+    }
+
     // 3. コイン換金が必要
-    if (assessment.needsGoldCashIn || player.gold > 0) {
+    if (assessment.needsGoldCashIn || (coinGrantsExp && player.gold > 0)) {
       return new CashInGoldMission(player.gold);
     }
 
@@ -446,7 +469,7 @@ export class MissionSelector {
     }
 
     // 5. HP十分性チェック
-    if (!prepOnCooldown && player.hp < player.maxHp * 0.5 && player.hp < 15000) {
+    if (!prepOnCooldown && player.hp < player.maxHp * r.readyHpRatioNormal && player.hp < r.readyHpMinNormal) {
       return new PrepareDragonAssaultMission();
     }
 

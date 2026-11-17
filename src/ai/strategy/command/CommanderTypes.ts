@@ -1,16 +1,8 @@
 import { Position } from '../../../models/Types.js';
-import { CommanderConfig } from '../../BotTypes.js';
+import { CommanderConfig, CommanderEscalationLevel } from '../../BotTypes.js';
 import type { MissionAuditProfile, MissionCompletionReason, MissionStatus } from '../StrategicMission.js';
 
-export type EscalationLevel =
-  | 'NOMINAL'
-  | 'RETARGET'
-  | 'MISSION_TABOO'
-  | 'FRONTIER_EXPEDITION'
-  | 'BREACH'
-  | 'RELOCATE'
-  | 'PHASE_WAIVER'
-  | 'TERMINAL';
+export type EscalationLevel = CommanderEscalationLevel;
 
 export type StallKind = 'LOOP' | 'CHURN' | 'FRUITLESS' | 'CONFINED';
 
@@ -81,4 +73,15 @@ export const DEFAULT_COMMANDER_CONFIG: CommanderConfig = {
   recoveryNewTiles16: 8,
   retargetTabooTurns: 30,
   missionTabooTurns: 60,
+  confinedConfirmTurns: 6,
+  probationTurns: {
+    NOMINAL: 0,
+    RETARGET: 14,
+    MISSION_TABOO: 18,
+    FRONTIER_EXPEDITION: 24,
+    BREACH: 12,
+    RELOCATE: 14,
+    PHASE_WAIVER: 20,
+    TERMINAL: 0,
+  },
 };

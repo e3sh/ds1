@@ -187,7 +187,7 @@ console.log('Testing 6: End-to-end allocation using catalog blocks...');
 {
   const allocator = new ThemeBlockAllocator(55555);
 
-  const largeTemplates = ALL_THEME_BLOCKS.filter(b => b.size === '16x16' || b.size === '12x12');
+  const largeTemplates = ALL_THEME_BLOCKS.filter(b => (b.size === '16x16' || b.size === '12x12') && b.category !== 'DRAGON' && b.category !== 'HOME');
   const mediumTemplates = ALL_THEME_BLOCKS.filter(b => b.size === '8x8' && b.category !== 'DRAGON' && b.category !== 'HOME');
   const smallTemplates = ALL_THEME_BLOCKS.filter(b => b.size === '4x4' && b.category !== 'HOME');
 
@@ -254,7 +254,7 @@ console.log('Testing 6: End-to-end allocation using catalog blocks...');
 console.log('Testing 7: Open, enclosed, and supply blocks specifications...');
 {
   assert.strictEqual(ALL_OPEN_AND_ENCLOSED_BLOCKS.length, 10, 'Must have exactly 10 open/enclosed/supply blocks');
-  assert.strictEqual(ALL_THEME_BLOCKS.length, 31, 'Total theme blocks must be 31');
+  assert.strictEqual(ALL_THEME_BLOCKS.length, 42, 'Total theme blocks must be 42');
 
   // 7-A. 完全空床ブロック (4x4 PLAINS, 8x8 COURTYARD) の床タイル整合性
   for (const block of [OPEN_4x4_PLAINS, OPEN_8x8_COURTYARD]) {

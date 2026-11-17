@@ -204,7 +204,10 @@ console.log('Testing 5: Authentic Classic Additive Mode vs Exponential Inflation
   assert.strictEqual(classicPreset.progressionConfig.powerStoneGrowthRate, 0);
   assert.strictEqual(classicPreset.progressionConfig.powerStoneFlatBonus, 2500);
   assert.strictEqual(classicPreset.progressionConfig.coinScalingMode, 'LINEAR');
-  assert.strictEqual(classicPreset.progressionConfig.dragonDefRatio, 0.025);
+  assert.strictEqual(classicPreset.progressionConfig.dragonDefRatio, 1.0);
+  assert.strictEqual(classicPreset.progressionConfig.enemyAtkRatio, 1.0);
+  assert.ok(classicPreset.resourceCapConfig.chestCount >= 240, 'Classic preset should have >= 240 chests');
+  assert.ok(classicPreset.resourceCapConfig.cross.maxCap >= 12, 'Classic preset should relax equipment caps');
 
   // パワーストーン成長比較
   // A. クラシック加算モード: 常に +2,500 固定 (初代仕様)
@@ -219,6 +222,33 @@ console.log('Testing 5: Authentic Classic Additive Mode vs Exponential Inflation
     fullClassicStr += Player.calculatePowerStoneGain(fullClassicStr, classicPreset.progressionConfig);
   }
   assert.strictEqual(fullClassicStr, 400010, 'Classic additive mode should result in 400,010 STR after 160 stones, defeating 400,000 DEF dragon');
+
+  // B. クラシックモードでのプロシージャル生成 & 全ペーシング・全難易度での解法性検証
+  const classicSeeds = [1001, 2026, 777777];
+  const classicPacings = ['BLITZ', 'STANDARD', 'MARATHON'] as const;
+  const classicDiffs = ['EASY', 'NORMAL', 'HARD'] as const;
+  for (const seed of classicSeeds) {
+    for (const pacing of classicPacings) {
+      for (const diff of classicDiffs) {
+        const cMap = new WorldMap(64, 64);
+        const cReport = ProceduralMapGenerator.generateDungeon(cMap, {
+          seed,
+          difficulty: diff,
+          pacing,
+          ruleMode: 'CLASSIC',
+        });
+        assert.strictEqual(
+          cReport.isSolvable,
+          true,
+          `Classic procedural map (seed=${seed}, pacing=${pacing}, diff=${diff}) must be solvable. Issues: ${cReport.issues.join(', ')}`
+        );
+        assert.ok(
+          cMap.getAllHomePositions().length >= 2,
+          `Classic procedural map (seed=${seed}) should place multiple HOMEs (got ${cMap.getAllHomePositions().length})`
+        );
+      }
+    }
+  }
 
   // B. 指数モード: 15個で 350,000 超のインフレ
   const expPreset = TuningPresetResolver.resolve('STANDARD_ROOMS');
