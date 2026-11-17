@@ -62,6 +62,54 @@ export interface SingleRunRecord {
   };
 }
 
+export interface RunDiagnosticDetail {
+  runIndex: number;
+  seed: number;
+  won: boolean;
+  totalTurns: number;
+  deathCause?: string;
+  mapMetrics?: {
+    opennessScore: number;
+    mazeIndex: number;
+    roomCount: number;
+    swordWalkDistance: number;
+    nearHomeGraves: number;
+    sectorPartitionScore: number;
+    lairEntranceCount: number;
+    lairSafeSpacesCount: number;
+  };
+  resourceCounts?: {
+    crossCount: number;
+    ringCount: number;
+    potionCount: number;
+    chestCount: number;
+    graveCount: number;
+  };
+  resolvedParamsSummary?: {
+    crownReserveMagic: number;
+    prepBypassTurnsNoChest: number;
+    prepBypassTurnsWithChest: number;
+    defaultGraceTurns: number;
+    huntDistNoDiag: number;
+    huntDistDiag: number;
+  };
+  milestoneTurns: {
+    gotSword?: number;
+    unlockedBreak?: number;
+    unlockedDiagonal?: number;
+    reachedTargetStr?: number;
+    killedHead1?: number;
+    killedAllHeads?: number;
+    deliveredFirstCrown?: number;
+  };
+  missionTurns: Record<string, number>;
+  terminalMissionId?: string;
+  maxTurnsWithoutSubstantiveGain: number;
+  commanderVerdictsCount: number;
+  commanderFinalLevel: string;
+  verdictsSummary: Array<{ turn: number; from: string; to: string; stallKind: string | null }>;
+}
+
 export interface SimulationSummaryReport {
   config: {
     topology: DungeonTopology;
@@ -133,6 +181,7 @@ export interface SimulationSummaryReport {
     commanderLevelCounts?: Record<string, number>;
     giveUpSources?: Record<string, number>;
   };
+  runDetails?: RunDiagnosticDetail[];
 }
 
 /**

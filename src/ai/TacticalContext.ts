@@ -380,12 +380,12 @@ export class TacticalContext {
     maxTargetMagic: number,
     tuning?: BotStrategyTuning
   ): ReadinessParams {
-    const baseMagic = minDragonMagic + 2;
-    const mazeBonus = Math.round(mazeIndex * 3);
-    const graveBonus = nearHomeGraves >= 2 || this.resourceCounts.graveCount >= 8 ? 1 : 0;
-    const totalSupply = this.resourceCounts.potionCount + this.resourceCounts.chestCount;
-    const supplyAdj = totalSupply >= 10 ? 1 : totalSupply <= 4 ? -1 : 0;
-    const openAdj = opennessScore > 0.55 ? -1 : 0;
+    const baseMagic = minDragonMagic + 4;
+    const mazeBonus = mazeIndex >= 0.35 ? 1 : 0;
+    const graveBonus = nearHomeGraves >= 2 ? 1 : 0;
+    const supplyAdj =
+      this.resourceCounts.potionCount >= 60 ? 1 : this.resourceCounts.potionCount <= 30 ? -1 : 0;
+    const openAdj = opennessScore >= 0.14 ? -1 : opennessScore <= 0.10 ? 1 : 0;
     const dynamicCrownMagic = Math.max(
       minDragonMagic,
       Math.min(maxTargetMagic, baseMagic + mazeBonus + graveBonus + supplyAdj + openAdj)
@@ -395,13 +395,13 @@ export class TacticalContext {
     const base: ReadinessParams = {
       ...DEFAULT_READINESS_PARAMS,
       crownReserveMagic: Math.min(maxTargetMagic, tuning?.crownReserveMagic ?? dynamicCrownMagic),
-      prepBypassTurnsNoChest: Math.round(32 * topoFactor),
+      prepBypassTurnsNoChest: Math.round(21 * topoFactor),
       prepBypassTurnsWithChest: Math.round(58 * topoFactor),
-      prepDefenseExpCutoffTurns: Math.round(28 * topoFactor),
-      prepPotionSweepCutoffTurns: Math.round(32 * topoFactor),
-      prepPotionSweepExtendedTurns: Math.round(42 * topoFactor),
+      prepDefenseExpCutoffTurns: Math.round(24 * topoFactor),
+      prepPotionSweepCutoffTurns: Math.round(28 * topoFactor),
+      prepPotionSweepExtendedTurns: Math.round(40 * topoFactor),
       prepTreasureMpFarmCutoffTurns: Math.round(50 * topoFactor),
-      prepRelocationCutoffTurns: Math.round(28 * topoFactor),
+      prepRelocationCutoffTurns: Math.round(24 * topoFactor),
     };
 
     if (!tuning?.readiness) return base;

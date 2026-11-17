@@ -110,8 +110,10 @@ export class StrategicCommander {
     // 1. L1〜L6 滞在中: 回復判定（ヒステリシス解除条件）
     if (this.level !== 'NOMINAL' && this.level !== 'TERMINAL') {
       const recoveredByGain = snapshot.progress.turnsSinceSubstantiveGain === 0;
+      const exploreSince = Math.max(this.levelEnteredTurn, turn - 15);
       const recoveredByExplore =
-        snapshot.progress.newTilesSince(Math.max(0, turn - 15)) >= config.recoveryNewTiles16;
+        turn > this.levelEnteredTurn &&
+        snapshot.progress.newTilesSince(exploreSince) >= config.recoveryNewTiles16;
 
       if (recoveredByGain || recoveredByExplore) {
         const prevIdx = ESCALATION_ORDER.indexOf(this.level);

@@ -2,7 +2,7 @@ import { GameEngine } from '../core/GameEngine.js';
 import { SeedRandom } from '../core/SeedRandom.js';
 import { GameEventBus } from '../core/GameEventBus.js';
 import { AutoPlayBot, BotSkillProfile, BotStrategyTuning } from '../ai/AutoPlayBot.js';
-import { SimulationTelemetry, SimulationSummaryReport } from './SimulationTelemetry.js';
+import { SimulationTelemetry, SimulationSummaryReport, RunDiagnosticDetail } from './SimulationTelemetry.js';
 import {
   DungeonTopology,
   MapDifficulty,
@@ -20,6 +20,7 @@ export interface SimulationConfig {
   botProfile?: BotSkillProfile;
   baseSeed?: number;
   strategyTuning?: BotStrategyTuning;
+  includeRunDetails?: boolean;
 }
 
 /**
@@ -39,6 +40,7 @@ export class SimulationRunner {
 
     const masterRng = new SeedRandom(baseSeed);
     const telemetry = new SimulationTelemetry(0, baseSeed);
+    const runDetails: RunDiagnosticDetail[] = [];
 
     for (let r = 0; r < runs; r++) {
       const runSeed = masterRng.nextInt(1, 0x7fffffff);
@@ -76,6 +78,7 @@ export class SimulationRunner {
       let lastFlashPos: { x: number; y: number } | null = null;
       let lastCrownPickupTurn = -100;
       let lastCrownPickupDeliveryCount = 0;
+      const milestoneTurns: RunDiagnosticDetail['milestoneTurns'] = {};
 
       while (turns < maxTurnsLimit && engine.getState() === 'PLAYING') {
         turns++;
@@ -119,6 +122,24 @@ export class SimulationRunner {
         // スナップショット記録
         const player = afterPlayer;
         telemetry.recordTurnSnapshot(turns, player.experience, player.strength, player.hasSword);
+        if (config.includeRunDetails) {
+          if (player.hasSword && milestoneTurns.gotSword === undefined) milestoneTurns.gotSword = turns;
+          if (player.experience >= 4000 && milestoneTurns.unlockedBreak === undefined) milestoneTurns.unlockedBreak = turns;
+          if (player.experience >= 12000 && milestoneTurns.unlockedDiagonal === undefined) milestoneTurns.unlockedDiagonal = turns;
+          if (bot.params && player.strength >= bot.params.targetStr && milestoneTurns.reachedTargetStr === undefined) {
+            milestoneTurns.reachedTargetStr = turns;
+          }
+          const d = engine.getDragon();
+          if (d) {
+            if (d.defeatedHeadsCount >= 1 && milestoneTurns.killedHead1 === undefined) milestoneTurns.killedHead1 = turns;
+            if ((d.isAllHeadsDefeated || d.defeatedHeadsCount >= 3) && milestoneTurns.killedAllHeads === undefined) {
+              milestoneTurns.killedAllHeads = turns;
+            }
+          }
+          if (player.crowns >= 1 && milestoneTurns.deliveredFirstCrown === undefined) {
+            milestoneTurns.deliveredFirstCrown = turns;
+          }
+        }
         const curNoGain = bot.episodicMemory.buildProgressWindow(bot.totalTurns, engine.getMap()).turnsSinceSubstantiveGain;
         if (curNoGain > maxTurnsWithoutSubstantiveGain) {
           maxTurnsWithoutSubstantiveGain = curNoGain;
@@ -213,9 +234,60 @@ export class SimulationRunner {
       }
 
       telemetry.finalizeCurrentRun(turns, won, player.deathInfo ?? undefined, pstMetrics);
+
+      if (config.includeRunDetails) {
+        const deathCause = won
+          ? undefined
+          : (player.deathInfo?.cause ?? (turns >= maxTurnsLimit ? 'TIMEOUT_STALL' : 'UNKNOWN'));
+        const gm = bot.context?.metrics;
+        const rc = bot.context?.resourceCounts;
+        const bp = bot.params;
+        runDetails.push({
+          runIndex: r,
+          seed: runSeed,
+          won,
+          totalTurns: turns,
+          deathCause,
+          mapMetrics: gm
+            ? {
+                opennessScore: gm.opennessScore,
+                mazeIndex: gm.mazeIndex,
+                roomCount: gm.roomCount,
+                swordWalkDistance: gm.swordWalkDistance,
+                nearHomeGraves: gm.nearHomeGraves,
+                sectorPartitionScore: gm.sectorPartitionScore,
+                lairEntranceCount: gm.lairAccessibility.entranceCount,
+                lairSafeSpacesCount: gm.lairAccessibility.safeSpacesCount,
+              }
+            : undefined,
+          resourceCounts: rc ? { ...rc } : undefined,
+          resolvedParamsSummary: bp
+            ? {
+                crownReserveMagic: bp.readiness?.crownReserveMagic ?? 0,
+                prepBypassTurnsNoChest: bp.readiness?.prepBypassTurnsNoChest ?? 0,
+                prepBypassTurnsWithChest: bp.readiness?.prepBypassTurnsWithChest ?? 0,
+                defaultGraceTurns: bp.commander?.defaultGraceTurns ?? 0,
+                huntDistNoDiag: bp.hunting?.huntDistNoDiag ?? 0,
+                huntDistDiag: bp.hunting?.huntDistDiag ?? 0,
+              }
+            : undefined,
+          milestoneTurns,
+          missionTurns: pstMetrics.missionTurns,
+          terminalMissionId: pstMetrics.terminalMissionId,
+          maxTurnsWithoutSubstantiveGain,
+          commanderVerdictsCount: bot.commander.verdicts.length,
+          commanderFinalLevel: bot.commander.level,
+          verdictsSummary: bot.commander.verdicts.slice(-12).map(v => ({
+            turn: v.turn,
+            from: v.from,
+            to: v.to,
+            stallKind: v.stallKind,
+          })),
+        });
+      }
     }
 
-    return this.generateSummaryReport(telemetry, {
+    const summary = this.generateSummaryReport(telemetry, {
       runs,
       maxTurnsLimit,
       topology,
@@ -223,6 +295,10 @@ export class SimulationRunner {
       pacing,
       botProfile,
     });
+    if (config.includeRunDetails) {
+      summary.runDetails = runDetails;
+    }
+    return summary;
   }
 
   private static generateSummaryReport(

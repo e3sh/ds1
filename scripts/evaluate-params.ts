@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { SimulationRunner } from '../src/simulation/SimulationRunner.js';
+import { RunDiagnosticDetail } from '../src/simulation/SimulationTelemetry.js';
 import { BotSkillProfile, BotStrategyTuning } from '../src/ai/BotTypes.js';
 import { DungeonTopology, MapDifficulty, PlayPacingMode, RuleMode } from '../src/models/Types.js';
 import { DEFAULT_COMMANDER_CONFIG } from '../src/ai/strategy/command/CommanderTypes.js';
@@ -10,7 +11,7 @@ import {
   DEFAULT_READINESS_PARAMS,
 } from '../src/ai/TacticalContext.js';
 
-type EvalMode = 'compare' | 'grid' | 'coordinate';
+type EvalMode = 'compare' | 'grid' | 'coordinate' | 'diagnose';
 
 interface EvalCliOptions {
   mode: EvalMode;
@@ -44,6 +45,7 @@ interface CellMetrics {
   score: number;
   deathCauses: Record<string, number>;
   commanderLevelCounts: Record<string, number>;
+  runDetails?: RunDiagnosticDetail[];
 }
 
 interface CandidateEvaluation {
@@ -64,7 +66,7 @@ function printHelp(): void {
 Usage: npm run evaluate -- [options]
 
 Options:
-  --mode=compare|grid|coordinate   Evaluation mode (default: compare)
+  --mode=compare|grid|coordinate|diagnose  Evaluation mode (default: compare)
   --topologies=LIST                Comma-separated topologies (default: STANDARD_ROOMS,NARROW_MAZE,FORTRESS_ARENA,PILLAR_GRID)
   --ruleModes=LIST                 Comma-separated rule modes: EXPONENTIAL,CLASSIC (default: EXPONENTIAL,CLASSIC)
   --runs=N                         Runs per topology x ruleMode cell (default: 10)
@@ -113,11 +115,21 @@ function parseCliArgs(): EvalCliOptions {
       opts.mode = val as EvalMode;
       if (consumeNext) i++;
     } else if (key === '--topologies' && val) {
-      opts.topologies = val.split(',').map(s => s.trim()) as DungeonTopology[];
+      const items = val.split(/[\s,]+/).filter(Boolean);
       if (consumeNext) i++;
+      while (i + 1 < rawArgs.length && !rawArgs[i + 1].startsWith('-')) {
+        i++;
+        items.push(...rawArgs[i].split(/[\s,]+/).filter(Boolean));
+      }
+      opts.topologies = items as DungeonTopology[];
     } else if (key === '--ruleModes' && val) {
-      opts.ruleModes = val.split(',').map(s => s.trim()) as RuleMode[];
+      const items = val.split(/[\s,]+/).filter(Boolean);
       if (consumeNext) i++;
+      while (i + 1 < rawArgs.length && !rawArgs[i + 1].startsWith('-')) {
+        i++;
+        items.push(...rawArgs[i].split(/[\s,]+/).filter(Boolean));
+      }
+      opts.ruleModes = items as RuleMode[];
     } else if ((key === '--runs' || key === '-r') && val) {
       opts.runs = Math.max(1, parseInt(val, 10));
       if (consumeNext) i++;
@@ -204,6 +216,7 @@ function evaluateCandidate(
         ruleMode,
         botProfile: opts.botProfile,
         strategyTuning: tuning,
+        includeRunDetails: opts.mode === 'diagnose',
       });
 
       const winRate = report.overall.winRate;
@@ -243,6 +256,7 @@ function evaluateCandidate(
         score,
         deathCauses,
         commanderLevelCounts,
+        runDetails: report.runDetails,
       });
     }
   }
@@ -490,6 +504,145 @@ function printSummary(evaluations: CandidateEvaluation[], opts: EvalCliOptions):
   }
 }
 
+function buildDiagnoseCases(): ExperimentCase[] {
+  return [
+    { name: 'Auto', tuning: {} },
+    { name: 'Crown4', tuning: { crownReserveMagic: 4 } },
+    { name: 'Crown7', tuning: { crownReserveMagic: 7 } },
+    { name: 'Crown10', tuning: { crownReserveMagic: 10 } },
+  ];
+}
+
+function formatRunOutcome(d: RunDiagnosticDetail): string {
+  if (d.won) return `WIN(${d.totalTurns}T)`;
+  return `LOSS(${d.deathCause ?? 'UNKNOWN'}@${d.totalTurns}T)`;
+}
+
+function avgFeature(details: RunDiagnosticDetail[], getter: (d: RunDiagnosticDetail) => number | undefined): string {
+  const vals = details.map(getter).filter((v): v is number => v !== undefined && Number.isFinite(v));
+  if (vals.length === 0) return 'N/A';
+  const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
+  return avg.toFixed(2);
+}
+
+function printDiagnosticsReport(evaluations: CandidateEvaluation[]): void {
+  if (evaluations.length === 0) return;
+  const cellCount = evaluations[0].cells.length;
+
+  console.log('\n========================================================================');
+  console.log('  PER-SEED DIAGNOSTICS & WIN/LOSS FLIP ANALYSIS');
+  console.log('========================================================================');
+
+  for (let cIdx = 0; cIdx < cellCount; cIdx++) {
+    const baseCell = evaluations[0].cells[cIdx];
+    const baseRuns = baseCell.runDetails ?? [];
+    if (baseRuns.length === 0) continue;
+
+    console.log(`\n### [${baseCell.topology} / ${baseCell.ruleMode}] (${baseRuns.length} seeds) ###`);
+
+    const seedRows = baseRuns.map((br, rIdx) => {
+      const row: Record<string, string | number> = {
+        Seed: br.seed,
+        Maze: br.mapMetrics?.mazeIndex ?? 'N/A',
+        Open: br.mapMetrics?.opennessScore ?? 'N/A',
+        Graves: br.mapMetrics?.nearHomeGraves ?? 'N/A',
+        Pot: br.resourceCounts?.potionCount ?? 'N/A',
+        Chest: br.resourceCounts?.chestCount ?? 'N/A',
+        SwordD: br.mapMetrics?.swordWalkDistance ?? 'N/A',
+        AutoMP: br.resolvedParamsSummary?.crownReserveMagic ?? 'N/A',
+      };
+      for (const ev of evaluations) {
+        const d = ev.cells[cIdx]?.runDetails?.[rIdx];
+        row[ev.name] = d ? formatRunOutcome(d) : 'N/A';
+      }
+      return row;
+    });
+    console.table(seedRows);
+
+    // 勝敗が反転したシードを抽出
+    const flipIndices: number[] = [];
+    for (let rIdx = 0; rIdx < baseRuns.length; rIdx++) {
+      const outcomes = evaluations.map(ev => ev.cells[cIdx]?.runDetails?.[rIdx]?.won);
+      const hasWin = outcomes.some(w => w === true);
+      const hasLoss = outcomes.some(w => w === false);
+      if (hasWin && hasLoss) {
+        flipIndices.push(rIdx);
+      }
+    }
+
+    if (flipIndices.length === 0) {
+      console.log('  (No Win/Loss flips across candidates in this cell)');
+    } else {
+      console.log(`\n  [Win/Loss Flip Seeds: ${flipIndices.length}]`);
+      for (const rIdx of flipIndices) {
+        const br = baseRuns[rIdx];
+        console.log(
+          `\n  >> Seed ${br.seed} | maze=${br.mapMetrics?.mazeIndex} open=${br.mapMetrics?.opennessScore} ` +
+          `part=${br.mapMetrics?.sectorPartitionScore} nearGraves=${br.mapMetrics?.nearHomeGraves} ` +
+          `pot=${br.resourceCounts?.potionCount} chest=${br.resourceCounts?.chestCount} ` +
+          `swordDist=${br.mapMetrics?.swordWalkDistance}`
+        );
+        for (const ev of evaluations) {
+          const d = ev.cells[cIdx]?.runDetails?.[rIdx];
+          if (!d) continue;
+          const ms = d.milestoneTurns;
+          const msStr = [
+            `Sw:${ms.gotSword ?? '-'}`,
+            `Brk:${ms.unlockedBreak ?? '-'}`,
+            `Diag:${ms.unlockedDiagonal ?? '-'}`,
+            `Str:${ms.reachedTargetStr ?? '-'}`,
+            `H1:${ms.killedHead1 ?? '-'}`,
+            `AllH:${ms.killedAllHeads ?? '-'}`,
+            `Cr1:${ms.deliveredFirstCrown ?? '-'}`,
+          ].join(' ');
+          const topMissions = Object.entries(d.missionTurns)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 4)
+            .map(([k, v]) => `${k}:${v}T`)
+            .join(', ');
+          console.log(
+            `     - ${ev.name.padEnd(8)}: ${formatRunOutcome(d).padEnd(26)} | ` +
+            `crownMP=${d.resolvedParamsSummary?.crownReserveMagic ?? '?'} | ${msStr}`
+          );
+          console.log(
+            `       missions=[${topMissions}] | term=${d.terminalMissionId ?? '-'} | ` +
+            `cmd=${d.commanderFinalLevel}(${d.commanderVerdictsCount}) | maxNoGain=${d.maxTurnsWithoutSubstantiveGain}T`
+          );
+        }
+      }
+    }
+
+    // 勝ちラン vs 負けランの特徴量平均（Autoベース）
+    const winRuns = baseRuns.filter(d => d.won);
+    const lossRuns = baseRuns.filter(d => !d.won);
+    if (winRuns.length > 0 && lossRuns.length > 0) {
+      console.log(`\n  [Feature Averages for ${evaluations[0].name}: WIN(${winRuns.length}) vs LOSS(${lossRuns.length})]`);
+      console.table([
+        {
+          Group: `WIN (${winRuns.length})`,
+          MazeIndex: avgFeature(winRuns, d => d.mapMetrics?.mazeIndex),
+          Openness: avgFeature(winRuns, d => d.mapMetrics?.opennessScore),
+          Partition: avgFeature(winRuns, d => d.mapMetrics?.sectorPartitionScore),
+          NearGraves: avgFeature(winRuns, d => d.mapMetrics?.nearHomeGraves),
+          Potions: avgFeature(winRuns, d => d.resourceCounts?.potionCount),
+          Chests: avgFeature(winRuns, d => d.resourceCounts?.chestCount),
+          SwordDist: avgFeature(winRuns, d => d.mapMetrics?.swordWalkDistance),
+        },
+        {
+          Group: `LOSS (${lossRuns.length})`,
+          MazeIndex: avgFeature(lossRuns, d => d.mapMetrics?.mazeIndex),
+          Openness: avgFeature(lossRuns, d => d.mapMetrics?.opennessScore),
+          Partition: avgFeature(lossRuns, d => d.mapMetrics?.sectorPartitionScore),
+          NearGraves: avgFeature(lossRuns, d => d.mapMetrics?.nearHomeGraves),
+          Potions: avgFeature(lossRuns, d => d.resourceCounts?.potionCount),
+          Chests: avgFeature(lossRuns, d => d.resourceCounts?.chestCount),
+          SwordDist: avgFeature(lossRuns, d => d.mapMetrics?.swordWalkDistance),
+        },
+      ]);
+    }
+  }
+}
+
 function main(): void {
   const opts = parseCliArgs();
   console.log('========================================================================');
@@ -502,8 +655,13 @@ function main(): void {
   const cache = new Map<string, CandidateEvaluation>();
   let evaluations: CandidateEvaluation[] = [];
 
-  if (opts.mode === 'compare' || opts.mode === 'grid') {
-    const cases = opts.mode === 'compare' ? buildCompareCases() : buildGridCases();
+  if (opts.mode === 'compare' || opts.mode === 'grid' || opts.mode === 'diagnose') {
+    const cases =
+      opts.mode === 'compare'
+        ? buildCompareCases()
+        : opts.mode === 'grid'
+          ? buildGridCases()
+          : buildDiagnoseCases();
     for (const c of cases) {
       process.stdout.write(`Running: ${c.name} ... `);
       const ev = evaluateCandidate(c.name, c.tuning, opts, cache);
@@ -517,6 +675,9 @@ function main(): void {
   }
 
   printSummary(evaluations, opts);
+  if (opts.mode === 'diagnose') {
+    printDiagnosticsReport(evaluations);
+  }
 
   if (opts.outputPath) {
     const absPath = path.resolve(process.cwd(), opts.outputPath);

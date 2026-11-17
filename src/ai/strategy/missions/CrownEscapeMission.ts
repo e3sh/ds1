@@ -93,12 +93,13 @@ export class CrownEscapeMission implements IStrategicMission {
    */
   private findSafeOneShotAdjacentEnemy(
     surroundings: MapSituationSummary['surroundings'],
-    player: Player
+    player: Player,
+    onlyHighThreat: boolean = true
   ) {
     const candidate = surroundings.adjacentActiveEnemies.find(
       info =>
         info.attackThreat === 'ONE_SHOT' &&
-        (info.defenseThreat === 'LETHAL' || info.damageToPlayer >= player.hp * 0.35)
+        (!onlyHighThreat || info.defenseThreat === 'LETHAL' || info.damageToPlayer >= player.hp * 0.35)
     );
     if (!candidate) return null;
 
@@ -403,7 +404,7 @@ export class CrownEscapeMission implements IStrategicMission {
           };
         }
 
-        const adjOneShot = surroundings.adjacentAllEnemies.find(info => info.attackThreat === 'ONE_SHOT');
+        const adjOneShot = this.findSafeOneShotAdjacentEnemy(surroundings, player, false);
         if (adjOneShot) {
           return {
             type: 'ATTACK_TARGET',
@@ -701,8 +702,8 @@ export class CrownEscapeMission implements IStrategicMission {
       };
     }
 
-    // 2-F. 直角隣接の ONE_SHOT 敵を露払い排除
-    const oneShotAdj = surroundings.adjacentAllEnemies.find(info => info.attackThreat === 'ONE_SHOT');
+    // 2-F. 直角隣接の安全な ONE_SHOT 敵を露払い排除
+    const oneShotAdj = this.findSafeOneShotAdjacentEnemy(surroundings, player, false);
     if (oneShotAdj) {
       return {
         type: 'ATTACK_TARGET',

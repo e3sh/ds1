@@ -149,14 +149,14 @@ flowchart TD
 - **停滞種別**: `LOOP`（周回・無戦果・新規マス停滞）、`CHURN`（64T以内の頻繁な作戦反復）、`FRUITLESS`（長期無戦果）、`CONFINED`（物理閉塞かつ脱出手段なし）。
 - **段階的打開 (L1〜L7)**:
   - `L1 RETARGET`（ターゲット/ゾーン禁止）→ `L2 MISSION_TABOO`（作戦禁止）→ `L3 FRONTIER_EXPEDITION`（`ExploreFrontierMission` 強制）→ `L4 BREACH`（`StrategicBreakMission` で岩BREAK）→ `L5 RELOCATE`（`RETURN`/`JUMP` 転移）→ `L6 PHASE_WAIVER`（決戦準備条件の見切り）→ `L7 TERMINAL`（`GIVE_UP`、ただし `enableGiveUp=false` や `CROWN_ESCAPE` 等は継続）。
-- **ヒステリシス**: 8T連続停滞で確定、実質戦果1件または直近16Tで新規マス8以上で回復（64T以内の再停滞は前回段階−1から再開）。
+- **ヒステリシス**: 8T連続停滞で確定、実質戦果1件または段階移行後（`Math.max(levelEnteredTurn, turn - 15)` 以降）の新規マス8以上で回復（64T以内の再停滞は前回段階−1から再開）。`probationTurns` や `confinedConfirmTurns` も含め `CommanderConfig` 経由で動的算出・上書き可能。
 
 #### 1. `StrategicPlanner` のターン処理フロー
 1. **上位指揮官命令の適用 (`applyOrders`)**: `TERMINAL` の `giveUp` 受理、禁止リストの反映、強制ミッションへの切替（`COMMANDER_OVERRIDE`）。
 2. **最優先割り込み判定**:
    - **ドラゴン全首撃破完了**: 即座に `CrownEscapeMission` へ切り替え、以降は他ミッションによる上書きを禁止（絶対維持）。
    - **緊急危機介入**: `threats.isLethalDanger` または `threats.isPinchHp` の場合、`EmergencyEvacuateMission` へ割り込み切替。
-   - **決戦・準備移行割り込み**: 育成・探索系ミッション中に `canDamageDragon`（目標STR到達）または宝箱・石枯渇、あるいは `MissionSelector.isReadyForDragon` を満たした場合、`MissionSelector.selectDragonPrepMission` へ委譲し、`SlayDragonMission` / `PrepareDragonAssaultMission` / `CashInGoldMission` / `RelocateHomeMission` 等へ移行する。
+   - **決戦・準備移行割り込み**: 育成・探索系ミッション中に `canDamageDragon`（目標STR到達）または `MissionSelector.isReadyForDragon` を満たした場合、`MissionSelector.selectDragonPrepMission` へ委譲し、`SlayDragonMission` / `PrepareDragonAssaultMission` / `CashInGoldMission` / `RelocateHomeMission` 等へ移行する。
 3. **現行ミッションのコミットメント評価**:
    - `activeMission.evaluateStatus()` が `'ACTIVE'` であれば `generateDirective()` を呼び出し、`DirectiveArbiter.arbitrate()` を経て戦術指令を返す。
    - `'COMPLETED'` / `'FAILED'` / `'ABORTED'` となった場合、`missionHistory`（開始/終了ターン・実質戦果数を含む）へ記録し、`NO_PROGRESS_TIMEOUT` / `NO_PROGRESS_BLOCKED` 時は該当ミッションにクールダウン（15〜80ターン）を設定して無限再選択を防止する。
@@ -164,9 +164,9 @@ flowchart TD
    - アクティブなミッションがない場合、以下の優先順位で次期ミッションを選定する：
      1. ドラゴン全首撃破済み → `CrownEscapeMission`
      2. 剣未所持 → `BootstrapSwordMission`
-     3. パワーストーン所持中（または足元に石があり8歩チェーン継続不要）→ `HarvestPowerStoneMission`
+     3. パワーストーン所持中（`HARVEST_POWER_STONE` がクールダウン/タブー中でない場合、または足元に石があり8歩チェーン継続不要）→ `HarvestPowerStoneMission`
      4. STR未達時: 序盤BREAK習得（`EarlyBreakUnlockMission`） / マイルストーン到達または大量金貨の換金（`CashInGoldMission`） / 鍵所持中または宝箱攻略（`ClearTreasureZoneMission`） / 近傍石回収（`HarvestPowerStoneMission`）
-     5. STR達成後または宝箱・石枯渇時（決戦準備）: `ReadinessEvaluator.evaluateDragonReadiness` に基づき、EXP < 12,000 解消・MP >= 3 確保・ポーション/コイン回収（`PrepareDragonAssaultMission`）、金貨換金（`CashInGoldMission`）、拠点引越し（`RelocateHomeMission`）、全5条件達成で `SlayDragonMission`
+     5. STR達成後（`canDamageDragon`、決戦準備）: `ReadinessEvaluator.evaluateDragonReadiness` に基づき、EXP < 12,000 解消・MP >= 3 確保・ポーション/コイン回収（`PrepareDragonAssaultMission`）、金貨換金（`CashInGoldMission`）、拠点引越し（`RelocateHomeMission`）、全5条件達成で `SlayDragonMission`
      6. 防御EXP不足時の安全敵狩り → `EarlyBreakUnlockMission`
      7. フォールバック → `ExploreFrontierMission`
 5. **戦術フィードバック (`recordExecutionResult`)**:
@@ -179,7 +179,8 @@ flowchart TD
 3. **BREAK習得**: `!hasDeath && MP >= 1 && EXP >= 4,000`
 4. **戦闘MP**: `MP >= 3`（近傍ポーション枯渇または `MAGIC_STOCK` 見切り時は `MP >= 1`）
 5. **HP・防御EXP**: `HP >= maxHp * 0.50`（または `>= 15,000`）、および `EXP >= targetDefenseExp`（`prepTurns >= 25` 等や `DEFENSE_EXP` / `HP_FULL` 見切りで緩和あり）
-- 準備ターンが35ターンを超過した場合は `isTimeoutBypass` により最低条件（斜め・BREAK・最小MP）のみで決戦へフォールスルーする。
+- 準備ターンが `prepBypassTurnsNoChest`（宝箱MP供給余地なし時）または `prepBypassTurnsWithChest`（あり時）を超過した場合は `isTimeoutBypass` により最低条件（斜め・BREAK・最小MP）のみで決戦へフォールスルーする。
+- これらの閾値・HP基準・クールダウン・敵狩り条件はすべて `DynamicBotParameters`（`readiness`, `hunting`, `missionPolicy`）へ抽出され、各戦略モジュールは `snapshot.params` を参照する。また、敵狩りの安全探索ロジックは `EarlyBreakUnlockMission.findNearestSafeEnemy` へ共通化されている。
 
 #### 3. `DirectiveArbiter` による毎ターン指令調停
 1. `CROWN_ESCAPE` 中は汎用調停をスキップし、王冠運搬サブモード（閉塞開拓・敵スタン）を尊重する。
@@ -241,7 +242,12 @@ flowchart TD
 - **目標防御EXP (`targetDefenseExp`)**: クラシック `15,000` / 拡張 `35,000` を基準とし、周囲12マス以内の敵最大ATKが上回る場合は `maxNearEnemyAtk + 2,000` へ動的引き上げ。
 - **目標MP (`maxTargetMagic` / `minDragonMagic`)**: `maxTargetMagic` は `NOVICE: 8` / `STANDARD, EXPERT: 14`（`minDragonMagic` は `2` / `3`）。
 - **探索半径連動**: `stoneSearchDist = max(12, nearRadius)`、`potionSearchDist` はSTR達成後かつ目標MP未達時に `max(20, farRadius)` へ拡大、`keySearchDist` / `coinSearchDist` も達成状況に応じて `immediateRadius`〜`farRadius` で伸縮。
-- **敵狩り許容距離 (`huntDistance`)**: BREAK未習得（`EXP < 4,000`）かつ鍵非所持時のみ `immediateRadius` を許可し、EXP 4,000以降は強敵湧き（キルランク上昇）を防ぐため `0` に固定。
+- **敵狩り許容距離 (`huntDistance` / `hunting`)**: `coinGrantsExp=false`（`CLASSIC` 等）時は `midRadius`〜`farRadius` ベースで積極狩り、`coinGrantsExp=true` 時は `nearRadius`〜`midRadius` ベースに抑制。追跡上限・無戦果撤退・クールダウン等も `HuntingParams` として `mazeIndex` / `opennessScore` に連動。
+- **決戦準備・王冠MP備蓄 (`readiness`)**:
+  - `crownReserveMagic`: `minDragonMagic + 4`（標準 `7`）を基準に、`mazeIndex >= 0.35`（+1）、`nearHomeGraves >= 2`（+1）、`potionCount >= 60 / <= 30`（±1）、`opennessScore >= 0.14 / <= 0.10`（∓1）で `[minDragonMagic, maxTargetMagic]` の範囲に動的算出。
+  - `prepBypassTurnsNoChest` / `prepBypassTurnsWithChest`: `topoFactor = 1 + 0.35 * mazeIndex + 0.15 * sectorPartitionScore` を用い、宝箱MP供給なし時は早期決戦（`round(21 * topoFactor)`）、宝箱MP供給あり時は備蓄余地確保（`round(58 * topoFactor)`）を非対称に算出。
+- **上位指揮官設定 (`commander`)**: `mazeIndex` / `sectorPartitionScore` に応じたスケール補正（`1 + 0.25 * mazeIndex + 0.10 * sectorPartitionScore`）を `defaultGraceTurns` / `loopNewTileTurns` / `probationTurns` に適用。
+- **階層的上書き**: `parameterOverrides` > `strategyTuning` > `TacticalContext` 動的算出値 の優先順位で解決・マージされる。
 - **BFS探索設定**: `allowBreakAsRoad`（`!hasDeath && MP>=1 && EXP>=4000`）、`breakCostMultiplier`（`mazeIndex > 0.5` なら `1.1`、それ以外 `1.6`）、`maxBfsSteps`（`clamp(W * H * 2, 3000, 6000)`）。
 
 ---
@@ -257,8 +263,9 @@ flowchart TD
    - 初期状態で剣への到達経路が完全に封鎖されているシードを `MapSituationEvaluator`（`items.isEarlySwordTrapped`）で検知し、`StrategicCommander` が即座に `TERMINAL`（`GIVE_UP`）を発行して評価を高速化する。
 4. **十字架「設置⇔回収」無限ループ防止 (`AdaptiveNavigator.isProtectedGraveBlock`)**:
    - 墓の隣接マス等に設置された十字架・封鎖用ブロックを保護対象として扱い、破壊や無意味な回収チャタリングを遮断する。
-5. **王冠脱出時の閉塞開拓・スタン連携 (`CrownEscapeMission`)**:
+5. **王冠脱出時の閉塞開拓・スタン・露払い安全評価 (`CrownEscapeMission`)**:
    - 魔法封印下や敵/ブロックによる帰還路閉塞時に `MapSituationEvaluator.homeReachability` の閉塞原因を参照し、`BLOCK` 閉塞時は `BREAK`、`DANGEROUS_ENEMY` 閉塞時は `FLASH` スタン（スタン中は再詠唱を抑止して即運搬）で脱出路を切り開く。
+   - 隣接 `ONE_SHOT` 敵の露払い攻撃（王冠取得前・脱出進路）においても `findSafeOneShotAdjacentEnemy` を経由し、他隣接 `LETHAL` 敵・周囲8マス危険敵・合計被ダメージが現在HP未満であることを必ず検証する（危険時は `EVADE_DANGER` へ退避）。
 
 ---
 
@@ -297,6 +304,21 @@ sequenceDiagram
 - **平均クリアターン数 (Avg Clear Turns)**: クリア時の所要ターン数。
 - **死因内訳 (Death Causes)**: `MONSTER_DAMAGE`, `DRAGON_BREATH`, `GIVE_UP_UNSOLVABLE`, `TIMEOUT_LIMIT` 等。
 - **成長マイルストーン達成率**: 剣入手、BREAK解禁、斜め移動解禁、ドラゴン首撃破、王冠運搬。
+
+### 3.2 パラメータ評価・探索・診断システム (`scripts/evaluate-params.ts`)
+複数のトポロジー（`STANDARD_ROOMS`, `NARROW_MAZE`, `FORTRESS_ARENA`, `PILLAR_GRID` 等）× ルールモード（`EXPONENTIAL`, `CLASSIC`）を共通シードで横断評価し、パラメータの比較・探索・シード別診断を行う。
+
+- **実行モード (`--mode`)**:
+  - `compare`（デフォルト）: 動的算出（`Dynamic Auto`）や固定値ベースライン、各種チューニング候補を横並び比較。
+  - `grid`: 主要パラメータの直積グリッドサーチ。
+  - `coordinate`: 座標降下法によりパラメータ軸ごとに最良値を採用しながら反復探索（評価済み設定はキャッシュ）。
+  - `diagnose`: `SimulationConfig.includeRunDetails = true` を有効化し、シード単位のマップ特徴量・解決パラメータ・マイルストーン通過ターン・ミッション消費ターン・Commander 発火履歴を記録。候補間で勝敗が反転したシード（Win/Loss Flip）と勝ち群/負け群の特徴量平均を出力。
+- **総合スコア式**:
+  - 勝率（`+100 * winRate`）およびマイルストーン進捗（`+15 * milestoneProgress`）を加点し、クリアターン比率（`-20 * (avgClearTurns / maxTurnsLimit) * winRate`）、最大無戦果ターン（`-10 * min(1, avgMaxNoGain / 200)`）、ギブアップ率（`-15 * giveUpRate`）を減点。
+- **主なCLIオプション**: `--mode`, `--topologies`, `--ruleModes`, `--runs`, `--maxTurns`, `--seed`, `--passes`, `--output`（JSONレポート保存）。
+  ```powershell
+  npx tsx scripts/evaluate-params.ts --mode=diagnose --ruleModes=EXPONENTIAL --topologies=STANDARD_ROOMS,NARROW_MAZE --runs=10 --output=reports/diagnose.json
+  ```
 
 ---
 
@@ -346,8 +368,9 @@ sequenceDiagram
 | `src/ai/tactics/TacticalExecutor.ts` | 戦術実行ユニット。ディレクティブ解釈、緊急自衛、MP=1リザーブ保護、`resolveMoveOrBreak` 解決。 |
 | `src/ai/tactics/TacticalCombat.ts` | KICKスナイプ、ヒートマップ周回ループ打開、強行突破戦闘。 |
 | `src/ai/tactics/ItemSwapTactics.ts` | 鍵の一時置き退避と有益アイテム回収・再回収スワップ戦術。 |
-| `src/simulation/SimulationRunner.ts` | ヘッドレスバッチシミュレータ。高速バッチ実行調停。 |
-| `src/simulation/SimulationTelemetry.ts` | イベント駆動型テレメトリ集計器。マイルストーン・KPIレポート生成。 |
+| `src/simulation/SimulationRunner.ts` | ヘッドレスバッチシミュレータ。高速バッチ実行調停（`includeRunDetails` によるシード別詳細記録対応）。 |
+| `src/simulation/SimulationTelemetry.ts` | イベント駆動型テレメトリ集計器。マイルストーン・KPI・`RunDiagnosticDetail` レポート生成。 |
+| `scripts/evaluate-params.ts` | マルチトポロジー×ルールモード横断のパラメータ評価・座標降下探索・シード別勝敗フリップ診断スクリプト。 |
 | `src/core/engine/DemoAndAutoPlayController.ts` | デモモードおよび自走検証モード・リアルタイム操作権引き継ぎコントローラー。 |
 | `test/test-ai-perception-strategy.ts` | 認知層・戦略層（PST分離・指令調停・フィードバック）のユニット/結合テスト。 |
 | `test/test-autoplay-v2-integration.ts` | 自律攻略ボットの包括的統合テストスイート。 |

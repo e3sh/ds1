@@ -1,0 +1,2218 @@
+{
+  "generatedAt": "2026-11-17T08:32:35.944Z",
+  "options": {
+    "mode": "diagnose",
+    "topologies": [
+      "STANDARD_ROOMS"
+    ],
+    "ruleModes": [
+      "EXPONENTIAL"
+    ],
+    "runs": 6,
+    "maxTurnsLimit": 2000,
+    "baseSeed": 12345,
+    "difficulty": "NORMAL",
+    "pacing": "STANDARD",
+    "botProfile": "STANDARD",
+    "passes": 2,
+    "outputPath": "reports/eval-diagnose-calibrated.json"
+  },
+  "bestCandidate": {
+    "name": "Crown7",
+    "tuning": {
+      "crownReserveMagic": 7
+    },
+    "overallScore": 24.99,
+    "overallWinRate": 0.17,
+    "overallAvgClearTurns": 1318,
+    "overallAvgMaxNoGain": 62,
+    "durationSec": 45.8,
+    "cells": [
+      {
+        "topology": "STANDARD_ROOMS",
+        "ruleMode": "EXPONENTIAL",
+        "winRate": 0.17,
+        "clearedRuns": 1,
+        "avgClearTurns": 1318,
+        "medianClearTurns": 1318,
+        "avgMaxNoGain": 62,
+        "giveUpRate": 0,
+        "milestoneProgress": 0.8888888888888888,
+        "score": 24.99273333333333,
+        "deathCauses": {
+          "MONSTER_ATTACK": 4,
+          "TIMEOUT_STALL": 1
+        },
+        "commanderLevelCounts": {
+          "RETARGET": 3,
+          "MISSION_TABOO": 3,
+          "NOMINAL": 3
+        },
+        "runDetails": [
+          {
+            "runIndex": 0,
+            "seed": 2103950434,
+            "won": false,
+            "totalTurns": 1468,
+            "deathCause": "MONSTER_ATTACK",
+            "mapMetrics": {
+              "opennessScore": 0.13,
+              "mazeIndex": 0.33,
+              "roomCount": 38,
+              "swordWalkDistance": 28,
+              "nearHomeGraves": 2,
+              "sectorPartitionScore": 0.43,
+              "lairEntranceCount": 8,
+              "lairSafeSpacesCount": 6
+            },
+            "resourceCounts": {
+              "crossCount": 5,
+              "ringCount": 1,
+              "potionCount": 54,
+              "chestCount": 412,
+              "graveCount": 21
+            },
+            "resolvedParamsSummary": {
+              "crownReserveMagic": 7,
+              "prepBypassTurnsNoChest": 38,
+              "prepBypassTurnsWithChest": 68,
+              "defaultGraceTurns": 36,
+              "huntDistNoDiag": 8,
+              "huntDistDiag": 18
+            },
+            "milestoneTurns": {
+              "gotSword": 75,
+              "reachedTargetStr": 736,
+              "unlockedBreak": 913,
+              "unlockedDiagonal": 1314,
+              "killedHead1": 1402,
+              "killedAllHeads": 1420
+            },
+            "missionTurns": {
+              "BOOTSTRAP_SWORD": 75,
+              "HARVEST_POWER_STONE": 330,
+              "EARLY_BREAK_UNLOCK": 28,
+              "CLEAR_TREASURE_ZONE": 303,
+              "PREPARE_DRAGON_ASSAULT": 617,
+              "CASH_IN_GOLD": 20,
+              "SLAY_DRAGON": 47,
+              "CROWN_ESCAPE": 48
+            },
+            "terminalMissionId": "CROWN_ESCAPE",
+            "maxTurnsWithoutSubstantiveGain": 80,
+            "commanderVerdictsCount": 6,
+            "commanderFinalLevel": "NOMINAL",
+            "verdictsSummary": [
+              {
+                "turn": 495,
+                "from": "NOMINAL",
+                "to": "RETARGET",
+                "stallKind": "LOOP"
+              },
+              {
+                "turn": 511,
+                "from": "RETARGET",
+                "to": "MISSION_TABOO",
+                "stallKind": "LOOP"
+              },
+              {
+                "turn": 525,
+                "from": "MISSION_TABOO",
+                "to": "NOMINAL",
+                "stallKind": "FRUITLESS"
+              },
+              {
+                "turn": 623,
+                "from": "NOMINAL",
+                "to": "RETARGET",
+                "stallKind": "LOOP"
+              },
+              {
+                "turn": 639,
+                "from": "RETARGET",
+                "to": "MISSION_TABOO",
+                "stallKind": "LOOP"
+              },
+              {
+                "turn": 651,
+                "from": "MISSION_TABOO",
+                "to": "NOMINAL",
+                "stallKind": null
+              }
+            ]
+          },
+          {
+            "runIndex": 1,
+            "seed": 658745472,
+            "won": false,
+            "totalTurns": 1288,
+            "deathCause": "MONSTER_ATTACK",
+            "mapMetrics": {
+              "opennessScore": 0.13,
+              "mazeIndex": 0.33,
+              "roomCount": 39,
+              "swordWalkDistance": 17,
+              "nearHomeGraves": 0,
+              "sectorPartitionScore": 0.37,
+              "lairEntranceCount": 8,
+              "lairSafeSpacesCount": 6
+            },
+            "resourceCounts": {
+              "crossCount": 3,
+              "ringCount": 1,
+              "potionCount": 37,
+              "chestCount": 473,
+              "graveCount": 20
+            },
+            "resolvedParamsSummary": {
+              "crownReserveMagic": 7,
+              "prepBypassTurnsNoChest": 37,
+              "prepBypassTurnsWithChest": 68,
+              "defaultGraceTurns": 36,
+              "huntDistNoDiag": 8,
+              "huntDistDiag": 18
+            },
+            "milestoneTurns": {
+              "gotSword": 16,
+              "unlockedBreak": 121,
+              "reachedTargetStr": 1042,
+              "unlockedDiagonal": 1088,
+              "killedHead1": 1169,
+              "killedAllHeads": 1187
+            },
+            "missionTurns": {
+              "BOOTSTRAP_SWORD": 16,
+              "HARVEST_POWER_STONE": 527,
+              "CLEAR_TREASURE_ZONE": 499,
+              "PREPARE_DRAGON_ASSAULT": 84,
+              "CASH_IN_GOLD": 9,
+              "SLAY_DRAGON": 52,
+              "CROWN_ESCAPE": 101
+            },
+            "terminalMissionId": "CROWN_ESCAPE",
+            "maxTurnsWithoutSubstantiveGain": 75,
+            "commanderVerdictsCount": 3,
+            "commanderFinalLevel": "NOMINAL",
+            "verdictsSummary": [
+              {
+                "turn": 943,
+                "from": "NOMINAL",
+                "to": "RETARGET",
+                "stallKind": "LOOP"
+              },
+              {
+                "turn": 959,
+                "from": "RETARGET",
+                "to": "MISSION_TABOO",
+                "stallKind": "LOOP"
+              },
+              {
+                "turn": 972,
+                "from": "MISSION_TABOO",
+                "to": "NOMINAL",
+                "stallKind": null
+              }
+            ]
+          },
+          {
+            "runIndex": 2,
+            "seed": 1039823225,
+            "won": true,
+            "totalTurns": 1318,
+            "mapMetrics": {
+              "opennessScore": 0.13,
+              "mazeIndex": 0.33,
+              "roomCount": 39,
+              "swordWalkDistance": 6,
+              "nearHomeGraves": 0,
+              "sectorPartitionScore": 0.52,
+              "lairEntranceCount": 27,
+              "lairSafeSpacesCount": 6
+            },
+            "resourceCounts": {
+              "crossCount": 6,
+              "ringCount": 1,
+              "potionCount": 45,
+              "chestCount": 445,
+              "graveCount": 20
+            },
+            "resolvedParamsSummary": {
+              "crownReserveMagic": 7,
+              "prepBypassTurnsNoChest": 38,
+              "prepBypassTurnsWithChest": 69,
+              "defaultGraceTurns": 36,
+              "huntDistNoDiag": 8,
+              "huntDistDiag": 18
+            },
+            "milestoneTurns": {
+              "gotSword": 9,
+              "unlockedBreak": 389,
+              "unlockedDiagonal": 689,
+              "reachedTargetStr": 746,
+              "killedHead1": 843,
+              "killedAllHeads": 861,
+              "deliveredFirstCrown": 1153
+            },
+            "missionTurns": {
+              "BOOTSTRAP_SWORD": 9,
+              "HARVEST_POWER_STONE": 355,
+              "EARLY_BREAK_UNLOCK": 30,
+              "CLEAR_TREASURE_ZONE": 285,
+              "EMERGENCY_EVACUATE": 67,
+              "PREPARE_DRAGON_ASSAULT": 59,
+              "SLAY_DRAGON": 56,
+              "CROWN_ESCAPE": 457
+            },
+            "terminalMissionId": "CROWN_ESCAPE",
+            "maxTurnsWithoutSubstantiveGain": 53,
+            "commanderVerdictsCount": 0,
+            "commanderFinalLevel": "NOMINAL",
+            "verdictsSummary": []
+          },
+          {
+            "runIndex": 3,
+            "seed": 1756500776,
+            "won": false,
+            "totalTurns": 1410,
+            "deathCause": "MONSTER_ATTACK",
+            "mapMetrics": {
+              "opennessScore": 0.14,
+              "mazeIndex": 0.31,
+              "roomCount": 39,
+              "swordWalkDistance": 42,
+              "nearHomeGraves": 3,
+              "sectorPartitionScore": 0.6,
+              "lairEntranceCount": 31,
+              "lairSafeSpacesCount": 6
+            },
+            "resourceCounts": {
+              "crossCount": 7,
+              "ringCount": 1,
+              "potionCount": 45,
+              "chestCount": 483,
+              "graveCount": 20
+            },
+            "resolvedParamsSummary": {
+              "crownReserveMagic": 7,
+              "prepBypassTurnsNoChest": 38,
+              "prepBypassTurnsWithChest": 70,
+              "defaultGraceTurns": 36,
+              "huntDistNoDiag": 8,
+              "huntDistDiag": 18
+            },
+            "milestoneTurns": {
+              "gotSword": 44,
+              "reachedTargetStr": 645,
+              "unlockedBreak": 698,
+              "unlockedDiagonal": 1155,
+              "killedHead1": 1246,
+              "killedAllHeads": 1264,
+              "deliveredFirstCrown": 1359
+            },
+            "missionTurns": {
+              "BOOTSTRAP_SWORD": 44,
+              "HARVEST_POWER_STONE": 420,
+              "CLEAR_TREASURE_ZONE": 180,
+              "EARLY_BREAK_UNLOCK": 1,
+              "PREPARE_DRAGON_ASSAULT": 519,
+              "CASH_IN_GOLD": 53,
+              "SLAY_DRAGON": 47,
+              "CROWN_ESCAPE": 146
+            },
+            "terminalMissionId": "CROWN_ESCAPE",
+            "maxTurnsWithoutSubstantiveGain": 68,
+            "commanderVerdictsCount": 0,
+            "commanderFinalLevel": "NOMINAL",
+            "verdictsSummary": []
+          },
+          {
+            "runIndex": 4,
+            "seed": 1093989093,
+            "won": false,
+            "totalTurns": 2000,
+            "deathCause": "TIMEOUT_STALL",
+            "mapMetrics": {
+              "opennessScore": 0.12,
+              "mazeIndex": 0.32,
+              "roomCount": 37,
+              "swordWalkDistance": 14,
+              "nearHomeGraves": 0,
+              "sectorPartitionScore": 0.52,
+              "lairEntranceCount": 10,
+              "lairSafeSpacesCount": 6
+            },
+            "resourceCounts": {
+              "crossCount": 5,
+              "ringCount": 1,
+              "potionCount": 55,
+              "chestCount": 467,
+              "graveCount": 20
+            },
+            "resolvedParamsSummary": {
+              "crownReserveMagic": 7,
+              "prepBypassTurnsNoChest": 38,
+              "prepBypassTurnsWithChest": 69,
+              "defaultGraceTurns": 36,
+              "huntDistNoDiag": 8,
+              "huntDistDiag": 18
+            },
+            "milestoneTurns": {
+              "gotSword": 15,
+              "reachedTargetStr": 450,
+              "unlockedBreak": 579,
+              "unlockedDiagonal": 988,
+              "killedHead1": 1052,
+              "killedAllHeads": 1071,
+              "deliveredFirstCrown": 1876
+            },
+            "missionTurns": {
+              "BOOTSTRAP_SWORD": 15,
+              "HARVEST_POWER_STONE": 367,
+              "EARLY_BREAK_UNLOCK": 14,
+              "CLEAR_TREASURE_ZONE": 54,
+              "PREPARE_DRAGON_ASSAULT": 562,
+              "CASH_IN_GOLD": 9,
+              "SLAY_DRAGON": 50,
+              "CROWN_ESCAPE": 929
+            },
+            "terminalMissionId": "CROWN_ESCAPE",
+            "maxTurnsWithoutSubstantiveGain": 46,
+            "commanderVerdictsCount": 0,
+            "commanderFinalLevel": "NOMINAL",
+            "verdictsSummary": []
+          },
+          {
+            "runIndex": 5,
+            "seed": 746190139,
+            "won": false,
+            "totalTurns": 1445,
+            "deathCause": "MONSTER_ATTACK",
+            "mapMetrics": {
+              "opennessScore": 0.11,
+              "mazeIndex": 0.35,
+              "roomCount": 35,
+              "swordWalkDistance": 44,
+              "nearHomeGraves": 1,
+              "sectorPartitionScore": 0.48,
+              "lairEntranceCount": 10,
+              "lairSafeSpacesCount": 6
+            },
+            "resourceCounts": {
+              "crossCount": 2,
+              "ringCount": 1,
+              "potionCount": 53,
+              "chestCount": 408,
+              "graveCount": 20
+            },
+            "resolvedParamsSummary": {
+              "crownReserveMagic": 7,
+              "prepBypassTurnsNoChest": 38,
+              "prepBypassTurnsWithChest": 69,
+              "defaultGraceTurns": 36,
+              "huntDistNoDiag": 8,
+              "huntDistDiag": 18
+            },
+            "milestoneTurns": {
+              "gotSword": 49,
+              "unlockedBreak": 673,
+              "reachedTargetStr": 860,
+              "unlockedDiagonal": 1166,
+              "killedHead1": 1215,
+              "killedAllHeads": 1233,
+              "deliveredFirstCrown": 1345
+            },
+            "missionTurns": {
+              "BOOTSTRAP_SWORD": 49,
+              "CLEAR_TREASURE_ZONE": 445,
+              "HARVEST_POWER_STONE": 314,
+              "EARLY_BREAK_UNLOCK": 26,
+              "CASH_IN_GOLD": 26,
+              "PREPARE_DRAGON_ASSAULT": 339,
+              "SLAY_DRAGON": 34,
+              "CROWN_ESCAPE": 212
+            },
+            "terminalMissionId": "CROWN_ESCAPE",
+            "maxTurnsWithoutSubstantiveGain": 48,
+            "commanderVerdictsCount": 0,
+            "commanderFinalLevel": "NOMINAL",
+            "verdictsSummary": []
+          }
+        ]
+      }
+    ],
+    "totalDeathCauses": {
+      "MONSTER_ATTACK": 4,
+      "TIMEOUT_STALL": 1
+    },
+    "totalCommanderLevels": {
+      "RETARGET": 3,
+      "MISSION_TABOO": 3,
+      "NOMINAL": 3
+    }
+  },
+  "evaluations": [
+    {
+      "name": "Crown7",
+      "tuning": {
+        "crownReserveMagic": 7
+      },
+      "overallScore": 24.99,
+      "overallWinRate": 0.17,
+      "overallAvgClearTurns": 1318,
+      "overallAvgMaxNoGain": 62,
+      "durationSec": 45.8,
+      "cells": [
+        {
+          "topology": "STANDARD_ROOMS",
+          "ruleMode": "EXPONENTIAL",
+          "winRate": 0.17,
+          "clearedRuns": 1,
+          "avgClearTurns": 1318,
+          "medianClearTurns": 1318,
+          "avgMaxNoGain": 62,
+          "giveUpRate": 0,
+          "milestoneProgress": 0.8888888888888888,
+          "score": 24.99273333333333,
+          "deathCauses": {
+            "MONSTER_ATTACK": 4,
+            "TIMEOUT_STALL": 1
+          },
+          "commanderLevelCounts": {
+            "RETARGET": 3,
+            "MISSION_TABOO": 3,
+            "NOMINAL": 3
+          },
+          "runDetails": [
+            {
+              "runIndex": 0,
+              "seed": 2103950434,
+              "won": false,
+              "totalTurns": 1468,
+              "deathCause": "MONSTER_ATTACK",
+              "mapMetrics": {
+                "opennessScore": 0.13,
+                "mazeIndex": 0.33,
+                "roomCount": 38,
+                "swordWalkDistance": 28,
+                "nearHomeGraves": 2,
+                "sectorPartitionScore": 0.43,
+                "lairEntranceCount": 8,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 5,
+                "ringCount": 1,
+                "potionCount": 54,
+                "chestCount": 412,
+                "graveCount": 21
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 7,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 68,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 75,
+                "reachedTargetStr": 736,
+                "unlockedBreak": 913,
+                "unlockedDiagonal": 1314,
+                "killedHead1": 1402,
+                "killedAllHeads": 1420
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 75,
+                "HARVEST_POWER_STONE": 330,
+                "EARLY_BREAK_UNLOCK": 28,
+                "CLEAR_TREASURE_ZONE": 303,
+                "PREPARE_DRAGON_ASSAULT": 617,
+                "CASH_IN_GOLD": 20,
+                "SLAY_DRAGON": 47,
+                "CROWN_ESCAPE": 48
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 80,
+              "commanderVerdictsCount": 6,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": [
+                {
+                  "turn": 495,
+                  "from": "NOMINAL",
+                  "to": "RETARGET",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 511,
+                  "from": "RETARGET",
+                  "to": "MISSION_TABOO",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 525,
+                  "from": "MISSION_TABOO",
+                  "to": "NOMINAL",
+                  "stallKind": "FRUITLESS"
+                },
+                {
+                  "turn": 623,
+                  "from": "NOMINAL",
+                  "to": "RETARGET",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 639,
+                  "from": "RETARGET",
+                  "to": "MISSION_TABOO",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 651,
+                  "from": "MISSION_TABOO",
+                  "to": "NOMINAL",
+                  "stallKind": null
+                }
+              ]
+            },
+            {
+              "runIndex": 1,
+              "seed": 658745472,
+              "won": false,
+              "totalTurns": 1288,
+              "deathCause": "MONSTER_ATTACK",
+              "mapMetrics": {
+                "opennessScore": 0.13,
+                "mazeIndex": 0.33,
+                "roomCount": 39,
+                "swordWalkDistance": 17,
+                "nearHomeGraves": 0,
+                "sectorPartitionScore": 0.37,
+                "lairEntranceCount": 8,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 3,
+                "ringCount": 1,
+                "potionCount": 37,
+                "chestCount": 473,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 7,
+                "prepBypassTurnsNoChest": 37,
+                "prepBypassTurnsWithChest": 68,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 16,
+                "unlockedBreak": 121,
+                "reachedTargetStr": 1042,
+                "unlockedDiagonal": 1088,
+                "killedHead1": 1169,
+                "killedAllHeads": 1187
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 16,
+                "HARVEST_POWER_STONE": 527,
+                "CLEAR_TREASURE_ZONE": 499,
+                "PREPARE_DRAGON_ASSAULT": 84,
+                "CASH_IN_GOLD": 9,
+                "SLAY_DRAGON": 52,
+                "CROWN_ESCAPE": 101
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 75,
+              "commanderVerdictsCount": 3,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": [
+                {
+                  "turn": 943,
+                  "from": "NOMINAL",
+                  "to": "RETARGET",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 959,
+                  "from": "RETARGET",
+                  "to": "MISSION_TABOO",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 972,
+                  "from": "MISSION_TABOO",
+                  "to": "NOMINAL",
+                  "stallKind": null
+                }
+              ]
+            },
+            {
+              "runIndex": 2,
+              "seed": 1039823225,
+              "won": true,
+              "totalTurns": 1318,
+              "mapMetrics": {
+                "opennessScore": 0.13,
+                "mazeIndex": 0.33,
+                "roomCount": 39,
+                "swordWalkDistance": 6,
+                "nearHomeGraves": 0,
+                "sectorPartitionScore": 0.52,
+                "lairEntranceCount": 27,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 6,
+                "ringCount": 1,
+                "potionCount": 45,
+                "chestCount": 445,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 7,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 69,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 9,
+                "unlockedBreak": 389,
+                "unlockedDiagonal": 689,
+                "reachedTargetStr": 746,
+                "killedHead1": 843,
+                "killedAllHeads": 861,
+                "deliveredFirstCrown": 1153
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 9,
+                "HARVEST_POWER_STONE": 355,
+                "EARLY_BREAK_UNLOCK": 30,
+                "CLEAR_TREASURE_ZONE": 285,
+                "EMERGENCY_EVACUATE": 67,
+                "PREPARE_DRAGON_ASSAULT": 59,
+                "SLAY_DRAGON": 56,
+                "CROWN_ESCAPE": 457
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 53,
+              "commanderVerdictsCount": 0,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": []
+            },
+            {
+              "runIndex": 3,
+              "seed": 1756500776,
+              "won": false,
+              "totalTurns": 1410,
+              "deathCause": "MONSTER_ATTACK",
+              "mapMetrics": {
+                "opennessScore": 0.14,
+                "mazeIndex": 0.31,
+                "roomCount": 39,
+                "swordWalkDistance": 42,
+                "nearHomeGraves": 3,
+                "sectorPartitionScore": 0.6,
+                "lairEntranceCount": 31,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 7,
+                "ringCount": 1,
+                "potionCount": 45,
+                "chestCount": 483,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 7,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 70,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 44,
+                "reachedTargetStr": 645,
+                "unlockedBreak": 698,
+                "unlockedDiagonal": 1155,
+                "killedHead1": 1246,
+                "killedAllHeads": 1264,
+                "deliveredFirstCrown": 1359
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 44,
+                "HARVEST_POWER_STONE": 420,
+                "CLEAR_TREASURE_ZONE": 180,
+                "EARLY_BREAK_UNLOCK": 1,
+                "PREPARE_DRAGON_ASSAULT": 519,
+                "CASH_IN_GOLD": 53,
+                "SLAY_DRAGON": 47,
+                "CROWN_ESCAPE": 146
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 68,
+              "commanderVerdictsCount": 0,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": []
+            },
+            {
+              "runIndex": 4,
+              "seed": 1093989093,
+              "won": false,
+              "totalTurns": 2000,
+              "deathCause": "TIMEOUT_STALL",
+              "mapMetrics": {
+                "opennessScore": 0.12,
+                "mazeIndex": 0.32,
+                "roomCount": 37,
+                "swordWalkDistance": 14,
+                "nearHomeGraves": 0,
+                "sectorPartitionScore": 0.52,
+                "lairEntranceCount": 10,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 5,
+                "ringCount": 1,
+                "potionCount": 55,
+                "chestCount": 467,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 7,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 69,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 15,
+                "reachedTargetStr": 450,
+                "unlockedBreak": 579,
+                "unlockedDiagonal": 988,
+                "killedHead1": 1052,
+                "killedAllHeads": 1071,
+                "deliveredFirstCrown": 1876
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 15,
+                "HARVEST_POWER_STONE": 367,
+                "EARLY_BREAK_UNLOCK": 14,
+                "CLEAR_TREASURE_ZONE": 54,
+                "PREPARE_DRAGON_ASSAULT": 562,
+                "CASH_IN_GOLD": 9,
+                "SLAY_DRAGON": 50,
+                "CROWN_ESCAPE": 929
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 46,
+              "commanderVerdictsCount": 0,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": []
+            },
+            {
+              "runIndex": 5,
+              "seed": 746190139,
+              "won": false,
+              "totalTurns": 1445,
+              "deathCause": "MONSTER_ATTACK",
+              "mapMetrics": {
+                "opennessScore": 0.11,
+                "mazeIndex": 0.35,
+                "roomCount": 35,
+                "swordWalkDistance": 44,
+                "nearHomeGraves": 1,
+                "sectorPartitionScore": 0.48,
+                "lairEntranceCount": 10,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 2,
+                "ringCount": 1,
+                "potionCount": 53,
+                "chestCount": 408,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 7,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 69,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 49,
+                "unlockedBreak": 673,
+                "reachedTargetStr": 860,
+                "unlockedDiagonal": 1166,
+                "killedHead1": 1215,
+                "killedAllHeads": 1233,
+                "deliveredFirstCrown": 1345
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 49,
+                "CLEAR_TREASURE_ZONE": 445,
+                "HARVEST_POWER_STONE": 314,
+                "EARLY_BREAK_UNLOCK": 26,
+                "CASH_IN_GOLD": 26,
+                "PREPARE_DRAGON_ASSAULT": 339,
+                "SLAY_DRAGON": 34,
+                "CROWN_ESCAPE": 212
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 48,
+              "commanderVerdictsCount": 0,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": []
+            }
+          ]
+        }
+      ],
+      "totalDeathCauses": {
+        "MONSTER_ATTACK": 4,
+        "TIMEOUT_STALL": 1
+      },
+      "totalCommanderLevels": {
+        "RETARGET": 3,
+        "MISSION_TABOO": 3,
+        "NOMINAL": 3
+      }
+    },
+    {
+      "name": "Auto",
+      "tuning": {},
+      "overallScore": 9.4,
+      "overallWinRate": 0,
+      "overallAvgClearTurns": 0,
+      "overallAvgMaxNoGain": 62,
+      "durationSec": 47.5,
+      "cells": [
+        {
+          "topology": "STANDARD_ROOMS",
+          "ruleMode": "EXPONENTIAL",
+          "winRate": 0,
+          "clearedRuns": 0,
+          "avgClearTurns": 0,
+          "medianClearTurns": 0,
+          "avgMaxNoGain": 62,
+          "giveUpRate": 0,
+          "milestoneProgress": 0.8333333333333334,
+          "score": 9.4,
+          "deathCauses": {
+            "MONSTER_ATTACK": 5,
+            "TIMEOUT_STALL": 1
+          },
+          "commanderLevelCounts": {
+            "RETARGET": 3,
+            "MISSION_TABOO": 3,
+            "NOMINAL": 3
+          },
+          "runDetails": [
+            {
+              "runIndex": 0,
+              "seed": 2103950434,
+              "won": false,
+              "totalTurns": 1468,
+              "deathCause": "MONSTER_ATTACK",
+              "mapMetrics": {
+                "opennessScore": 0.13,
+                "mazeIndex": 0.33,
+                "roomCount": 38,
+                "swordWalkDistance": 28,
+                "nearHomeGraves": 2,
+                "sectorPartitionScore": 0.43,
+                "lairEntranceCount": 8,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 5,
+                "ringCount": 1,
+                "potionCount": 54,
+                "chestCount": 412,
+                "graveCount": 21
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 7,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 68,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 75,
+                "reachedTargetStr": 736,
+                "unlockedBreak": 913,
+                "unlockedDiagonal": 1314,
+                "killedHead1": 1402,
+                "killedAllHeads": 1420
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 75,
+                "HARVEST_POWER_STONE": 330,
+                "EARLY_BREAK_UNLOCK": 28,
+                "CLEAR_TREASURE_ZONE": 303,
+                "PREPARE_DRAGON_ASSAULT": 617,
+                "CASH_IN_GOLD": 20,
+                "SLAY_DRAGON": 47,
+                "CROWN_ESCAPE": 48
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 80,
+              "commanderVerdictsCount": 6,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": [
+                {
+                  "turn": 495,
+                  "from": "NOMINAL",
+                  "to": "RETARGET",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 511,
+                  "from": "RETARGET",
+                  "to": "MISSION_TABOO",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 525,
+                  "from": "MISSION_TABOO",
+                  "to": "NOMINAL",
+                  "stallKind": "FRUITLESS"
+                },
+                {
+                  "turn": 623,
+                  "from": "NOMINAL",
+                  "to": "RETARGET",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 639,
+                  "from": "RETARGET",
+                  "to": "MISSION_TABOO",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 651,
+                  "from": "MISSION_TABOO",
+                  "to": "NOMINAL",
+                  "stallKind": null
+                }
+              ]
+            },
+            {
+              "runIndex": 1,
+              "seed": 658745472,
+              "won": false,
+              "totalTurns": 1288,
+              "deathCause": "MONSTER_ATTACK",
+              "mapMetrics": {
+                "opennessScore": 0.13,
+                "mazeIndex": 0.33,
+                "roomCount": 39,
+                "swordWalkDistance": 17,
+                "nearHomeGraves": 0,
+                "sectorPartitionScore": 0.37,
+                "lairEntranceCount": 8,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 3,
+                "ringCount": 1,
+                "potionCount": 37,
+                "chestCount": 473,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 6,
+                "prepBypassTurnsNoChest": 37,
+                "prepBypassTurnsWithChest": 68,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 16,
+                "unlockedBreak": 121,
+                "reachedTargetStr": 1042,
+                "unlockedDiagonal": 1088,
+                "killedHead1": 1169,
+                "killedAllHeads": 1187
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 16,
+                "HARVEST_POWER_STONE": 527,
+                "CLEAR_TREASURE_ZONE": 499,
+                "PREPARE_DRAGON_ASSAULT": 84,
+                "CASH_IN_GOLD": 9,
+                "SLAY_DRAGON": 52,
+                "CROWN_ESCAPE": 101
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 75,
+              "commanderVerdictsCount": 3,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": [
+                {
+                  "turn": 943,
+                  "from": "NOMINAL",
+                  "to": "RETARGET",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 959,
+                  "from": "RETARGET",
+                  "to": "MISSION_TABOO",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 972,
+                  "from": "MISSION_TABOO",
+                  "to": "NOMINAL",
+                  "stallKind": null
+                }
+              ]
+            },
+            {
+              "runIndex": 2,
+              "seed": 1039823225,
+              "won": false,
+              "totalTurns": 1084,
+              "deathCause": "MONSTER_ATTACK",
+              "mapMetrics": {
+                "opennessScore": 0.13,
+                "mazeIndex": 0.33,
+                "roomCount": 39,
+                "swordWalkDistance": 6,
+                "nearHomeGraves": 0,
+                "sectorPartitionScore": 0.52,
+                "lairEntranceCount": 27,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 6,
+                "ringCount": 1,
+                "potionCount": 45,
+                "chestCount": 445,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 6,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 69,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 9,
+                "unlockedBreak": 389,
+                "unlockedDiagonal": 689,
+                "reachedTargetStr": 746,
+                "killedHead1": 818,
+                "killedAllHeads": 833
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 9,
+                "HARVEST_POWER_STONE": 355,
+                "EARLY_BREAK_UNLOCK": 30,
+                "CLEAR_TREASURE_ZONE": 285,
+                "EMERGENCY_EVACUATE": 67,
+                "PREPARE_DRAGON_ASSAULT": 35,
+                "SLAY_DRAGON": 52,
+                "CROWN_ESCAPE": 251
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 53,
+              "commanderVerdictsCount": 0,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": []
+            },
+            {
+              "runIndex": 3,
+              "seed": 1756500776,
+              "won": false,
+              "totalTurns": 1410,
+              "deathCause": "MONSTER_ATTACK",
+              "mapMetrics": {
+                "opennessScore": 0.14,
+                "mazeIndex": 0.31,
+                "roomCount": 39,
+                "swordWalkDistance": 42,
+                "nearHomeGraves": 3,
+                "sectorPartitionScore": 0.6,
+                "lairEntranceCount": 31,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 7,
+                "ringCount": 1,
+                "potionCount": 45,
+                "chestCount": 483,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 6,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 70,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 44,
+                "reachedTargetStr": 645,
+                "unlockedBreak": 698,
+                "unlockedDiagonal": 1155,
+                "killedHead1": 1246,
+                "killedAllHeads": 1264,
+                "deliveredFirstCrown": 1359
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 44,
+                "HARVEST_POWER_STONE": 420,
+                "CLEAR_TREASURE_ZONE": 180,
+                "EARLY_BREAK_UNLOCK": 1,
+                "PREPARE_DRAGON_ASSAULT": 519,
+                "CASH_IN_GOLD": 53,
+                "SLAY_DRAGON": 47,
+                "CROWN_ESCAPE": 146
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 68,
+              "commanderVerdictsCount": 0,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": []
+            },
+            {
+              "runIndex": 4,
+              "seed": 1093989093,
+              "won": false,
+              "totalTurns": 2000,
+              "deathCause": "TIMEOUT_STALL",
+              "mapMetrics": {
+                "opennessScore": 0.12,
+                "mazeIndex": 0.32,
+                "roomCount": 37,
+                "swordWalkDistance": 14,
+                "nearHomeGraves": 0,
+                "sectorPartitionScore": 0.52,
+                "lairEntranceCount": 10,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 5,
+                "ringCount": 1,
+                "potionCount": 55,
+                "chestCount": 467,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 6,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 69,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 15,
+                "reachedTargetStr": 450,
+                "unlockedBreak": 579,
+                "unlockedDiagonal": 988,
+                "killedHead1": 1052,
+                "killedAllHeads": 1071,
+                "deliveredFirstCrown": 1876
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 15,
+                "HARVEST_POWER_STONE": 367,
+                "EARLY_BREAK_UNLOCK": 14,
+                "CLEAR_TREASURE_ZONE": 54,
+                "PREPARE_DRAGON_ASSAULT": 562,
+                "CASH_IN_GOLD": 9,
+                "SLAY_DRAGON": 50,
+                "CROWN_ESCAPE": 929
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 46,
+              "commanderVerdictsCount": 0,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": []
+            },
+            {
+              "runIndex": 5,
+              "seed": 746190139,
+              "won": false,
+              "totalTurns": 1445,
+              "deathCause": "MONSTER_ATTACK",
+              "mapMetrics": {
+                "opennessScore": 0.11,
+                "mazeIndex": 0.35,
+                "roomCount": 35,
+                "swordWalkDistance": 44,
+                "nearHomeGraves": 1,
+                "sectorPartitionScore": 0.48,
+                "lairEntranceCount": 10,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 2,
+                "ringCount": 1,
+                "potionCount": 53,
+                "chestCount": 408,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 7,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 69,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 49,
+                "unlockedBreak": 673,
+                "reachedTargetStr": 860,
+                "unlockedDiagonal": 1166,
+                "killedHead1": 1215,
+                "killedAllHeads": 1233,
+                "deliveredFirstCrown": 1345
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 49,
+                "CLEAR_TREASURE_ZONE": 445,
+                "HARVEST_POWER_STONE": 314,
+                "EARLY_BREAK_UNLOCK": 26,
+                "CASH_IN_GOLD": 26,
+                "PREPARE_DRAGON_ASSAULT": 339,
+                "SLAY_DRAGON": 34,
+                "CROWN_ESCAPE": 212
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 48,
+              "commanderVerdictsCount": 0,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": []
+            }
+          ]
+        }
+      ],
+      "totalDeathCauses": {
+        "MONSTER_ATTACK": 5,
+        "TIMEOUT_STALL": 1
+      },
+      "totalCommanderLevels": {
+        "RETARGET": 3,
+        "MISSION_TABOO": 3,
+        "NOMINAL": 3
+      }
+    },
+    {
+      "name": "Crown10",
+      "tuning": {
+        "crownReserveMagic": 10
+      },
+      "overallScore": 9.4,
+      "overallWinRate": 0,
+      "overallAvgClearTurns": 0,
+      "overallAvgMaxNoGain": 62,
+      "durationSec": 41.6,
+      "cells": [
+        {
+          "topology": "STANDARD_ROOMS",
+          "ruleMode": "EXPONENTIAL",
+          "winRate": 0,
+          "clearedRuns": 0,
+          "avgClearTurns": 0,
+          "medianClearTurns": 0,
+          "avgMaxNoGain": 62,
+          "giveUpRate": 0,
+          "milestoneProgress": 0.8333333333333334,
+          "score": 9.4,
+          "deathCauses": {
+            "MONSTER_ATTACK": 5,
+            "TIMEOUT_STALL": 1
+          },
+          "commanderLevelCounts": {
+            "RETARGET": 3,
+            "MISSION_TABOO": 3,
+            "NOMINAL": 3
+          },
+          "runDetails": [
+            {
+              "runIndex": 0,
+              "seed": 2103950434,
+              "won": false,
+              "totalTurns": 1468,
+              "deathCause": "MONSTER_ATTACK",
+              "mapMetrics": {
+                "opennessScore": 0.13,
+                "mazeIndex": 0.33,
+                "roomCount": 38,
+                "swordWalkDistance": 28,
+                "nearHomeGraves": 2,
+                "sectorPartitionScore": 0.43,
+                "lairEntranceCount": 8,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 5,
+                "ringCount": 1,
+                "potionCount": 54,
+                "chestCount": 412,
+                "graveCount": 21
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 10,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 68,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 75,
+                "reachedTargetStr": 736,
+                "unlockedBreak": 913,
+                "unlockedDiagonal": 1314,
+                "killedHead1": 1402,
+                "killedAllHeads": 1420
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 75,
+                "HARVEST_POWER_STONE": 330,
+                "EARLY_BREAK_UNLOCK": 28,
+                "CLEAR_TREASURE_ZONE": 303,
+                "PREPARE_DRAGON_ASSAULT": 617,
+                "CASH_IN_GOLD": 20,
+                "SLAY_DRAGON": 47,
+                "CROWN_ESCAPE": 48
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 80,
+              "commanderVerdictsCount": 6,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": [
+                {
+                  "turn": 495,
+                  "from": "NOMINAL",
+                  "to": "RETARGET",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 511,
+                  "from": "RETARGET",
+                  "to": "MISSION_TABOO",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 525,
+                  "from": "MISSION_TABOO",
+                  "to": "NOMINAL",
+                  "stallKind": "FRUITLESS"
+                },
+                {
+                  "turn": 623,
+                  "from": "NOMINAL",
+                  "to": "RETARGET",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 639,
+                  "from": "RETARGET",
+                  "to": "MISSION_TABOO",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 651,
+                  "from": "MISSION_TABOO",
+                  "to": "NOMINAL",
+                  "stallKind": null
+                }
+              ]
+            },
+            {
+              "runIndex": 1,
+              "seed": 658745472,
+              "won": false,
+              "totalTurns": 1288,
+              "deathCause": "MONSTER_ATTACK",
+              "mapMetrics": {
+                "opennessScore": 0.13,
+                "mazeIndex": 0.33,
+                "roomCount": 39,
+                "swordWalkDistance": 17,
+                "nearHomeGraves": 0,
+                "sectorPartitionScore": 0.37,
+                "lairEntranceCount": 8,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 3,
+                "ringCount": 1,
+                "potionCount": 37,
+                "chestCount": 473,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 10,
+                "prepBypassTurnsNoChest": 37,
+                "prepBypassTurnsWithChest": 68,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 16,
+                "unlockedBreak": 121,
+                "reachedTargetStr": 1042,
+                "unlockedDiagonal": 1088,
+                "killedHead1": 1169,
+                "killedAllHeads": 1187
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 16,
+                "HARVEST_POWER_STONE": 527,
+                "CLEAR_TREASURE_ZONE": 499,
+                "PREPARE_DRAGON_ASSAULT": 84,
+                "CASH_IN_GOLD": 9,
+                "SLAY_DRAGON": 52,
+                "CROWN_ESCAPE": 101
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 75,
+              "commanderVerdictsCount": 3,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": [
+                {
+                  "turn": 943,
+                  "from": "NOMINAL",
+                  "to": "RETARGET",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 959,
+                  "from": "RETARGET",
+                  "to": "MISSION_TABOO",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 972,
+                  "from": "MISSION_TABOO",
+                  "to": "NOMINAL",
+                  "stallKind": null
+                }
+              ]
+            },
+            {
+              "runIndex": 2,
+              "seed": 1039823225,
+              "won": false,
+              "totalTurns": 1005,
+              "deathCause": "MONSTER_ATTACK",
+              "mapMetrics": {
+                "opennessScore": 0.13,
+                "mazeIndex": 0.33,
+                "roomCount": 39,
+                "swordWalkDistance": 6,
+                "nearHomeGraves": 0,
+                "sectorPartitionScore": 0.52,
+                "lairEntranceCount": 27,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 6,
+                "ringCount": 1,
+                "potionCount": 45,
+                "chestCount": 445,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 10,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 69,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 9,
+                "unlockedBreak": 389,
+                "unlockedDiagonal": 689,
+                "reachedTargetStr": 746,
+                "killedHead1": 844,
+                "killedAllHeads": 862
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 9,
+                "HARVEST_POWER_STONE": 355,
+                "EARLY_BREAK_UNLOCK": 30,
+                "CLEAR_TREASURE_ZONE": 285,
+                "EMERGENCY_EVACUATE": 67,
+                "PREPARE_DRAGON_ASSAULT": 60,
+                "SLAY_DRAGON": 56,
+                "CROWN_ESCAPE": 143
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 53,
+              "commanderVerdictsCount": 0,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": []
+            },
+            {
+              "runIndex": 3,
+              "seed": 1756500776,
+              "won": false,
+              "totalTurns": 1410,
+              "deathCause": "MONSTER_ATTACK",
+              "mapMetrics": {
+                "opennessScore": 0.14,
+                "mazeIndex": 0.31,
+                "roomCount": 39,
+                "swordWalkDistance": 42,
+                "nearHomeGraves": 3,
+                "sectorPartitionScore": 0.6,
+                "lairEntranceCount": 31,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 7,
+                "ringCount": 1,
+                "potionCount": 45,
+                "chestCount": 483,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 10,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 70,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 44,
+                "reachedTargetStr": 645,
+                "unlockedBreak": 698,
+                "unlockedDiagonal": 1155,
+                "killedHead1": 1246,
+                "killedAllHeads": 1264,
+                "deliveredFirstCrown": 1359
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 44,
+                "HARVEST_POWER_STONE": 420,
+                "CLEAR_TREASURE_ZONE": 180,
+                "EARLY_BREAK_UNLOCK": 1,
+                "PREPARE_DRAGON_ASSAULT": 519,
+                "CASH_IN_GOLD": 53,
+                "SLAY_DRAGON": 47,
+                "CROWN_ESCAPE": 146
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 68,
+              "commanderVerdictsCount": 0,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": []
+            },
+            {
+              "runIndex": 4,
+              "seed": 1093989093,
+              "won": false,
+              "totalTurns": 2000,
+              "deathCause": "TIMEOUT_STALL",
+              "mapMetrics": {
+                "opennessScore": 0.12,
+                "mazeIndex": 0.32,
+                "roomCount": 37,
+                "swordWalkDistance": 14,
+                "nearHomeGraves": 0,
+                "sectorPartitionScore": 0.52,
+                "lairEntranceCount": 10,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 5,
+                "ringCount": 1,
+                "potionCount": 55,
+                "chestCount": 467,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 10,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 69,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 15,
+                "reachedTargetStr": 450,
+                "unlockedBreak": 579,
+                "unlockedDiagonal": 988,
+                "killedHead1": 1052,
+                "killedAllHeads": 1071,
+                "deliveredFirstCrown": 1876
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 15,
+                "HARVEST_POWER_STONE": 367,
+                "EARLY_BREAK_UNLOCK": 14,
+                "CLEAR_TREASURE_ZONE": 54,
+                "PREPARE_DRAGON_ASSAULT": 562,
+                "CASH_IN_GOLD": 9,
+                "SLAY_DRAGON": 50,
+                "CROWN_ESCAPE": 929
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 46,
+              "commanderVerdictsCount": 0,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": []
+            },
+            {
+              "runIndex": 5,
+              "seed": 746190139,
+              "won": false,
+              "totalTurns": 1445,
+              "deathCause": "MONSTER_ATTACK",
+              "mapMetrics": {
+                "opennessScore": 0.11,
+                "mazeIndex": 0.35,
+                "roomCount": 35,
+                "swordWalkDistance": 44,
+                "nearHomeGraves": 1,
+                "sectorPartitionScore": 0.48,
+                "lairEntranceCount": 10,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 2,
+                "ringCount": 1,
+                "potionCount": 53,
+                "chestCount": 408,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 10,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 69,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 49,
+                "unlockedBreak": 673,
+                "reachedTargetStr": 860,
+                "unlockedDiagonal": 1166,
+                "killedHead1": 1215,
+                "killedAllHeads": 1233,
+                "deliveredFirstCrown": 1345
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 49,
+                "CLEAR_TREASURE_ZONE": 445,
+                "HARVEST_POWER_STONE": 314,
+                "EARLY_BREAK_UNLOCK": 26,
+                "CASH_IN_GOLD": 26,
+                "PREPARE_DRAGON_ASSAULT": 339,
+                "SLAY_DRAGON": 34,
+                "CROWN_ESCAPE": 212
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 48,
+              "commanderVerdictsCount": 0,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": []
+            }
+          ]
+        }
+      ],
+      "totalDeathCauses": {
+        "MONSTER_ATTACK": 5,
+        "TIMEOUT_STALL": 1
+      },
+      "totalCommanderLevels": {
+        "RETARGET": 3,
+        "MISSION_TABOO": 3,
+        "NOMINAL": 3
+      }
+    },
+    {
+      "name": "Crown4",
+      "tuning": {
+        "crownReserveMagic": 4
+      },
+      "overallScore": 6.07,
+      "overallWinRate": 0,
+      "overallAvgClearTurns": 0,
+      "overallAvgMaxNoGain": 62,
+      "durationSec": 39,
+      "cells": [
+        {
+          "topology": "STANDARD_ROOMS",
+          "ruleMode": "EXPONENTIAL",
+          "winRate": 0,
+          "clearedRuns": 0,
+          "avgClearTurns": 0,
+          "medianClearTurns": 0,
+          "avgMaxNoGain": 62,
+          "giveUpRate": 0.16666666666666666,
+          "milestoneProgress": 0.7777777777777778,
+          "score": 6.066666666666666,
+          "deathCauses": {
+            "MONSTER_ATTACK": 4,
+            "GIVE_UP_UNSOLVABLE": 1,
+            "TIMEOUT_STALL": 1
+          },
+          "commanderLevelCounts": {
+            "RETARGET": 3,
+            "MISSION_TABOO": 5,
+            "NOMINAL": 5,
+            "TERMINAL": 1
+          },
+          "runDetails": [
+            {
+              "runIndex": 0,
+              "seed": 2103950434,
+              "won": false,
+              "totalTurns": 1468,
+              "deathCause": "MONSTER_ATTACK",
+              "mapMetrics": {
+                "opennessScore": 0.13,
+                "mazeIndex": 0.33,
+                "roomCount": 38,
+                "swordWalkDistance": 28,
+                "nearHomeGraves": 2,
+                "sectorPartitionScore": 0.43,
+                "lairEntranceCount": 8,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 5,
+                "ringCount": 1,
+                "potionCount": 54,
+                "chestCount": 412,
+                "graveCount": 21
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 4,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 68,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 75,
+                "reachedTargetStr": 736,
+                "unlockedBreak": 913,
+                "unlockedDiagonal": 1314,
+                "killedHead1": 1402,
+                "killedAllHeads": 1420
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 75,
+                "HARVEST_POWER_STONE": 330,
+                "EARLY_BREAK_UNLOCK": 28,
+                "CLEAR_TREASURE_ZONE": 303,
+                "PREPARE_DRAGON_ASSAULT": 617,
+                "CASH_IN_GOLD": 20,
+                "SLAY_DRAGON": 47,
+                "CROWN_ESCAPE": 48
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 80,
+              "commanderVerdictsCount": 6,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": [
+                {
+                  "turn": 495,
+                  "from": "NOMINAL",
+                  "to": "RETARGET",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 511,
+                  "from": "RETARGET",
+                  "to": "MISSION_TABOO",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 525,
+                  "from": "MISSION_TABOO",
+                  "to": "NOMINAL",
+                  "stallKind": "FRUITLESS"
+                },
+                {
+                  "turn": 623,
+                  "from": "NOMINAL",
+                  "to": "RETARGET",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 639,
+                  "from": "RETARGET",
+                  "to": "MISSION_TABOO",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 651,
+                  "from": "MISSION_TABOO",
+                  "to": "NOMINAL",
+                  "stallKind": null
+                }
+              ]
+            },
+            {
+              "runIndex": 1,
+              "seed": 658745472,
+              "won": false,
+              "totalTurns": 1288,
+              "deathCause": "MONSTER_ATTACK",
+              "mapMetrics": {
+                "opennessScore": 0.13,
+                "mazeIndex": 0.33,
+                "roomCount": 39,
+                "swordWalkDistance": 17,
+                "nearHomeGraves": 0,
+                "sectorPartitionScore": 0.37,
+                "lairEntranceCount": 8,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 3,
+                "ringCount": 1,
+                "potionCount": 37,
+                "chestCount": 473,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 4,
+                "prepBypassTurnsNoChest": 37,
+                "prepBypassTurnsWithChest": 68,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 16,
+                "unlockedBreak": 121,
+                "reachedTargetStr": 1042,
+                "unlockedDiagonal": 1088,
+                "killedHead1": 1169,
+                "killedAllHeads": 1187
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 16,
+                "HARVEST_POWER_STONE": 527,
+                "CLEAR_TREASURE_ZONE": 499,
+                "PREPARE_DRAGON_ASSAULT": 84,
+                "CASH_IN_GOLD": 9,
+                "SLAY_DRAGON": 52,
+                "CROWN_ESCAPE": 101
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 75,
+              "commanderVerdictsCount": 3,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": [
+                {
+                  "turn": 943,
+                  "from": "NOMINAL",
+                  "to": "RETARGET",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 959,
+                  "from": "RETARGET",
+                  "to": "MISSION_TABOO",
+                  "stallKind": "LOOP"
+                },
+                {
+                  "turn": 972,
+                  "from": "MISSION_TABOO",
+                  "to": "NOMINAL",
+                  "stallKind": null
+                }
+              ]
+            },
+            {
+              "runIndex": 2,
+              "seed": 1039823225,
+              "won": false,
+              "totalTurns": 907,
+              "deathCause": "GIVE_UP_UNSOLVABLE",
+              "mapMetrics": {
+                "opennessScore": 0.13,
+                "mazeIndex": 0.33,
+                "roomCount": 39,
+                "swordWalkDistance": 6,
+                "nearHomeGraves": 0,
+                "sectorPartitionScore": 0.52,
+                "lairEntranceCount": 27,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 6,
+                "ringCount": 1,
+                "potionCount": 45,
+                "chestCount": 445,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 4,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 69,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 9,
+                "unlockedBreak": 389,
+                "unlockedDiagonal": 689,
+                "reachedTargetStr": 746,
+                "killedHead1": 815
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 9,
+                "HARVEST_POWER_STONE": 355,
+                "EARLY_BREAK_UNLOCK": 30,
+                "CLEAR_TREASURE_ZONE": 286,
+                "EMERGENCY_EVACUATE": 142,
+                "PREPARE_DRAGON_ASSAULT": 37,
+                "SLAY_DRAGON": 47
+              },
+              "terminalMissionId": "EMERGENCY_EVACUATE",
+              "maxTurnsWithoutSubstantiveGain": 53,
+              "commanderVerdictsCount": 5,
+              "commanderFinalLevel": "TERMINAL",
+              "verdictsSummary": [
+                {
+                  "turn": 882,
+                  "from": "NOMINAL",
+                  "to": "MISSION_TABOO",
+                  "stallKind": "CHURN"
+                },
+                {
+                  "turn": 883,
+                  "from": "MISSION_TABOO",
+                  "to": "NOMINAL",
+                  "stallKind": "CHURN"
+                },
+                {
+                  "turn": 891,
+                  "from": "NOMINAL",
+                  "to": "MISSION_TABOO",
+                  "stallKind": "CHURN"
+                },
+                {
+                  "turn": 892,
+                  "from": "MISSION_TABOO",
+                  "to": "NOMINAL",
+                  "stallKind": null
+                },
+                {
+                  "turn": 907,
+                  "from": "NOMINAL",
+                  "to": "TERMINAL",
+                  "stallKind": "CONFINED"
+                }
+              ]
+            },
+            {
+              "runIndex": 3,
+              "seed": 1756500776,
+              "won": false,
+              "totalTurns": 1410,
+              "deathCause": "MONSTER_ATTACK",
+              "mapMetrics": {
+                "opennessScore": 0.14,
+                "mazeIndex": 0.31,
+                "roomCount": 39,
+                "swordWalkDistance": 42,
+                "nearHomeGraves": 3,
+                "sectorPartitionScore": 0.6,
+                "lairEntranceCount": 31,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 7,
+                "ringCount": 1,
+                "potionCount": 45,
+                "chestCount": 483,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 4,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 70,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 44,
+                "reachedTargetStr": 645,
+                "unlockedBreak": 698,
+                "unlockedDiagonal": 1155,
+                "killedHead1": 1246,
+                "killedAllHeads": 1264,
+                "deliveredFirstCrown": 1359
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 44,
+                "HARVEST_POWER_STONE": 420,
+                "CLEAR_TREASURE_ZONE": 180,
+                "EARLY_BREAK_UNLOCK": 1,
+                "PREPARE_DRAGON_ASSAULT": 519,
+                "CASH_IN_GOLD": 53,
+                "SLAY_DRAGON": 47,
+                "CROWN_ESCAPE": 146
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 68,
+              "commanderVerdictsCount": 0,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": []
+            },
+            {
+              "runIndex": 4,
+              "seed": 1093989093,
+              "won": false,
+              "totalTurns": 2000,
+              "deathCause": "TIMEOUT_STALL",
+              "mapMetrics": {
+                "opennessScore": 0.12,
+                "mazeIndex": 0.32,
+                "roomCount": 37,
+                "swordWalkDistance": 14,
+                "nearHomeGraves": 0,
+                "sectorPartitionScore": 0.52,
+                "lairEntranceCount": 10,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 5,
+                "ringCount": 1,
+                "potionCount": 55,
+                "chestCount": 467,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 4,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 69,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 15,
+                "reachedTargetStr": 450,
+                "unlockedBreak": 579,
+                "unlockedDiagonal": 988,
+                "killedHead1": 1052,
+                "killedAllHeads": 1071,
+                "deliveredFirstCrown": 1876
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 15,
+                "HARVEST_POWER_STONE": 367,
+                "EARLY_BREAK_UNLOCK": 14,
+                "CLEAR_TREASURE_ZONE": 54,
+                "PREPARE_DRAGON_ASSAULT": 562,
+                "CASH_IN_GOLD": 9,
+                "SLAY_DRAGON": 50,
+                "CROWN_ESCAPE": 929
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 46,
+              "commanderVerdictsCount": 0,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": []
+            },
+            {
+              "runIndex": 5,
+              "seed": 746190139,
+              "won": false,
+              "totalTurns": 1445,
+              "deathCause": "MONSTER_ATTACK",
+              "mapMetrics": {
+                "opennessScore": 0.11,
+                "mazeIndex": 0.35,
+                "roomCount": 35,
+                "swordWalkDistance": 44,
+                "nearHomeGraves": 1,
+                "sectorPartitionScore": 0.48,
+                "lairEntranceCount": 10,
+                "lairSafeSpacesCount": 6
+              },
+              "resourceCounts": {
+                "crossCount": 2,
+                "ringCount": 1,
+                "potionCount": 53,
+                "chestCount": 408,
+                "graveCount": 20
+              },
+              "resolvedParamsSummary": {
+                "crownReserveMagic": 4,
+                "prepBypassTurnsNoChest": 38,
+                "prepBypassTurnsWithChest": 69,
+                "defaultGraceTurns": 36,
+                "huntDistNoDiag": 8,
+                "huntDistDiag": 18
+              },
+              "milestoneTurns": {
+                "gotSword": 49,
+                "unlockedBreak": 673,
+                "reachedTargetStr": 860,
+                "unlockedDiagonal": 1166,
+                "killedHead1": 1215,
+                "killedAllHeads": 1233,
+                "deliveredFirstCrown": 1345
+              },
+              "missionTurns": {
+                "BOOTSTRAP_SWORD": 49,
+                "CLEAR_TREASURE_ZONE": 445,
+                "HARVEST_POWER_STONE": 314,
+                "EARLY_BREAK_UNLOCK": 26,
+                "CASH_IN_GOLD": 26,
+                "PREPARE_DRAGON_ASSAULT": 339,
+                "SLAY_DRAGON": 34,
+                "CROWN_ESCAPE": 212
+              },
+              "terminalMissionId": "CROWN_ESCAPE",
+              "maxTurnsWithoutSubstantiveGain": 48,
+              "commanderVerdictsCount": 0,
+              "commanderFinalLevel": "NOMINAL",
+              "verdictsSummary": []
+            }
+          ]
+        }
+      ],
+      "totalDeathCauses": {
+        "MONSTER_ATTACK": 4,
+        "GIVE_UP_UNSOLVABLE": 1,
+        "TIMEOUT_STALL": 1
+      },
+      "totalCommanderLevels": {
+        "RETARGET": 3,
+        "MISSION_TABOO": 5,
+        "NOMINAL": 5,
+        "TERMINAL": 1
+      }
+    }
+  ]
+}

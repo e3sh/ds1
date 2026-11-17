@@ -1,6 +1,5 @@
 import { GameEngine } from '../../core/GameEngine.js';
 import { TacticalSnapshot } from '../perception/TacticalSnapshot.js';
-import { MapSituationEvaluator } from '../perception/MapSituationEvaluator.js';
 import { IStrategicMission, MissionCompletionReason, MissionStatus } from './StrategicMission.js';
 import { StrategicDirective } from './StrategicDirective.js';
 import { EmergencyEvacuateMission } from './missions/EmergencyEvacuateMission.js';
@@ -244,16 +243,8 @@ export class StrategicPlanner {
       }
     }
 
-    // 1-C. 決戦・準備移行割り込み: 育成・探索系ミッション中に適正戦力に到達または宝箱・石枯渇なら準備または決戦へ移行
+    // 1-C. 決戦・準備移行割り込み: 育成・探索系ミッション中に適正戦力に到達したら準備または決戦へ移行
     const player = engine.getPlayer();
-    const items = MapSituationEvaluator.get(snapshot, engine).items;
-    const canUnlockChestsCurrent =
-      (player.holdItem === 'KEY' || MissionSelector.hasReachableKey(snapshot.map, snapshot)) &&
-      MissionSelector.hasReachableChests(snapshot.map, snapshot);
-    const allChestsAndStonesExhausted =
-      !canUnlockChestsCurrent &&
-      items.powerStones.length === 0 &&
-      player.holdItem !== 'POWER_STONE';
     const canDamageDragon = player.hasSword && player.strength >= snapshot.params.targetStr;
     const hasDiagonal = player.experience >= 12000 || player.canDiagonal || snapshot.milestones.canDiagonal;
     if (canDamageDragon && hasDiagonal) {
@@ -262,8 +253,7 @@ export class StrategicPlanner {
     const readyForDragon = MissionSelector.isReadyForDragon(snapshot, engine, this.defensePrepTurns, this.activeWaivers);
     const canTransitionToPrep =
       readyForDragon ||
-      canDamageDragon ||
-      (player.hasSword && allChestsAndStonesExhausted);
+      canDamageDragon;
 
     const crownReserveMagic = Math.min(
       snapshot.params.maxTargetMagic,

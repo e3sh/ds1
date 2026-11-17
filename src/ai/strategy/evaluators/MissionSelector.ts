@@ -61,8 +61,8 @@ export class MissionSelector {
       return new BootstrapSwordMission();
     }
 
-    // ③ パワーストーン所持中 -> 無条件で最優先奉納（STR倍化＆HP全快＆コイン自動換金）
-    if (player.holdItem === 'POWER_STONE') {
+    // ③ パワーストーン所持中 -> クールダウン/タブー中でない限り最優先奉納（STR倍化＆HP全快＆コイン自動換金）
+    if (!harvestOnCooldown && player.holdItem === 'POWER_STONE') {
       return new HarvestPowerStoneMission(player.pos);
     }
 
@@ -81,9 +81,6 @@ export class MissionSelector {
       (player.holdItem === 'KEY' || this.hasReachableKey(map, snapshot)) &&
       this.hasReachableChests(map, snapshot);
     const itemsAll = MapSituationEvaluator.get(snapshot, engine).items;
-    const allChestsAndStonesExhausted =
-      !canUnlockChests &&
-      itemsAll.powerStones.length === 0;
 
     // ★重要: STR目標達成後は宝箱開錠ループに留めず、直ちに決戦準備評価へ直行！
     const canDamageDragon = player.hasSword && !needStr;
@@ -161,7 +158,7 @@ export class MissionSelector {
           if (player.gold > 0) {
             return new CashInGoldMission(player.gold);
           }
-          if (!prepOnCooldown && itemsAll.nearestCoin !== null) {
+          if (!prepOnCooldown && player.holdItem === 'NONE' && itemsAll.nearestCoin !== null) {
             return new PrepareDragonAssaultMission();
           }
         } else if (!earlyBreakOnCooldown && this.hasSafeEnemyNearby(player, snapshot)) {
@@ -170,10 +167,9 @@ export class MissionSelector {
       }
     }
 
-    // ④ STR達成済みまたは全宝箱・石枯渇時: 決戦準備評価（EXP育成・MP備蓄・コイン換金・移転）
+    // ④ STR達成済み: 決戦準備評価（EXP育成・MP備蓄・コイン換金・移転）
     // ※要件1: 5条件（攻撃力・斜め移動・BREAK・MP>=3・HP十分）をすべて満たすまで絶対に SlayDragonMission を起動しない
-    const needAssaultPrep = canDamageDragon || allChestsAndStonesExhausted;
-    if (needAssaultPrep) {
+    if (canDamageDragon) {
       const prepMission = this.selectDragonPrepMission(snapshot, engine, {
         relocateDone,
         prepTurns,
