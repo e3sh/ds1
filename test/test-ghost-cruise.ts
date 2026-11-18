@@ -191,4 +191,25 @@ console.log('Testing 4: cruiseSteps resets on item pickup (suction & steal)...')
   console.log('✓ 4. cruiseSteps correctly resets on item suction and player steal.');
 }
 
+// ==========================================
+// 5. 既にアイテムを運搬中のゴーストはプレイヤーから強奪・上書きしない検証
+// ==========================================
+console.log('Testing 5: Ghost already carrying an item must not overwrite it by stealing from player...');
+{
+  const map = new WorldMap(30, 30);
+  const player = new Player({ x: 15, y: 15, hp: 1000 });
+  player.holdItem = 'CROWN';
+
+  const carrierGhost = new Ghost({ pos: { x: 14, y: 15 }, vx: 1, vy: 0 });
+  carrierGhost.carriedItem = 'CROWN';
+
+  GhostAISystem.stepGhost(carrierGhost, player, map);
+  assert.strictEqual(carrierGhost.pos.x, 15);
+  assert.strictEqual(carrierGhost.pos.y, 15);
+  assert.strictEqual(carrierGhost.carriedItem, 'CROWN', 'Ghost must retain its originally carried CROWN');
+  assert.strictEqual(player.holdItem, 'CROWN', 'Player must retain their held CROWN when ghost already carries an item');
+
+  console.log('✓ 5. Ghost carrying an item safely preserves both items without overwrite.');
+}
+
 console.log('--- ✓ All Ghost AI Cruise & Direction Turn Tests Passed Successfully! ---');

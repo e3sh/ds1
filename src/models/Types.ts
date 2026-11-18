@@ -128,6 +128,7 @@ export type DeathCauseType =
   | 'GIVE_UP_STALL_CHURN'     // AI停滞ギブアップ：ミッション往復(CHURN)
   | 'GIVE_UP_STALL_LOOP'      // AI停滞ギブアップ：周回ループ(LOOP)
   | 'GIVE_UP_STALL_FRUITLESS' // AI停滞ギブアップ：無戦果停滞(FRUITLESS)
+  | 'ERROR_CROWN_MISSING'     // 不変条件違反：ドラゴン撃破後に王冠総数が4個未満になった
   | 'UNKNOWN';
 
 export type GiveUpCategory = 'PHYSICAL_TRAP' | 'AI_STALL' | 'MANUAL' | 'OTHER';

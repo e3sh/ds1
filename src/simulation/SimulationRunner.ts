@@ -167,6 +167,27 @@ export class SimulationRunner {
           }
           break;
         }
+
+        // 不変条件検証: ドラゴン全首撃破後の王冠総数は常に4個でなければならない
+        if (engine.getState() === 'PLAYING' && engine.getDragon().crownsSpawned) {
+          const totalCrowns = SimulationRunner.countTotalCrowns(engine);
+          if (totalCrowns < 4) {
+            const diag = bot.getDiagnosticSnapshot();
+            const errMsg = `[ERROR] Crown conservation violated at turn ${turns} (seed=${runSeed}): totalCrowns=${totalCrowns} < 4`;
+            console.error(errMsg);
+            player.deathInfo = {
+              cause: 'ERROR_CROWN_MISSING',
+              message: errMsg,
+              damage: 0,
+              turn: turns,
+              finalMissionId: diag.finalMissionId,
+              finalMissionName: diag.finalMissionName,
+              commanderLevel: diag.commanderLevel,
+              commanderTransitions: diag.commanderTransitions,
+            };
+            break;
+          }
+        }
       }
 
       const won = engine.getState() === 'STAGECLEAR';
@@ -616,5 +637,30 @@ export class SimulationRunner {
       },
       pstMetrics: pstSummary,
     };
+  }
+
+  /**
+   * マップ・プレイヤー・ゴースト上に存在する王冠の総数を集計する（不変条件検証用）
+   */
+  public static countTotalCrowns(engine: GameEngine): number {
+    const player = engine.getPlayer();
+    const map = engine.getMap();
+    let total = player.crowns + (player.holdItem === 'CROWN' ? 1 : 0);
+
+    for (let y = 0; y < map.height; y++) {
+      for (let x = 0; x < map.width; x++) {
+        if (map.getItem({ x, y }) === 'CROWN') {
+          total++;
+        }
+      }
+    }
+
+    for (const g of engine.getGhosts()) {
+      if (g.carriedItem === 'CROWN') {
+        total++;
+      }
+    }
+
+    return total;
   }
 }

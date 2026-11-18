@@ -122,8 +122,9 @@ export class GhostAISystem {
     ghost.pos = nextPos;
 
     // 1. プレイヤーと接触した場合のアイテム強奪処理 (十字架も含めひったくり & 急転換)
+    // ※ 既に別アイテムを運搬中のゴーストは上書き消滅を防ぐため強奪しない
     if (ghost.pos.x === player.pos.x && ghost.pos.y === player.pos.y) {
-      if (player.holdItem !== 'NONE') {
+      if (player.holdItem !== 'NONE' && !ghost.carriedItem) {
         const stolenItem = player.holdItem;
         player.holdItem = 'NONE';
         ghost.carriedItem = stolenItem as TileType;

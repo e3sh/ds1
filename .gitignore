@@ -3,6 +3,7 @@ node_modules/
 
 # ビルド成果物
 dist/
+reports/
 
 # ログ・キャッシュ
 npm-debug.log*
