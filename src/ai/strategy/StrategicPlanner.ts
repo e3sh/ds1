@@ -212,6 +212,12 @@ export class StrategicPlanner {
       dragon && (dragon.isAllHeadsDefeated || dragon.heads.every(h => !h.isAlive))
     );
 
+    const hasApproachingLethalWhileInjured =
+      snapshot.params.coinGrantsExp === false &&
+      snapshot.player.hp < snapshot.player.experience &&
+      this.activeMission?.id !== 'SLAY_DRAGON' &&
+      (snapshot.situation?.surroundings.approachingLethalEnemies.length ?? 0) > 0;
+
     // 1. ドラゴン討伐完了 -> 即座に王冠脱出ミッションへ切り替え＆絶対維持
     // (HPピンチや即死敵隣接を理由に EmergencyEvacuateMission へ毎ターン上書きして状態リセットされるのを防ぐ)
     if (isAllHeadsDefeated) {
@@ -233,7 +239,7 @@ export class StrategicPlanner {
         this.activeMission = new CrownEscapeMission();
         this.activeMission.startTurn = snapshot.totalTurns;
       }
-    } else if (snapshot.threats.isLethalDanger || snapshot.threats.isPinchHp) {
+    } else if (snapshot.threats.isLethalDanger || snapshot.threats.isPinchHp || hasApproachingLethalWhileInjured) {
       // 1-B. 緊急危機介入 (HPピンチまたは即死敵隣接 ※王冠脱出局面以外)
       if (!this.activeMission || this.activeMission.id !== 'EMERGENCY_EVACUATE') {
         if (this.activeMission) {

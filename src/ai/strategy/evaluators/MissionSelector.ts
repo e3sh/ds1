@@ -68,11 +68,17 @@ export class MissionSelector {
     }
 
     const needStr = player.strength < snapshot.params.targetStr;
+    const coinGrantsExp = snapshot.params.coinGrantsExp !== false;
+    const isClassicInjuredHunt =
+      !coinGrantsExp &&
+      player.hp < player.experience &&
+      EarlyBreakUnlockMission.isHpSafeForHunting(player, snapshot);
 
     // 足元にパワーストーンが存在する場合:
     // STR未達時で8歩周期チェーン継続可能（KEY所持かつ近傍宝箱あり＆既存石だけでSTR未到達＆歩数条件一致）なら開錠を継続し、そうでなければ回収奉納へ
+    // ※CLASSIC負傷狩り中(HP < EXP かつ EXP < 4000)はHOME全快リセットを防ぐためスキップ
     const floorItem = map.getItem(player.pos);
-    if (floorItem === 'POWER_STONE' && needStr) {
+    if (floorItem === 'POWER_STONE' && needStr && !(isClassicInjuredHunt && player.experience < 4000 && player.strength >= 2510)) {
       if (!MapSituationEvaluator.get(snapshot, engine).items.shouldContinueChestChain) {
         return new HarvestPowerStoneMission(player.pos);
       }
@@ -89,11 +95,12 @@ export class MissionSelector {
     const mp = snapshot.params.missionPolicy ?? DEFAULT_MISSION_POLICY_PARAMS;
 
     if (!canDamageDragon) {
-      // 序盤BREAK(EXP 4,000)解禁優先: 手ぶらで安全敵が近傍にいれば最速でBREAK習得へ
+      // 序盤BREAK(EXP 4,000)解禁優先: 手ぶら(またはCLASSIC負傷狩り中で石以外)で安全敵がいれば最速でBREAK習得へ
       if (
         player.experience < 4000 &&
-        player.holdItem === 'NONE' &&
+        (player.holdItem === 'NONE' || (isClassicInjuredHunt && player.holdItem !== 'POWER_STONE')) &&
         !earlyBreakOnCooldown &&
+        EarlyBreakUnlockMission.isHpSafeForHunting(player, snapshot) &&
         this.hasSafeEnemyNearby(player, snapshot)
       ) {
         return new EarlyBreakUnlockMission(4000);
@@ -101,7 +108,6 @@ export class MissionSelector {
 
       // ④-A. コイン換金帰還トリガー:
       // コインでEXPが増えるモード時のみ、マイルストーン到達または大量金貨で換金帰還する
-      const coinGrantsExp = snapshot.params.coinGrantsExp !== false;
       if (coinGrantsExp && player.gold > 0) {
         const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
         const afterExp = player.experience + estimatedGainedExp;
@@ -131,24 +137,26 @@ export class MissionSelector {
       }
 
       // ④-C. 手ぶら時（holdItem === 'NONE'）の資源回収:
+      // ※CLASSIC負傷狩り中(HP < EXP かつ EXP < 4000)は、HOME全快リセットを防ぐため石回収を控える
+      const allowStoneHarvestNow = !(isClassicInjuredHunt && player.experience < 4000 && player.strength >= 2510);
       if (player.holdItem === 'NONE') {
         const nearestStone = this.findNearestPowerStone(player.pos, map, snapshot);
         const distStone = nearestStone ? map.getTorusDistance(player.pos, nearestStone).manhattan : Infinity;
 
         // STR未達時かつ近傍（stoneSearchDist以内）に石がある場合のみ石回収・奉納を優先
-        if (!harvestOnCooldown && needStr && nearestStone && distStone <= snapshot.params.stoneSearchDist) {
+        if (allowStoneHarvestNow && !harvestOnCooldown && needStr && nearestStone && distStone <= snapshot.params.stoneSearchDist) {
           return new HarvestPowerStoneMission(nearestStone);
         }
 
         // 未開封宝箱・鍵が存在する場合は宝箱攻略を最優先！
-        if (!clearZoneOnCooldown && canUnlockChests) {
+        if (!clearZoneOnCooldown && canUnlockChests && !(isClassicInjuredHunt && player.experience < 4000)) {
           const nearestZone = snapshot.spatial.getNearestUnclearedTreasureZone(player.pos, map, snapshot.memory, snapshot.totalTurns);
           if (nearestZone) return new ClearTreasureZoneMission(nearestZone.id);
           return new ClearTreasureZoneMission('GLOBAL_ALL');
         }
 
         // 到達可能な宝箱が枯渇している場合のみ、残存石の回収へ
-        if (!harvestOnCooldown && needStr && nearestStone) {
+        if (allowStoneHarvestNow && !harvestOnCooldown && needStr && nearestStone) {
           return new HarvestPowerStoneMission(nearestStone);
         }
       }
@@ -205,7 +213,6 @@ export class MissionSelector {
 
     // ⑥ コイン換金帰還判定:
     // コインでEXPが増えるモード時のみ、マイルストーン到達または一定枚数で帰還
-    const coinGrantsExp = snapshot.params.coinGrantsExp !== false;
     if (coinGrantsExp && player.gold > 0) {
       const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
       const afterExp = player.experience + estimatedGainedExp;
@@ -236,10 +243,12 @@ export class MissionSelector {
       }
     }
 
-    // ⑨ 孤立したパワーストーンの回収
-    const stonePos = !harvestOnCooldown ? this.findNearestPowerStone(player.pos, map, snapshot) : null;
-    if (stonePos) {
-      return new HarvestPowerStoneMission(stonePos);
+    // ⑨ 孤立したパワーストーンの回収（STR目標未達時のみ）
+    if (!canDamageDragon) {
+      const stonePos = !harvestOnCooldown ? this.findNearestPowerStone(player.pos, map, snapshot) : null;
+      if (stonePos) {
+        return new HarvestPowerStoneMission(stonePos);
+      }
     }
 
     // ⑩ フォールバック: 未踏フロンティア遠征探索
@@ -256,7 +265,10 @@ export class MissionSelector {
     maxDistOverride?: number
   ): boolean {
     const targetExp = snapshot.milestones?.hasTargetStr ? snapshot.params.targetDefenseExp : 4000;
-    return EarlyBreakUnlockMission.findNearestSafeEnemy(player, snapshot, targetExp, maxDistOverride) !== null;
+    return (
+      EarlyBreakUnlockMission.findNearestSafeEnemy(player, snapshot, targetExp, maxDistOverride) !== null ||
+      EarlyBreakUnlockMission.findFlashKillCandidate(player, snapshot) !== null
+    );
   }
 
   public static findNearestPowerStone(fromPos: Position, map: WorldMap, snapshot: TacticalSnapshot): Position | null {
@@ -415,14 +427,19 @@ export class MissionSelector {
         }
       } else {
         // 非指数・コインEXPなしモード: 敵討伐によるEXP稼ぎを最優先
-        if (!earlyBreakOnCooldown && this.hasSafeEnemyNearby(player, snapshot)) {
+        if (
+          !earlyBreakOnCooldown &&
+          EarlyBreakUnlockMission.isHpSafeForHunting(player, snapshot) &&
+          this.hasSafeEnemyNearby(player, snapshot)
+        ) {
           return new EarlyBreakUnlockMission(Math.max(12000, snapshot.params.targetDefenseExp));
         }
       }
 
+      const skipChestForClassicHunt = !coinGrantsExp && player.hp < player.experience && player.experience < 12000;
       const hasKey = options.includeHeldKeyInChestCheck ? (player.holdItem === 'KEY' || this.hasReachableKey(map, snapshot)) : this.hasReachableKey(map, snapshot);
       const canUnlockChests = hasKey && this.hasReachableChests(map, snapshot);
-      if (!clearZoneOnCooldown && canUnlockChests) {
+      if (!clearZoneOnCooldown && canUnlockChests && !skipChestForClassicHunt) {
         if (options.prioritizeImmediateSlay) {
           return null;
         }
@@ -430,7 +447,11 @@ export class MissionSelector {
         if (nearestZone) return new ClearTreasureZoneMission(nearestZone.id);
         return new ClearTreasureZoneMission('GLOBAL_ALL');
       }
-      if (!earlyBreakOnCooldown && this.hasSafeEnemyNearby(player, snapshot)) {
+      if (
+        !earlyBreakOnCooldown &&
+        EarlyBreakUnlockMission.isHpSafeForHunting(player, snapshot) &&
+        this.hasSafeEnemyNearby(player, snapshot)
+      ) {
         return new EarlyBreakUnlockMission(Math.max(12000, snapshot.params.targetDefenseExp));
       }
       if (options.prioritizeImmediateSlay) {

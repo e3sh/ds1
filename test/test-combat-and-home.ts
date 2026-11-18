@@ -162,6 +162,25 @@ console.log('Testing 2: HOME return events & full healing...');
   assert.strictEqual(expResult.goldBonusHp, 753, '割合HPオーバーヒールが753であること');
   assert.strictEqual(expResult.newHp, 3773, '新HPが3773になること');
 
+  // 2-6. HPがEXPを上回っている状態での帰還（コインなし時は維持、コインあり時は現在HPに加算）
+  const overHpPlayer = new Player({ x: 9, y: 10, hp: 1800, experience: 1500 });
+  overHpPlayer.maxHp = 1800;
+  overHpPlayer.gold = 0;
+  const noCoinRes = overHpPlayer.healAtHome();
+  assert.strictEqual(noCoinRes.prevHp, 1800);
+  assert.strictEqual(noCoinRes.newHp, 1800, 'HPがEXPを上回っていてコインがない場合はHPが維持されること');
+  assert.strictEqual(noCoinRes.hpRestored, 0, '回復量は0であること');
+  assert.strictEqual(overHpPlayer.hp, 1800);
+  assert.strictEqual(overHpPlayer.maxHp, 1800);
+
+  overHpPlayer.gold = 5; // クラシック仕様: +50 HP
+  const withCoinRes = overHpPlayer.healAtHome();
+  assert.strictEqual(withCoinRes.goldBonusHp, 50);
+  assert.strictEqual(withCoinRes.newHp, 1850, 'HPがEXPを上回っていてコインがある場合は現在HPに加算されること');
+  assert.strictEqual(withCoinRes.hpRestored, 50);
+  assert.strictEqual(overHpPlayer.hp, 1850);
+  assert.strictEqual(overHpPlayer.maxHp, 1850);
+
   console.log('✓ 2. HOME return events & full healing tests passed.');
 }
 

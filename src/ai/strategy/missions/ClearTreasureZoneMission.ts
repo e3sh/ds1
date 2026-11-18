@@ -250,7 +250,11 @@ export class ClearTreasureZoneMission extends BaseStrategicMission {
 
     // 2. 足元・近傍の有益アイテム回収
     const floorItem = map.getItem(player.pos);
-    const needStr = player.strength < snapshot.params.targetStr;
+    const isClassicInjuredHunt =
+      snapshot.params.coinGrantsExp === false &&
+      player.hp < player.experience &&
+      player.experience < 4000;
+    const needStr = player.strength < snapshot.params.targetStr && !isClassicInjuredHunt;
     const needExp = player.experience < snapshot.params.targetDefenseExp;
     const needMagic = player.magic < snapshot.params.maxTargetMagic;
     const situation = MapSituationEvaluator.get(snapshot, engine);
@@ -381,6 +385,14 @@ export class ClearTreasureZoneMission extends BaseStrategicMission {
 
     // 3. FETCHING_KEY: 鍵を持っていない場合（ロック済み鍵を維持して移動）
     if (player.holdItem !== 'KEY') {
+      if (player.holdItem !== 'NONE') {
+        this.subMode = 'FETCHING_KEY';
+        return {
+          type: 'DROP_HOLD_ITEM',
+          priority: 89,
+          reason: `鍵回収のため手持ちアイテム [${player.holdItem}] を床に置く`,
+        };
+      }
       this.subMode = 'FETCHING_KEY';
       if (floorItem === 'KEY') {
         this.lockTarget('KEY', player.pos, snapshot.totalTurns, player.pos, map);

@@ -47,10 +47,16 @@ export class DirectiveArbiter {
     // 2. 並行基本行動（Opportunistic Behaviors）の評価
     const candidates: StrategicDirective[] = [];
 
-    // 並行行動 1: 動線上のついで拾い (手ぶら時のみ)
+    // 並行行動 1: 動線上のついで拾い (手ぶら時のみ。CLASSICの敵追跡中は足元0歩以外の寄り道を抑止)
     const pickupDirective = OpportunisticEvaluator.evaluatePickup(snapshot, engine, rawDirective);
     if (pickupDirective) {
-      candidates.push(pickupDirective);
+      const isClassicHuntingEnemy =
+        snapshot.params.coinGrantsExp === false &&
+        activeMission?.id === 'EARLY_BREAK_UNLOCK' &&
+        rawDirective.type === 'ATTACK_TARGET';
+      if (!isClassicHuntingEnemy || pickupDirective.type === 'PICKUP_ITEM') {
+        candidates.push(pickupDirective);
+      }
     }
 
     // 並行行動 2: 動線上の安全敵ワンパン (剣所持時のみ)

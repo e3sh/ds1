@@ -503,7 +503,10 @@ export class TurnExecutionController {
       });
 
       this.engine.getAudio().playHomeHeal();
-      let msg = `我が家に帰還！ HPが全快（EXP基準: ${home.newHp.toLocaleString()}）した！`;
+      let msg =
+        home.prevHp < player.experience
+          ? `我が家に帰還！ HPが全快（EXP基準: ${home.newHp.toLocaleString()}）した！`
+          : `我が家に帰還！（現在HP: ${home.newHp.toLocaleString()}）`;
       if (home.goldConverted > 0) {
         msg += ` 所持コイン${home.goldConverted}枚を奉納！ HP+${home.goldBonusHp.toLocaleString()}上乗せ`;
         if (home.goldExpGained > 0) {

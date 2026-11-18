@@ -91,6 +91,7 @@ export interface ItemReachabilitySummary {
   bestOpportunisticItem: OpportunisticItemCandidate | null;
   getReachableChestsInZone: (zoneBounds: { x1: number; y1: number; x2: number; y2: number }) => Position[];
   getNoBreakDist: (pos: Position) => number;
+  getReachableDist: (pos: Position) => number;
   readonly isEarlySwordTrapped: boolean;
 }
 
@@ -996,6 +997,13 @@ export class MapSituationEvaluator {
       return d >= 0 ? d : Infinity;
     };
 
+    const getReachableDist = (pos: Position): number => {
+      const wx = ((pos.x % mapW) + mapW) % mapW;
+      const wy = ((pos.y % mapH) + mapH) % mapH;
+      const d = bfsDist[wy * mapW + wx];
+      return d >= 0 ? d : Infinity;
+    };
+
     const getReachableChestsInZone = (zoneBounds: { x1: number; y1: number; x2: number; y2: number }): Position[] => {
       const minX = Math.min(zoneBounds.x1, zoneBounds.x2);
       const maxX = Math.max(zoneBounds.x1, zoneBounds.x2);
@@ -1165,6 +1173,7 @@ export class MapSituationEvaluator {
       bestOpportunisticItem,
       getReachableChestsInZone,
       getNoBreakDist,
+      getReachableDist,
       get isEarlySwordTrapped(): boolean {
         if (earlySwordTrappedEvaluated) return cachedEarlySwordTrapped;
         earlySwordTrappedEvaluated = true;
@@ -1316,6 +1325,13 @@ export class MapSituationEvaluator {
     let hasActiveDangerousEnemyOnFloor = false;
     let enemyNearSpawnHome: EnemyInstance | null = null;
 
+    const chebyshev2DangerCandidates: {
+      enemy: EnemyInstance;
+      attackThreat: AttackThreat;
+      defenseThreat: DefenseThreat;
+    }[] = [];
+    let chebyshev2OrLessDangerCount = 0;
+
     for (const e of enemies) {
       if (!e.isAlive || e.isPermanentlyFrozen || (e.frozenTimer ?? 0) > 0) continue;
 
@@ -1354,18 +1370,25 @@ export class MapSituationEvaluator {
       }
 
       const isDangerOrLethal =
-        details.defenseThreat === 'LETHAL' || details.damageToPlayer >= player.hp * 0.40;
-      if (
-        dist.chebyshev <= 2 &&
-        dist.manhattan >= 2 &&
-        dist.manhattan <= 2 &&
-        isDangerOrLethal &&
-        details.attackThreat !== 'ONE_SHOT'
-      ) {
-        approachingLethalEnemies.push(e);
+        details.defenseThreat === 'LETHAL' ||
+        (player.holdItem === 'CROWN' && details.damageToPlayer >= player.hp * 0.40) ||
+        details.damageToPlayer >= player.hp * 0.40;
+      if (dist.chebyshev <= 2 && isDangerOrLethal) {
+        chebyshev2OrLessDangerCount++;
+        if (dist.chebyshev === 2) {
+          chebyshev2DangerCandidates.push({
+            enemy: e,
+            attackThreat: details.attackThreat,
+            defenseThreat: details.defenseThreat,
+          });
+        }
       }
 
-      if (dist.chebyshev >= 2 && dist.chebyshev <= 3 && details.overallThreat === 'LETHAL') {
+      if (
+        dist.chebyshev >= 2 &&
+        dist.chebyshev <= 3 &&
+        (details.overallThreat === 'LETHAL' || details.defenseThreat === 'LETHAL')
+      ) {
         approachingLethalChebyshev3.push(e);
       }
 
@@ -1380,6 +1403,17 @@ export class MapSituationEvaluator {
         map.getTorusDistance(e.pos, map.spawnHomePos).chebyshev <= 2
       ) {
         enemyNearSpawnHome = e;
+      }
+    }
+
+    const isHoldingCrown = player.holdItem === 'CROWN';
+    for (const cand of chebyshev2DangerCandidates) {
+      if (
+        cand.attackThreat !== 'ONE_SHOT' ||
+        chebyshev2OrLessDangerCount >= 2 ||
+        (isHoldingCrown && cand.defenseThreat === 'LETHAL')
+      ) {
+        approachingLethalEnemies.push(cand.enemy);
       }
     }
 
@@ -1432,8 +1466,20 @@ export class MapSituationEvaluator {
       const enemyOnTile = enemies.find(e => e.isAlive && e.pos.x === nextPos.x && e.pos.y === nextPos.y);
       if (enemyOnTile) {
         if (d.includes('_')) continue;
-        const rawDmg = Math.max(0, enemyOnTile.atk - effectiveDef);
-        candidates.push({ dir: d, damage: rawDmg, reason: `敵マス突破 (${enemyOnTile.name})` });
+        const details = ThreatEvaluator.evaluateThreatDetails(player, enemyOnTile);
+        const isFrozenTarget = enemyOnTile.isPermanentlyFrozen || (enemyOnTile.frozenTimer ?? 0) > 0;
+        let totalDmg =
+          details.turnsToKill === 1 || isFrozenTarget
+            ? 0
+            : Math.max(0, enemyOnTile.atk - effectiveDef);
+        for (const e of enemies) {
+          if (e === enemyOnTile) continue;
+          if (!e.isAlive || e.isPermanentlyFrozen || (e.frozenTimer ?? 0) > 0) continue;
+          if (map.getTorusDistance(curPos, e.pos).manhattan === 1) {
+            totalDmg += Math.max(0, e.atk - effectiveDef);
+          }
+        }
+        candidates.push({ dir: d, damage: totalDmg, reason: `敵マス突破 (${enemyOnTile.name})` });
         continue;
       }
 

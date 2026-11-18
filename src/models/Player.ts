@@ -260,9 +260,10 @@ export class Player {
       }
     }
 
-    // 我が家に帰還時の回復: EXPが基本、GOLDによる一時上乗せ（上限 655,350）
-    this.maxHp = Math.min(Player.MAX_HP, this.experience + goldBonusHp);
-    this.hp = this.maxHp;
+    // 我が家に帰還時の回復: EXPを下回っていればEXPまで回復し、上回っていれば現在HPを維持した上でGOLD分を加算（上限 655,350）
+    const baseHp = Math.max(this.hp, this.experience);
+    this.hp = Math.min(Player.MAX_HP, baseHp + goldBonusHp);
+    this.maxHp = Math.min(Player.MAX_HP, Math.max(this.experience, this.hp));
     this.gold = 0;
     this.deathInfo = null;
 

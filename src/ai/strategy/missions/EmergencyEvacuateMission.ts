@@ -21,8 +21,12 @@ export class EmergencyEvacuateMission extends BaseStrategicMission {
   };
 
   public evaluateStatus(snapshot: TacticalSnapshot, _engine: GameEngine): MissionStatus {
+    const hasApproachingLethalWhileInjured =
+      snapshot.params.coinGrantsExp === false &&
+      snapshot.player.hp < snapshot.player.experience &&
+      (snapshot.situation?.surroundings.approachingLethalEnemies.length ?? 0) > 0;
     // 致命的危機が解除されたか判定
-    if (!snapshot.threats.isLethalDanger && !snapshot.threats.isPinchHp) {
+    if (!snapshot.threats.isLethalDanger && !snapshot.threats.isPinchHp && !hasApproachingLethalWhileInjured) {
       this.completionReason = 'OBJECTIVE_ACHIEVED';
       return 'COMPLETED';
     }

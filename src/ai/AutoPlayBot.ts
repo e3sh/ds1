@@ -112,7 +112,7 @@ export class AutoPlayBot {
         this.isGivenUp = true;
         engine.handleGameOver({
           cause: 'GIVE_UP_UNSOLVABLE',
-          message: this.currentTargetDesc || '💀 詰み検知: 進行経路が存在しないためギブアップ',
+          message: `${this.currentTargetDesc || '💀 詰み検知: 進行経路が存在しないためギブアップ'} | ${this.buildBoardSummaryForGiveUp(engine)}`,
           damage: 0,
           turn: engine.getTotalTurns(),
         });
@@ -347,6 +347,26 @@ export class AutoPlayBot {
   public getTelemetryStatus(player: Player, _map?: WorldMap, turn?: number): string {
     const t = turn ?? this.totalTurns;
     return `T:${t} [${this.currentPhase}] HP:${player.hp}/${player.maxHp} STR:${player.strength} MP:${player.magic} | ${this.currentTargetDesc}`;
+  }
+
+  private buildBoardSummaryForGiveUp(engine: GameEngine): string {
+    const p = engine.getPlayer();
+    const map = engine.getMap ? engine.getMap() : (engine as any).getWorldMap();
+    const livingEnemies = engine.getEnemies().filter(e => e.isAlive).length;
+    let chests = 0;
+    let potions = 0;
+    let stones = 0;
+    let keys = 0;
+    for (let y = 0; y < map.height; y++) {
+      for (let x = 0; x < map.width; x++) {
+        if (map.getObject(x, y) === 'CHEST') chests++;
+        const item = map.getItem(x, y);
+        if (item === 'POTION') potions++;
+        else if (item === 'POWER_STONE') stones++;
+        else if (item === 'KEY') keys++;
+      }
+    }
+    return `盤面[STR:${p.strength}, EXP:${p.experience}, MP:${p.magic}, hold:${p.holdItem}, 宝箱:${chests}, 鍵:${keys}, 石:${stones}, 壺:${potions}, 生存敵:${livingEnemies}]`;
   }
 }
 

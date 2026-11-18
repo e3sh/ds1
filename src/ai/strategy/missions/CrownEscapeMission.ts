@@ -335,19 +335,36 @@ export class CrownEscapeMission extends BaseStrategicMission {
 
       if (
         (canFreezeWhenEmpty1C || canFlashWhenEmpty1C) &&
-        surroundings.floorItem === 'NONE' &&
         (surroundings.chebyshev1ActiveDangerousEnemies.length > 0 ||
           surroundings.approachingLethalEnemies.length > 0)
       ) {
         const targetDanger =
           surroundings.chebyshev1ActiveDangerousEnemies[0]?.enemy ??
           surroundings.approachingLethalEnemies[0];
+
+        if (surroundings.floorItem !== 'NONE') {
+          return {
+            type: 'EVADE_DANGER',
+            priority: 98,
+            reason: `🚨 王冠運搬中・足元アイテム(${surroundings.floorItem})回避し空き床で魔法発動準備 (${targetDanger.name})`,
+          };
+        }
+
+        const totalDangerCount1C =
+          surroundings.chebyshev1ActiveDangerousEnemies.length +
+          surroundings.approachingLethalEnemies.length;
+        const preferFlash1C =
+          canFlashWhenEmpty1C &&
+          (!canFreezeWhenEmpty1C ||
+            surroundings.approachingLethalEnemies.length > 0 ||
+            totalDangerCount1C >= 2);
+
         this.clearTargetLock();
         this.subMode = 'CLEARING_RETURN_ENEMY';
         return {
           type: 'DROP_HOLD_ITEM',
           priority: 98,
-          reason: `👑 接近危険敵を${canFreezeWhenEmpty1C ? 'FREEZE永久凍結' : 'FLASH足止め'}するため王冠一時ドロップ (${targetDanger.name})`,
+          reason: `👑 接近危険敵を${preferFlash1C ? 'FLASH足止め' : 'FREEZE永久凍結'}するため王冠一時ドロップ (${targetDanger.name})`,
         };
       }
 
@@ -724,40 +741,70 @@ export class CrownEscapeMission extends BaseStrategicMission {
     const hasCardAdjacentDanger = surroundings.adjacentActiveEnemies.some(
       e => e.defenseThreat === 'LETHAL' || e.damageToPlayer >= player.hp * 0.35
     );
-    if (
-      surroundings.canSafelyFreezeAdjacent &&
-      MagicSystem.canCast(player, 'FREEZE').allowed &&
-      (!snapshot.milestones.canBreak || player.magic > 1 || surroundings.safeEvadeDir === null) &&
-      (hasCardAdjacentDanger || surroundings.safeEvadeDir === null || isCrownPathBlocked)
-    ) {
-      this.subMode = 'CLEARING_RETURN_ENEMY';
-      return {
-        type: 'CAST_MAGIC',
-        magicToCast: 'FREEZE',
-        priority: 96,
-        reason: `❄️ 脱出路確保: 隣接危険敵をFREEZE永久凍結 (${surroundings.chebyshev1ActiveDangerousEnemies[0].enemy.name})`,
-      };
-    }
+    const totalDangerousCount2B =
+      surroundings.chebyshev1ActiveDangerousEnemies.length +
+      surroundings.approachingLethalEnemies.length;
+    const preferFlashOverFreeze =
+      surroundings.approachingLethalEnemies.length > 0 || totalDangerousCount2B >= 2;
 
-    const hasCloseLethalChebyshev2 =
-      surroundings.approachingLethalEnemies.length > 0 ||
-      surroundings.approachingLethalChebyshev3.some(
-        e => map.getTorusDistance(curPos, e.pos).chebyshev <= 2
-      );
+    const tryCastFreeze2B = (): StrategicDirective | null => {
+      if (
+        surroundings.canSafelyFreezeAdjacent &&
+        MagicSystem.canCast(player, 'FREEZE').allowed &&
+        (!snapshot.milestones.canBreak || player.magic > 1 || surroundings.safeEvadeDir === null) &&
+        (hasCardAdjacentDanger || surroundings.safeEvadeDir === null || isCrownPathBlocked)
+      ) {
+        this.subMode = 'CLEARING_RETURN_ENEMY';
+        return {
+          type: 'CAST_MAGIC',
+          magicToCast: 'FREEZE',
+          priority: 96,
+          reason: `❄️ 脱出路確保: 隣接危険敵をFREEZE永久凍結 (${surroundings.chebyshev1ActiveDangerousEnemies[0].enemy.name})`,
+        };
+      }
+      return null;
+    };
 
-    if (
-      surroundings.approachingLethalChebyshev3.length > 0 &&
-      (hasCloseLethalChebyshev2 || surroundings.safeEvadeDir === null || isCrownPathBlocked) &&
-      this.canCastFlashSafely(snapshot, player, curPos, homeReachability, false, surroundings.safeEvadeDir !== null)
-    ) {
-      this.recordFlash(curPos, snapshot.totalTurns);
-      this.subMode = 'CLEARING_RETURN_ENEMY';
-      return {
-        type: 'CAST_MAGIC',
-        magicToCast: 'FLASH',
-        priority: 96,
-        reason: `⚡ 即死敵接近足止めFLASH (${surroundings.approachingLethalChebyshev3[0].name})`,
-      };
+    const tryCastFlash2B = (): StrategicDirective | null => {
+      const hasCloseLethalChebyshev2 =
+        surroundings.approachingLethalEnemies.length > 0 ||
+        surroundings.approachingLethalChebyshev3.some(
+          e => map.getTorusDistance(curPos, e.pos).chebyshev <= 2
+        ) ||
+        surroundings.chebyshev1ActiveDangerousEnemies.length >= 2;
+
+      const hasFlashTarget =
+        surroundings.approachingLethalChebyshev3.length > 0 ||
+        surroundings.approachingLethalEnemies.length > 0 ||
+        surroundings.chebyshev1ActiveDangerousEnemies.length >= 2;
+
+      if (
+        hasFlashTarget &&
+        (hasCloseLethalChebyshev2 || surroundings.safeEvadeDir === null || isCrownPathBlocked) &&
+        this.canCastFlashSafely(snapshot, player, curPos, homeReachability, false, surroundings.safeEvadeDir !== null)
+      ) {
+        const flashTargetName =
+          surroundings.approachingLethalChebyshev3[0]?.name ??
+          surroundings.approachingLethalEnemies[0]?.name ??
+          surroundings.chebyshev1ActiveDangerousEnemies[0]?.enemy.name ??
+          '危険敵';
+        this.recordFlash(curPos, snapshot.totalTurns);
+        this.subMode = 'CLEARING_RETURN_ENEMY';
+        return {
+          type: 'CAST_MAGIC',
+          magicToCast: 'FLASH',
+          priority: 96,
+          reason: `⚡ 即死敵接近足止めFLASH (${flashTargetName})`,
+        };
+      }
+      return null;
+    };
+
+    const magicDirective2B = preferFlashOverFreeze
+      ? (tryCastFlash2B() ?? tryCastFreeze2B())
+      : (tryCastFreeze2B() ?? tryCastFlash2B());
+    if (magicDirective2B) {
+      return magicDirective2B;
     }
 
     // 2-C. 足元のポーション即時回収 ＆ 脱出用MP補給 (magic < 2)

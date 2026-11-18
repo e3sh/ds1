@@ -3,6 +3,7 @@ import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 import { ThreatEvaluator } from '../../../systems/ThreatEvaluator.js';
 import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
+import { EarlyBreakUnlockMission } from '../missions/EarlyBreakUnlockMission.js';
 
 /**
  * OpportunisticEvaluator (並行基本行動評価モジュール)
@@ -90,6 +91,13 @@ export class OpportunisticEvaluator {
 
     const map = snapshot.map;
     const pPos = player.pos;
+    const isClassicExpNeeded =
+      snapshot.params.coinGrantsExp === false &&
+      player.experience < snapshot.params.targetDefenseExp &&
+      player.holdItem !== 'POWER_STONE' &&
+      player.holdItem !== 'CROWN' &&
+      EarlyBreakUnlockMission.isHpSafeForHunting(player, snapshot);
+    const maxOpportunisticDist = isClassicExpNeeded ? 4 : 2;
 
     let bestEnemy: any = null;
     let minEnemyDist = Infinity;
@@ -99,7 +107,7 @@ export class OpportunisticEvaluator {
       if (snapshot.memory.isTargetUnreachable(enemy.pos, snapshot.totalTurns)) continue;
 
       const dist = map.getTorusDistance(pPos, enemy.pos).manhattan;
-      if (dist > 2) continue; // 直角隣接(1)または至近2歩以内(2)
+      if (dist > maxOpportunisticDist) continue;
 
       const details = ThreatEvaluator.evaluateThreatDetails(player, enemy);
       const isCompletelySafe = details.defenseThreat === 'NO_DAMAGE' || (
@@ -107,9 +115,14 @@ export class OpportunisticEvaluator {
         !details.hasDrain &&
         details.damageToPlayer < player.hp * 0.05
       );
-      if (!isCompletelySafe) continue;
+      const isClassicSafe =
+        isClassicExpNeeded &&
+        details.defenseThreat !== 'LETHAL' &&
+        !details.hasDrain &&
+        details.damageToPlayer < player.hp * 0.35;
+      if (!isCompletelySafe && !isClassicSafe) continue;
 
-      const isQuickKill = details.attackThreat === 'ONE_SHOT' || details.turnsToKill <= 2;
+      const isQuickKill = details.attackThreat === 'ONE_SHOT' || details.turnsToKill <= (isClassicExpNeeded ? 3 : 2);
       if (!isQuickKill) continue;
 
       if (dist < minEnemyDist) {
@@ -119,7 +132,10 @@ export class OpportunisticEvaluator {
     }
 
     if (bestEnemy) {
-      const priority = minEnemyDist === 1 ? 80 : 74;
+      const priority =
+        minEnemyDist === 1
+          ? (isClassicExpNeeded ? 88 : 80)
+          : (isClassicExpNeeded && minEnemyDist <= 3 ? 86 : 74);
       return {
         type: 'ATTACK_TARGET',
         targetPos: bestEnemy.pos,
