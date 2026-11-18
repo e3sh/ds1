@@ -1579,7 +1579,7 @@ export class MapSituationEvaluator {
     const graves: Position[] = [];
     for (let y = 0; y < map.height; y++) {
       for (let x = 0; x < map.width; x++) {
-        if (map.baseTiles[y][x] === 'GRAVE') {
+        if (map.getBaseTile({ x, y }) === 'GRAVE') {
           graves.push({ x, y });
         }
       }

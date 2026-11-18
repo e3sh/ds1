@@ -7,7 +7,6 @@ import { Direction, Position } from '../../../models/Types.js';
 import { WorldMap } from '../../../models/WorldMap.js';
 import { Player } from '../../../models/Player.js';
 import { Dragon } from '../../../models/Dragon.js';
-import { MovementSystem } from '../../../systems/MovementSystem.js';
 import { MagicSystem } from '../../../systems/MagicSystem.js';
 import { CostMinHeap } from '../../utils/MinHeap.js';
 
