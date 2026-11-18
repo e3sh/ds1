@@ -33,6 +33,7 @@ export class WorldMap {
   public tacticalMetadata?: MapTacticalMetadata;
   private underHomeBaseTiles: Map<string, TileType> = new Map();
   private warpPairs: Map<string, Position> = new Map();
+  private warpPairsByIndex: Map<number, Position> = new Map();
 
   constructor(width: number = WORLD_MAP_WIDTH, height: number = WORLD_MAP_HEIGHT) {
     this.width = width;
@@ -520,6 +521,7 @@ export class WorldMap {
    */
   public clearWarpPairs(): void {
     this.warpPairs.clear();
+    this.warpPairsByIndex.clear();
   }
 
   /**
@@ -583,16 +585,20 @@ export class WorldMap {
     const keyB = `${pB.x},${pB.y}`;
     this.warpPairs.set(keyA, { ...pB });
     this.warpPairs.set(keyB, { ...pA });
+    this.warpPairsByIndex.set(pA.y * this.width + pA.x, { ...pB });
+    this.warpPairsByIndex.set(pB.y * this.width + pB.x, { ...pA });
   }
 
   /**
    * 指定座標のワープゾーンの対向移動先座標を取得
    */
-  public getWarpDestination(pos: Position): Position | null {
-    const p = this.wrapPosition(pos);
-    const key = `${p.x},${p.y}`;
-    const dest = this.warpPairs.get(key);
-    return dest ? { ...dest } : null;
+  public getWarpDestination(pos: Position | number, optY?: number): Position | null {
+    const rawX = typeof pos === 'number' ? pos : (pos?.x ?? 0);
+    const rawY = typeof pos === 'number' ? (optY ?? 0) : (pos?.y ?? 0);
+    const wx = rawX >= 0 && rawX < this.width ? rawX : ((rawX % this.width) + this.width) % this.width;
+    const wy = rawY >= 0 && rawY < this.height ? rawY : ((rawY % this.height) + this.height) % this.height;
+    const dest = this.warpPairsByIndex.get(wy * this.width + wx);
+    return dest ? { x: dest.x, y: dest.y } : null;
   }
 
   public isInside(pos: Position | number, optY?: number): boolean {
@@ -605,28 +611,37 @@ export class WorldMap {
    * 表面に見える最上位タイルを取得（後方互換用）
    */
   public getTile(pos: Position | number, optY?: number): TileType {
-    const p = this.wrapPosition(pos, optY);
-    
+    const rawX = typeof pos === 'number' ? pos : (pos?.x ?? 0);
+    const rawY = typeof pos === 'number' ? (optY ?? 0) : (pos?.y ?? 0);
+    const wx = rawX >= 0 && rawX < this.width ? rawX : ((rawX % this.width) + this.width) % this.width;
+    const wy = rawY >= 0 && rawY < this.height ? rawY : ((rawY % this.height) + this.height) % this.height;
+
     // 1. オブジェクト（岩・宝箱）
-    const obj = this.objectTiles[p.y][p.x];
+    const obj = this.objectTiles[wy][wx];
     if (obj !== 'NONE') return obj;
 
     // 2. 床上アイテム
-    const item = this.itemTiles[p.y][p.x];
+    const item = this.itemTiles[wy][wx];
     if (item !== 'NONE') return item;
 
     // 3. 地形下地
-    return this.baseTiles[p.y][p.x];
+    return this.baseTiles[wy][wx];
   }
 
   public getBaseTile(pos: Position | number, optY?: number): TileType {
-    const p = this.wrapPosition(pos, optY);
-    return this.baseTiles[p.y][p.x];
+    const rawX = typeof pos === 'number' ? pos : (pos?.x ?? 0);
+    const rawY = typeof pos === 'number' ? (optY ?? 0) : (pos?.y ?? 0);
+    const wx = rawX >= 0 && rawX < this.width ? rawX : ((rawX % this.width) + this.width) % this.width;
+    const wy = rawY >= 0 && rawY < this.height ? rawY : ((rawY % this.height) + this.height) % this.height;
+    return this.baseTiles[wy][wx];
   }
 
   public getItem(pos: Position | number, optY?: number): TileType | 'NONE' {
-    const p = this.wrapPosition(pos, optY);
-    return this.itemTiles[p.y][p.x];
+    const rawX = typeof pos === 'number' ? pos : (pos?.x ?? 0);
+    const rawY = typeof pos === 'number' ? (optY ?? 0) : (pos?.y ?? 0);
+    const wx = rawX >= 0 && rawX < this.width ? rawX : ((rawX % this.width) + this.width) % this.width;
+    const wy = rawY >= 0 && rawY < this.height ? rawY : ((rawY % this.height) + this.height) % this.height;
+    return this.itemTiles[wy][wx];
   }
 
   public setItem(pos: Position | number, itemOrOptY: TileType | 'NONE' | number, optItem?: TileType | 'NONE'): void {
@@ -640,8 +655,11 @@ export class WorldMap {
   }
 
   public getObject(pos: Position | number, optY?: number): TileType | 'NONE' {
-    const p = this.wrapPosition(pos, optY);
-    return this.objectTiles[p.y][p.x];
+    const rawX = typeof pos === 'number' ? pos : (pos?.x ?? 0);
+    const rawY = typeof pos === 'number' ? (optY ?? 0) : (pos?.y ?? 0);
+    const wx = rawX >= 0 && rawX < this.width ? rawX : ((rawX % this.width) + this.width) % this.width;
+    const wy = rawY >= 0 && rawY < this.height ? rawY : ((rawY % this.height) + this.height) % this.height;
+    return this.objectTiles[wy][wx];
   }
 
   public setObject(pos: Position | number, objOrOptY: TileType | 'NONE' | number, optObj?: TileType | 'NONE'): void {
@@ -955,7 +973,16 @@ export class WorldMap {
     this.itemTiles = data.itemTiles.map(row => [...row]);
     if (data.warpPairs && data.warpPairs.length > 0) {
       this.warpPairs = new Map(data.warpPairs.map(([k, v]) => [k, { ...v }]));
+      this.warpPairsByIndex.clear();
+      for (const [k, v] of this.warpPairs.entries()) {
+        const [kx, ky] = k.split(',').map(Number);
+        if (Number.isFinite(kx) && Number.isFinite(ky)) {
+          this.warpPairsByIndex.set(ky * this.width + kx, { ...v });
+        }
+      }
     } else {
+      this.warpPairs.clear();
+      this.warpPairsByIndex.clear();
       this.setupWarpNetwork();
     }
   }

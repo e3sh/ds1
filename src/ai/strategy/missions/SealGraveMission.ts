@@ -1,26 +1,25 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
 import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
-import { IStrategicMission, MissionCompletionReason, MissionStatus } from '../StrategicMission.js';
+import { BaseStrategicMission, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 import { Position } from '../../../models/Types.js';
 
 /**
  * SealGraveMission (墓パズル封鎖作戦)
  *
- * テーマブロックメタデータ（GravePuzzleHint）に基づき、
- * 墓周囲の隙間または箱型墓の出口チョークポイントをブロックで封鎖する。
+ * 大・中・小分類ステートマシン：
+ * - 中分類 (subMode): FETCHING_RING | PUSHING_BLOCK | MOVING_TO_CHOKE
+ * - 小分類 (lockedTarget): RING | GRAVE_PUSH (pos: blockPos, secondaryPos: destinationPos)
  */
-export class SealGraveMission implements IStrategicMission {
+export class SealGraveMission extends BaseStrategicMission {
   public readonly id = 'SEAL_GRAVE';
   public readonly name: string;
   public readonly maxTurns = 60;
-  public turnsElapsed = 0;
-  public status: MissionStatus = 'ACTIVE';
-  public completionReason?: MissionCompletionReason;
-  public subMode: 'PUSHING_BLOCK' | 'MOVING_TO_CHOKE' = 'PUSHING_BLOCK';
+  public override subMode: 'FETCHING_RING' | 'PUSHING_BLOCK' | 'MOVING_TO_CHOKE' = 'PUSHING_BLOCK';
 
   constructor(private readonly gravePos: Position) {
+    super();
     this.name = `🪦 墓パズル封鎖作戦 (${gravePos.x}, ${gravePos.y})`;
   }
 
@@ -57,7 +56,6 @@ export class SealGraveMission implements IStrategicMission {
       return 'ABORTED';
     }
 
-    // 墓そのもの、または封鎖ターゲットへの経路が遮断されている場合は早期アボート
     if (snapshot.memory.isTargetUnreachable(this.gravePos, snapshot.totalTurns)) {
       this.completionReason = 'NO_PROGRESS_BLOCKED';
       return 'ABORTED';
@@ -76,6 +74,44 @@ export class SealGraveMission implements IStrategicMission {
     snapshot.memory.markTargetUnreachable(this.gravePos, 300, snapshot.totalTurns);
   }
 
+  private verifyLocks(snapshot: TacticalSnapshot, engine: GameEngine): void {
+    const player = engine.getPlayer();
+    const map = snapshot.map;
+    this.updateLockProgress(player.pos, map);
+
+    if (player.holdItem !== 'RING') {
+      this.subMode = 'FETCHING_RING';
+      if (this.lockedTarget) {
+        if (
+          this.lockedTarget.kind !== 'RING' ||
+          map.getItem(this.lockedTarget.pos) !== 'RING' ||
+          this.isLockInvalidated(snapshot, 15)
+        ) {
+          this.clearTargetLock();
+        }
+      }
+      return;
+    }
+
+    this.subMode = 'PUSHING_BLOCK';
+    if (this.lockedTarget) {
+      if (this.lockedTarget.kind !== 'GRAVE_PUSH' || !this.lockedTarget.secondaryPos) {
+        this.clearTargetLock();
+        return;
+      }
+      const bPos = this.lockedTarget.pos;
+      const dPos = this.lockedTarget.secondaryPos;
+      if (
+        map.getObject(bPos) !== 'BLOCK' ||
+        map.getBaseTile(dPos) === 'WALL_STATIC' ||
+        map.getObject(dPos) === 'BLOCK' ||
+        this.isLockInvalidated(snapshot, 15)
+      ) {
+        this.clearTargetLock();
+      }
+    }
+  }
+
   public generateDirective(snapshot: TacticalSnapshot, engine: GameEngine): StrategicDirective {
     const puzzle = snapshot.spatial.gravePuzzles.find(
       gp => gp.gravePos.x === this.gravePos.x && gp.gravePos.y === this.gravePos.y
@@ -88,21 +124,39 @@ export class SealGraveMission implements IStrategicMission {
     const player = engine.getPlayer();
     const map = snapshot.map;
 
-    // 0. ブロック押し出しには RING 所持が必須
+    this.verifyLocks(snapshot, engine);
+
+    // 0. FETCHING_RING: ブロック押し出しには RING 所持が必須
     if (player.holdItem !== 'RING') {
-      const items = MapSituationEvaluator.get(snapshot, engine).items;
-      const ringPos = items.rings[0] ?? null;
-      if (player.holdItem === 'NONE' && ringPos) {
-        return {
-          type: 'PICKUP_ITEM',
-          targetPos: ringPos,
-          targetItemType: 'RING',
-          priority: 85,
-          reason: `墓封鎖のため指輪(RING)を取得 (${ringPos.x}, ${ringPos.y})`,
-        };
+      this.subMode = 'FETCHING_RING';
+      if (player.holdItem === 'NONE') {
+        const ringPos =
+          this.lockedTarget?.kind === 'RING'
+            ? this.lockedTarget.pos
+            : (MapSituationEvaluator.get(snapshot, engine).items.rings[0] ?? null);
+        if (ringPos) {
+          this.lockTarget('RING', ringPos, snapshot.totalTurns, player.pos, map);
+          if (player.pos.x === ringPos.x && player.pos.y === ringPos.y) {
+            return {
+              type: 'PICKUP_ITEM',
+              targetPos: ringPos,
+              targetItemType: 'RING',
+              priority: 85,
+              reason: `墓封鎖のため足元の指輪(RING)を取得 (${ringPos.x}, ${ringPos.y})`,
+            };
+          }
+          return {
+            type: 'NAVIGATE_TO_POSITION',
+            targetPos: ringPos,
+            targetItemType: 'RING',
+            priority: 85,
+            reason: `墓封鎖のため指輪(RING)へ移動 (${ringPos.x}, ${ringPos.y})`,
+          };
+        }
       }
       this.completionReason = 'NO_PROGRESS_BLOCKED';
       this.status = 'ABORTED';
+      this.clearTargetLock();
       return {
         type: 'WANDER_SAFELY',
         priority: 10,
@@ -110,7 +164,19 @@ export class SealGraveMission implements IStrategicMission {
       };
     }
 
-    // 1. 推奨プッシュ手があれば実行
+    // 1. PUSHING_BLOCK: ロック済みのプッシュがあればそのまま継続、なければ次を選定
+    this.subMode = 'PUSHING_BLOCK';
+    if (this.lockedTarget?.kind === 'GRAVE_PUSH' && this.lockedTarget.secondaryPos) {
+      return {
+        type: 'SEAL_GRAVE_STEP',
+        pushBlockPos: this.lockedTarget.pos,
+        pushDestPos: this.lockedTarget.secondaryPos,
+        targetPos: this.lockedTarget.pos,
+        priority: 85,
+        reason: `墓封鎖ブロックプッシュ継続 (${this.lockedTarget.pos.x}, ${this.lockedTarget.pos.y}) -> (${this.lockedTarget.secondaryPos.x}, ${this.lockedTarget.secondaryPos.y})`,
+      };
+    }
+
     for (const push of puzzle.recommendedPushes) {
       const currentObj = map.getObject(push.blockPos);
       const destBase = map.getBaseTile(push.destinationPos);
@@ -121,7 +187,9 @@ export class SealGraveMission implements IStrategicMission {
         destObj !== 'BLOCK' &&
         !snapshot.memory.isTargetUnreachable(push.blockPos, snapshot.totalTurns)
       ) {
-        this.subMode = 'PUSHING_BLOCK';
+        this.lockTarget('GRAVE_PUSH', push.blockPos, snapshot.totalTurns, player.pos, map, {
+          secondaryPos: push.destinationPos,
+        });
         return {
           type: 'SEAL_GRAVE_STEP',
           pushBlockPos: push.blockPos,
@@ -133,9 +201,9 @@ export class SealGraveMission implements IStrategicMission {
       }
     }
 
-    // 3. 実行可能なプッシュ対象ブロックがない場合は早期アボート
     this.completionReason = 'NO_PROGRESS_BLOCKED';
     this.status = 'ABORTED';
+    this.clearTargetLock();
     return {
       type: 'WANDER_SAFELY',
       priority: 10,

@@ -1837,6 +1837,244 @@ console.log('Testing 14: Preventing long-range FREEZE whiffs and wasteful FLASH 
   console.log('✓ 14. Long-range FREEZE whiffs and weak-enemy FLASH waste prevented.');
 }
 
+// -------------------------------------------------------------
+// Test 15: パッシブスキャン0-BFS・ターゲットロック維持・局所敵ZOC(enemyZocRadius)分離検証
+// -------------------------------------------------------------
+{
+  const m15 = createEmptyMap(32, 32);
+  for (const h of m15.getAllHomePositions()) {
+    m15.setBaseTile(h, 'EMPTY');
+  }
+  const home15 = { x: 4, y: 10 };
+  m15.setBaseTile(home15, 'HOME');
+  m15.homePos = { ...home15 };
+  m15.setRealHomePos(home15);
+  m15.spawnHomePos = { ...home15 };
+
+  // マップ上に4つの王冠を配置
+  const crownPositions = [
+    { x: 14, y: 10 },
+    { x: 20, y: 10 },
+    { x: 10, y: 20 },
+    { x: 25, y: 25 },
+  ];
+  for (const cp of crownPositions) {
+    m15.setItem(cp, 'CROWN');
+  }
+
+  const e15 = new GameEngine();
+  const d15 = e15.getDragon();
+  if (d15) {
+    d15.defeatedHeadsCount = 3;
+    d15.heads.forEach(h => (h.isAlive = false));
+  }
+  const p15 = e15.getPlayer();
+  p15.pos = { x: 10, y: 10 };
+  p15.hp = 1000;
+  p15.maxHp = 1000;
+  p15.strength = 500000;
+  p15.experience = 20000;
+  p15.magic = 5;
+  p15.hasSword = true;
+  p15.holdItem = 'NONE';
+  p15.hasDeath = false;
+
+  (e15 as any).map = m15;
+  (e15 as any).player = p15;
+  (e15 as any).enemies = [];
+
+  const mem15 = new EpisodicMemory();
+  const spatial15 = new SpatialKnowledge(m15);
+  const nav15 = new AdaptiveNavigator(mem15);
+
+  const origExecuteBfs = AdaptiveNavigator.prototype.executeBfs;
+  let spyBfsCount = 0;
+  AdaptiveNavigator.prototype.executeBfs = function (...args: any[]) {
+    spyBfsCount++;
+    return origExecuteBfs.apply(this, args as any);
+  };
+
+  try {
+    // 15-A. 4王冠存在下での MapSituationEvaluator.evaluate (パッシブスキャン) は executeBfs を 0 回に抑える
+    spyBfsCount = 0;
+    const passiveSummary = MapSituationEvaluator.evaluate(
+      p15,
+      m15,
+      [],
+      d15,
+      [],
+      nav15,
+      mem15,
+      mockParams,
+      1,
+      undefined,
+      spatial15
+    );
+    assert.strictEqual(
+      passiveSummary.items.crowns.allFloorCrowns.length,
+      4,
+      '4つの王冠すべてがパッシブスキャンで検出されること'
+    );
+    assert.strictEqual(
+      passiveSummary.homeReachability.canReachStaticallyWithCrown,
+      true,
+      '1-pass Dial BFS で我が家への静的到達性が判定されること'
+    );
+    assert.strictEqual(
+      spyBfsCount,
+      0,
+      `4王冠存在時のパッシブスキャン evaluate() で executeBfs が 0 回であること (actual: ${spyBfsCount})`
+    );
+
+    // 15-B. CrownEscapeMission は初回のみ selectBestCrownTarget を呼び、ロック後の移動ターンは BFS 0 回で直行する
+    const makeSnap15 = (turn: number): TacticalSnapshot => ({
+      spatial: spatial15,
+      milestones: {
+        hasSword: true,
+        canBreak: true,
+        canReturn: true,
+        canDiagonal: true,
+        dragonHeadsRemaining: 0,
+        allHeadsDefeated: true,
+        crownsCollected: 0,
+      },
+      threats: SituationalPerception.evaluateThreats(p15, m15, [], d15, mockParams),
+      confinement: SituationalPerception.evaluateConfinement(p15, m15, []),
+      progress: mem15.buildProgressWindow(turn, m15),
+      player: {
+        pos: { ...p15.pos },
+        hp: p15.hp,
+        maxHp: p15.maxHp,
+        str: p15.strength,
+        strength: p15.strength,
+        effectiveAttack: p15.strength,
+        experience: p15.experience,
+        magic: p15.magic,
+        gold: p15.gold,
+        holdItem: p15.holdItem,
+        hasSword: true,
+        isFlying: false,
+        canDiagonal: true,
+        hasDeath: false,
+        stepCountSinceStone: 0,
+      } as any,
+      livingEnemies: [],
+      memory: mem15,
+      params: mockParams,
+      map: m15,
+      totalTurns: turn,
+    });
+
+    const mission15 = new CrownEscapeMission();
+    spyBfsCount = 0;
+    const dir15_t1 = mission15.generateDirective(makeSnap15(10), e15);
+    assert.strictEqual(dir15_t1.type, 'NAVIGATE_TO_POSITION');
+    assert.strictEqual(mission15.subMode, 'ACQUIRING_CROWN');
+    assert.ok(spyBfsCount >= 1, '初回ロック時は selectBestCrownTarget によりアクティブスキャンが実行されること');
+
+    // 2ターン目: 王冠へ向かって1歩前進（まだ未到達）
+    p15.pos = { x: 11, y: 10 };
+    spyBfsCount = 0;
+    const dir15_t2 = mission15.generateDirective(makeSnap15(11), e15);
+    assert.strictEqual(dir15_t2.type, 'NAVIGATE_TO_POSITION');
+    assert.strictEqual(mission15.subMode, 'ACQUIRING_CROWN');
+    assert.deepStrictEqual(
+      dir15_t2.targetPos,
+      dir15_t1.targetPos,
+      'ロック済み王冠ターゲットが2ターン目も維持されること'
+    );
+    assert.strictEqual(
+      spyBfsCount,
+      0,
+      `ロック済み王冠へ移動中の generateDirective() で executeBfs が 0 回であること (actual: ${spyBfsCount})`
+    );
+
+    // 15-C. enemyZocRadius による遠方動的敵ZOCと近傍脅威ZOCの分離検証
+    const m15z = createEmptyMap(32, 32);
+    // (4,10)〜(16,10) を唯一の1本道コリドーとして上下を壁で封鎖
+    for (let x = 4; x <= 16; x++) {
+      m15z.setBaseTile({ x, y: 9 }, 'WALL_STATIC');
+      m15z.setBaseTile({ x, y: 11 }, 'WALL_STATIC');
+    }
+    m15z.setBaseTile({ x: 4, y: 10 }, 'WALL_STATIC');
+    m15z.setBaseTile({ x: 16, y: 10 }, 'WALL_STATIC');
+
+    const p15z = new Player({ x: 5, y: 10 });
+    p15z.hp = 100;
+    p15z.maxHp = 100;
+    p15z.experience = 0;
+    p15z.magic = 0;
+    p15z.canDiagonal = false;
+
+    const corridorLethalEnemy: EnemyInstance = {
+      id: 'e-corridor-15',
+      name: 'CorridorDemon',
+      type: 'SUPER_DEMON',
+      pos: { x: 10, y: 10 }, // 始点 (5,10) から Chebyshev 距離 5
+      hp: 100000,
+      maxHp: 100000,
+      atk: 10000,
+      def: 100,
+      exp: 1000,
+      isAlive: true,
+      isPermanentlyFrozen: false,
+      frozenTimer: 0,
+    } as any;
+
+    const nav15z = new AdaptiveNavigator();
+    const resDefaultZoc = origExecuteBfs.call(
+      nav15z,
+      { x: 5, y: 10 },
+      { x: 15, y: 10 },
+      m15z,
+      p15z,
+      [corridorLethalEnemy],
+      mockParams
+    );
+    assert.strictEqual(
+      resDefaultZoc,
+      null,
+      'デフォルト(enemyZocRadius=Infinity)では遠方距離5の即死敵ZOCによりコリドー通路が遮断判定されること'
+    );
+
+    const resLocalZocFar = origExecuteBfs.call(
+      nav15z,
+      { x: 5, y: 10 },
+      { x: 15, y: 10 },
+      m15z,
+      p15z,
+      [corridorLethalEnemy],
+      mockParams,
+      { enemyZocRadius: 3 }
+    );
+    assert.ok(
+      resLocalZocFar !== null,
+      'enemyZocRadius=3 指定時は距離5(>3)の遠方敵ZOCを無視して経路を返すこと'
+    );
+
+    corridorLethalEnemy.pos = { x: 7, y: 10 }; // 始点 (5,10) から Chebyshev 距離 2 (<= 3)
+    const resLocalZocNear = origExecuteBfs.call(
+      nav15z,
+      { x: 5, y: 10 },
+      { x: 15, y: 10 },
+      m15z,
+      p15z,
+      [corridorLethalEnemy],
+      mockParams,
+      { enemyZocRadius: 3 }
+    );
+    assert.strictEqual(
+      resLocalZocNear,
+      null,
+      'enemyZocRadius=3 指定時でも距離2(<=3)の近傍即死敵ZOCは正しく回避・遮断すること'
+    );
+  } finally {
+    AdaptiveNavigator.prototype.executeBfs = origExecuteBfs;
+  }
+
+  console.log('✓ 15. Passive scan 0-BFS, Crown target lock BFS suppression, and local enemyZocRadius verified.');
+}
+
 console.log('================================================================');
 console.log('  ALL PST STEP 1, 4, CATEGORY 3, 2 & 1 TESTS PASSED!             ');
 console.log('================================================================');

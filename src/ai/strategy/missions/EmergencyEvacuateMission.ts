@@ -1,6 +1,6 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
-import { IStrategicMission, MissionCompletionReason, MissionStatus } from '../StrategicMission.js';
+import { BaseStrategicMission, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 import { MagicSystem } from '../../../systems/MagicSystem.js';
 
@@ -9,15 +9,12 @@ import { MagicSystem } from '../../../systems/MagicSystem.js';
  *
  * 即死級の敵の隣接や致命的HPピンチに際し、最優先で緊急離脱または魔法詠唱を行う。
  */
-export class EmergencyEvacuateMission implements IStrategicMission {
+export class EmergencyEvacuateMission extends BaseStrategicMission {
   public readonly id = 'EMERGENCY_EVACUATE';
   public readonly name = '🚨 緊急危機退避作戦';
   public readonly maxTurns = 30;
-  public turnsElapsed = 0;
-  public status: MissionStatus = 'ACTIVE';
-  public completionReason?: MissionCompletionReason;
-  public subMode: 'CASTING_ESCAPE' | 'EVADING_DANGER' = 'EVADING_DANGER';
-  public readonly auditProfile = {
+  public override subMode: 'CASTING_ESCAPE' | 'EVADING_DANGER' = 'EVADING_DANGER';
+  public override readonly auditProfile = {
     graceTurns: 24,
     tabooable: false,
     maxEscalation: 'TERMINAL' as const,

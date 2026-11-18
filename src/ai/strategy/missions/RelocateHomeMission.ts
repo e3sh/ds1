@@ -1,7 +1,7 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
 import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
-import { IStrategicMission, MissionCompletionReason, MissionStatus } from '../StrategicMission.js';
+import { BaseStrategicMission, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 import { Direction, Position } from '../../../models/Types.js';
 import { WorldMap } from '../../../models/WorldMap.js';
@@ -10,20 +10,19 @@ import { MovementSystem } from '../../../systems/MovementSystem.js';
 /**
  * RelocateHomeMission (前線基地移転作戦)
  *
- * ドラゴン lair 近傍の安全なアンカー位置へ我が家（HOME）を移転し、
- * 決戦時のリスポーン・補給動線を短縮する。
+ * 大・中・小分類ステートマシン：
+ * - 中分類 (subMode): DROPPING_JUNK | FETCHING_RING | PUSHING_HOME
+ * - 小分類 (lockedTarget): RING | HOME (secondaryPos: realHomePos)
  */
-export class RelocateHomeMission implements IStrategicMission {
+export class RelocateHomeMission extends BaseStrategicMission {
   public readonly id = 'RELOCATE_HOME';
   public readonly name: string;
   public readonly maxTurns = 45;
-  public turnsElapsed = 0;
-  public status: MissionStatus = 'ACTIVE';
-  public completionReason?: MissionCompletionReason;
-  public subMode: 'DROPPING_JUNK' | 'FETCHING_RING' | 'PUSHING_HOME' = 'FETCHING_RING';
+  public override subMode: 'DROPPING_JUNK' | 'FETCHING_RING' | 'PUSHING_HOME' = 'FETCHING_RING';
   private initialHomeDist: number | null = null;
 
   constructor(private readonly anchorPos: Position) {
+    super();
     this.name = `⛺ 前線基地移転作戦 (${anchorPos.x}, ${anchorPos.y})`;
   }
 
@@ -36,14 +35,12 @@ export class RelocateHomeMission implements IStrategicMission {
   public evaluateStatus(snapshot: TacticalSnapshot, engine: GameEngine): MissionStatus {
     this.ensureInitialized(snapshot);
     const map = snapshot.map;
-    // 我が家の位置がアンカー座標またはその隣接に更新されたら完了
     const dist = map.getTorusDistance(map.realHomePos, this.anchorPos).manhattan;
     if (dist <= 1) {
       this.completionReason = 'OBJECTIVE_ACHIEVED';
       return 'COMPLETED';
     }
 
-    // RING所持中にX・Yいずれの軸でも押下不能（立ち位置または押下先が閉塞）な場合は即終了
     const movedCloser = this.initialHomeDist !== null && dist < this.initialHomeDist;
     if (
       engine.getPlayer().holdItem === 'RING' &&
@@ -61,10 +58,43 @@ export class RelocateHomeMission implements IStrategicMission {
     return 'ACTIVE';
   }
 
+  private verifyLocks(snapshot: TacticalSnapshot, engine: GameEngine): void {
+    const player = engine.getPlayer();
+    const map = snapshot.map;
+    this.updateLockProgress(player.pos, map);
+
+    if (player.holdItem !== 'NONE' && player.holdItem !== 'RING') {
+      this.clearTargetLock();
+      this.subMode = 'DROPPING_JUNK';
+      return;
+    }
+
+    if (player.holdItem === 'NONE') {
+      this.subMode = 'FETCHING_RING';
+      if (this.lockedTarget) {
+        if (
+          this.lockedTarget.kind !== 'RING' ||
+          map.getItem(this.lockedTarget.pos) !== 'RING' ||
+          this.isLockInvalidated(snapshot, 15)
+        ) {
+          this.clearTargetLock();
+        }
+      }
+      return;
+    }
+
+    this.subMode = 'PUSHING_HOME';
+    if (this.lockedTarget && this.lockedTarget.kind !== 'HOME') {
+      this.clearTargetLock();
+    }
+  }
+
   public generateDirective(snapshot: TacticalSnapshot, engine: GameEngine): StrategicDirective {
     this.ensureInitialized(snapshot);
     const player = engine.getPlayer();
     const map = snapshot.map;
+
+    this.verifyLocks(snapshot, engine);
 
     // 1. 手持ちがRING以外の場合、手ぶらにする
     if (player.holdItem !== 'NONE' && player.holdItem !== 'RING') {
@@ -79,8 +109,12 @@ export class RelocateHomeMission implements IStrategicMission {
     // 2. RINGを持っていない場合、RINGを拾いに行く
     if (player.holdItem !== 'RING') {
       this.subMode = 'FETCHING_RING';
-      const ringPos = MapSituationEvaluator.get(snapshot, engine).items.nearestRing;
+      const ringPos =
+        this.lockedTarget?.kind === 'RING'
+          ? this.lockedTarget.pos
+          : MapSituationEvaluator.get(snapshot, engine).items.nearestRing;
       if (ringPos) {
+        this.lockTarget('RING', ringPos, snapshot.totalTurns, player.pos, map);
         if (player.pos.x === ringPos.x && player.pos.y === ringPos.y) {
           return {
             type: 'PICKUP_ITEM',
@@ -97,9 +131,9 @@ export class RelocateHomeMission implements IStrategicMission {
           reason: `RINGへ移動 (${ringPos.x}, ${ringPos.y})`,
         };
       }
-      // RINGが見つからない場合は移転不能のためアボート
       this.completionReason = 'TARGET_LOST';
       this.status = 'ABORTED';
+      this.clearTargetLock();
       return {
         type: 'WANDER_SAFELY',
         priority: 10,
@@ -114,6 +148,9 @@ export class RelocateHomeMission implements IStrategicMission {
     if (pushDir) {
       const oppDir = this.getOppositeDirection(pushDir);
       const standPos = map.wrapPosition(MovementSystem.getNextPosition(homePos, oppDir));
+      this.lockTarget('HOME', standPos, snapshot.totalTurns, player.pos, map, {
+        secondaryPos: homePos,
+      });
 
       return {
         type: 'SEAL_GRAVE_STEP',
@@ -125,6 +162,7 @@ export class RelocateHomeMission implements IStrategicMission {
       };
     }
 
+    this.lockTarget('HOME', this.anchorPos, snapshot.totalTurns, player.pos, map);
     return {
       type: 'NAVIGATE_TO_POSITION',
       targetPos: this.anchorPos,

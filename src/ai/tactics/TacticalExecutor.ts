@@ -329,14 +329,12 @@ export class TacticalExecutor {
       };
     }
 
-    // 王冠運搬帰還時フォールバック: 近傍（Chebyshev <= 3）以外の遠方敵の脅威制限を緩めて接近経路を確保（接近後にFLASH突破）
+    // 王冠運搬帰還時フォールバック: 近傍（Chebyshev <= 3）に脅威制限を絞って再探索（接近後にFLASH突破）
     if (isTargetHome && player.holdItem === 'CROWN') {
-      const nearEnemies = enemies.filter(
-        e => e.isAlive && map.getTorusDistance(player.pos, e.pos).chebyshev <= 3
-      );
-      const relaxDir = this.nav.findPath(player.pos, targetPos, map, player, nearEnemies, params, {
+      const relaxDir = this.nav.findPath(player.pos, targetPos, map, player, enemies, params, {
         dragon,
         isEscapePhase,
+        enemyZocRadius: 3,
       });
       if (relaxDir) {
         const dist = map.getTorusDistance(player.pos, targetPos).manhattan;

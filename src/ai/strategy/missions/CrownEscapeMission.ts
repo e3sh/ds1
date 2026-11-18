@@ -1,7 +1,7 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
 import { HomeReachabilitySummary, MapSituationEvaluator, MapSituationSummary } from '../../perception/MapSituationEvaluator.js';
-import { IStrategicMission, MissionCompletionReason, MissionStatus } from '../StrategicMission.js';
+import { BaseStrategicMission, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 import { Position } from '../../../models/Types.js';
 import { Player } from '../../../models/Player.js';
@@ -11,28 +11,25 @@ import { ThreatEvaluator } from '../../../systems/ThreatEvaluator.js';
 /**
  * CrownEscapeMission (カテゴリ1: 王冠回収＆我が家脱出作戦)
  *
- * 全首撃破後に出現した王冠（最大4個）を回収し、我が家へ持ち帰って脱出・ゲームクリアする。
- * 内部サブモード（ACQUIRING_CROWN / CLEARING_RETURN_BLOCK / CLEARING_RETURN_ENEMY / CARRYING_TO_HOME）を
- * 明示的に管理し、道を開拓するために一時ドロップした王冠を「開通達成前に即再拾得 → 再ドロップ → FLASH空撃ち」
- * する無限ループを構造的に根絶する。
+ * 大・中・小分類ステートマシン：
+ * - 中分類 (subMode): ACQUIRING_CROWN | CLEARING_RETURN_BLOCK | CLEARING_RETURN_ENEMY | CARRYING_TO_HOME
+ * - 小分類 (lockedTarget): CROWN | BLOCK | POTION | HOME
+ *
+ * 毎ターン先頭で「現在のロック対象・状態遷移の成否」を検証し、
+ * ロック済みターゲットへの移動中は不要なアクティブスキャン（複数王冠往復BFS）を一切発火させない。
  */
-export class CrownEscapeMission implements IStrategicMission {
+export class CrownEscapeMission extends BaseStrategicMission {
   public readonly id = 'CROWN_ESCAPE';
   public readonly name = '👑 王冠回収＆我が家脱出作戦';
   public readonly maxTurns = 3000;
-  public turnsElapsed = 0;
-  public status: MissionStatus = 'ACTIVE';
-  public completionReason?: MissionCompletionReason;
-  public subMode: 'ACQUIRING_CROWN' | 'CLEARING_RETURN_BLOCK' | 'CLEARING_RETURN_ENEMY' | 'CARRYING_TO_HOME' = 'ACQUIRING_CROWN';
-  public readonly auditProfile = {
+  public override subMode: 'ACQUIRING_CROWN' | 'CLEARING_RETURN_BLOCK' | 'CLEARING_RETURN_ENEMY' | 'CARRYING_TO_HOME' = 'ACQUIRING_CROWN';
+  public override readonly auditProfile = {
     graceTurns: 64,
     tabooable: false,
     maxEscalation: 'BREACH' as const,
   };
 
   private initialCrownsDelivered: number | null = null;
-  private clearingBlockPos: Position | null = null;
-  private droppedCrownForClearing: boolean = false;
   private lastFlashPos: Position | null = null;
   private lastFlashTurn: number = -999;
 
@@ -49,6 +46,7 @@ export class CrownEscapeMission implements IStrategicMission {
 
   /**
    * 同一座標での連打抑制＆BREAK用MP=1リザーブを保護した FLASH 詠唱可否判定
+   * （BFSを追加発火させないため、静的開通フラグ canReachStaticallyWithCrown のみで軽量判定）
    */
   private canCastFlashSafely(
     snapshot: TacticalSnapshot,
@@ -72,13 +70,11 @@ export class CrownEscapeMission implements IStrategicMission {
       return false;
     }
 
-    // 帰還路上に破壊すべき岩がある場合は BREAK 用の MP=1 リザーブを死守
+    // 帰還路が岩等で静的閉塞している場合は BREAK 用の MP=1 リザーブを死守
     // （ただし隣接即死敵から退避マスがない緊急事態のみ例外）
-    const needsBreakToReturn = Boolean(
-      this.clearingBlockPos ||
-      homeReachability.firstBlockingBlockPos ||
-      homeReachability.blockingCause === 'BLOCK'
-    );
+    const needsBreakToReturn =
+      (this.subMode === 'CLEARING_RETURN_BLOCK' && this.lockedTarget?.kind === 'BLOCK') ||
+      !homeReachability.canReachStaticallyWithCrown;
     if (needsBreakToReturn && snapshot.milestones.canBreak && player.magic <= 1) {
       if (!(hasAdjacentLethal && !hasEvadeRoute)) {
         return false;
@@ -135,6 +131,91 @@ export class CrownEscapeMission implements IStrategicMission {
     return 'ACTIVE';
   }
 
+  /**
+   * Step 1: 毎ターン先頭で現在の小分類ロック対象と中分類 subMode の成否・有効性を検証し、状態遷移を行う。
+   */
+  private verifyAndTransitionState(
+    snapshot: TacticalSnapshot,
+    player: Player,
+    homePos: Position,
+    canCastBreak: boolean,
+    surroundings: MapSituationSummary['surroundings']
+  ): void {
+    const map = snapshot.map;
+    const curPos = player.pos;
+    this.updateLockProgress(curPos, map);
+
+    if (player.holdItem === 'CROWN') {
+      this.subMode = 'CARRYING_TO_HOME';
+      this.lockTarget('HOME', homePos, snapshot.totalTurns, curPos, map);
+      return;
+    }
+
+    if (player.holdItem !== 'NONE') {
+      this.clearTargetLock();
+      this.subMode = 'ACQUIRING_CROWN';
+      return;
+    }
+
+    // 手ぶら状態での既存ロック有効性検証
+    if (this.lockedTarget) {
+      switch (this.lockedTarget.kind) {
+        case 'BLOCK': {
+          if (
+            map.getObject(this.lockedTarget.pos) !== 'BLOCK' ||
+            !canCastBreak ||
+            this.isLockInvalidated(snapshot, 20)
+          ) {
+            this.clearTargetLock();
+            if (this.subMode === 'CLEARING_RETURN_BLOCK') {
+              this.subMode = 'ACQUIRING_CROWN';
+            }
+          }
+          break;
+        }
+        case 'POTION': {
+          if (
+            map.getItem(this.lockedTarget.pos) !== 'POTION' ||
+            player.magic >= 2 ||
+            this.isLockInvalidated(snapshot, 12)
+          ) {
+            this.clearTargetLock();
+          }
+          break;
+        }
+        case 'CROWN': {
+          if (
+            map.getItem(this.lockedTarget.pos) !== 'CROWN' ||
+            this.isLockInvalidated(snapshot, 25)
+          ) {
+            this.clearTargetLock();
+          }
+          break;
+        }
+        case 'HOME':
+        default: {
+          this.clearTargetLock();
+          this.subMode = 'ACQUIRING_CROWN';
+          break;
+        }
+      }
+    }
+
+    if (this.subMode === 'CLEARING_RETURN_BLOCK' && this.lockedTarget?.kind !== 'BLOCK') {
+      this.subMode = 'ACQUIRING_CROWN';
+    }
+
+    if (
+      this.subMode === 'CLEARING_RETURN_ENEMY' &&
+      surroundings.floorItem !== 'CROWN' &&
+      surroundings.chebyshev1ActiveDangerousEnemies.length === 0 &&
+      surroundings.nearbyDangerousEnemies.length === 0 &&
+      surroundings.approachingLethalChebyshev3.length === 0
+    ) {
+      this.subMode = 'ACQUIRING_CROWN';
+    }
+  }
+
   public generateDirective(snapshot: TacticalSnapshot, engine: GameEngine): StrategicDirective {
     this.ensureInitialized(engine);
     const player = engine.getPlayer();
@@ -143,32 +224,14 @@ export class CrownEscapeMission implements IStrategicMission {
     const situation = MapSituationEvaluator.get(snapshot, engine);
     const { homeReachability, items, surroundings } = situation;
     const homePos = homeReachability.bestHomePos;
-
-    // 開削目標ロックの有効性チェック（破壊済み・BREAK不能・到達不能登録時は解除）
     const canCastBreak = MagicSystem.canCast(player, 'BREAK').allowed;
-    if (this.clearingBlockPos) {
-      if (
-        map.getObject(this.clearingBlockPos) !== 'BLOCK' ||
-        !canCastBreak ||
-        snapshot.memory.isTargetUnreachable(this.clearingBlockPos, snapshot.totalTurns)
-      ) {
-        this.clearingBlockPos = null;
-      }
-    }
 
-    // 開通完了時、または最寄り王冠から距離6以上離れた場合は一時ドロップ閉塞解消モードを自動解除
-    if (this.droppedCrownForClearing) {
-      const distToNearestCrown = items.crowns.nearestCrown
-        ? map.getTorusDistance(curPos, items.crowns.nearestCrown.pos).manhattan
-        : Infinity;
-      if (homeReachability.canReachWithCrown || distToNearestCrown >= 6) {
-        this.droppedCrownForClearing = false;
-      }
-    }
+    // Step 1: 状態確認・ロック有効性検査・遷移
+    this.verifyAndTransitionState(snapshot, player, homePos, canCastBreak, surroundings);
 
     // 0. 不要な手持ち品（KEY, RING, CROSS等）の手放し
     if (player.holdItem !== 'NONE' && player.holdItem !== 'CROWN') {
-      this.clearingBlockPos = null;
+      this.clearTargetLock();
       return {
         type: 'DROP_HOLD_ITEM',
         priority: 100,
@@ -218,13 +281,9 @@ export class CrownEscapeMission implements IStrategicMission {
     }
 
     // -------------------------------------------------------------
-    // 1. 王冠所持中 (holdItem === 'CROWN') の自衛＆我が家帰還
+    // 1. CARRYING_TO_HOME (holdItem === 'CROWN') の自衛＆我が家帰還
     // -------------------------------------------------------------
-    if (player.holdItem === 'CROWN') {
-      this.clearingBlockPos = null;
-      this.droppedCrownForClearing = false;
-      this.subMode = 'CARRYING_TO_HOME';
-
+    if (this.subMode === 'CARRYING_TO_HOME' && player.holdItem === 'CROWN') {
       // 1-A. 我が家到着: 自動奉納
       if (homeReachability.isAtHome) {
         return {
@@ -257,20 +316,14 @@ export class CrownEscapeMission implements IStrategicMission {
         };
       }
 
-      // 1-C. 【8方向隣接の危険敵に対する一時ドロップ＆FREEZE永久凍結準備】
-      // 遠方や距離2〜3で早々に王冠を落として持続の短い FLASH を乱射するのではなく、
-      // 8方向隣接に未凍結の危険敵が接近し、手ぶら化で FREEZE 永久凍結（または拠点近傍FLASH）できる場合のみドロップする
+      // 1-C. 8方向隣接の危険敵に対する一時ドロップ＆FREEZE永久凍結準備
       const canCastWhenEmpty = player.magic > 0 && !player.hasDeath;
       const flashBlockedHere =
         this.lastFlashPos !== null &&
         this.lastFlashPos.x === curPos.x &&
         this.lastFlashPos.y === curPos.y &&
         snapshot.totalTurns - this.lastFlashTurn < 8;
-      const needsBreakReserve1C = Boolean(
-        this.clearingBlockPos ||
-        homeReachability.firstBlockingBlockPos ||
-        homeReachability.blockingCause === 'BLOCK'
-      );
+      const needsBreakReserve1C = !homeReachability.canReachStaticallyWithCrown;
       const canFreezeWhenEmpty1C =
         canCastWhenEmpty &&
         !homeReachability.isNearRealHome &&
@@ -289,7 +342,7 @@ export class CrownEscapeMission implements IStrategicMission {
         const targetDanger =
           surroundings.chebyshev1ActiveDangerousEnemies[0]?.enemy ??
           surroundings.approachingLethalEnemies[0];
-        this.droppedCrownForClearing = true;
+        this.clearTargetLock();
         this.subMode = 'CLEARING_RETURN_ENEMY';
         return {
           type: 'DROP_HOLD_ITEM',
@@ -298,25 +351,35 @@ export class CrownEscapeMission implements IStrategicMission {
         };
       }
 
-      // 1-D. 帰還経路が完全遮断されている場合の一時ドロップ開拓
-      // 実際に手ぶら化によって道を開拓できる場合（BLOCKをBREAK可能、または別の開通王冠へ切替可能）のみドロップし、無意味な拾う⇄落とすループを禁止する
-      if (!homeReachability.canReachWithCrown && surroundings.floorItem === 'NONE') {
+      // 1-D. 帰還経路が遮断されている場合の一時ドロップ開拓（静的開通かつ非ブロックなら不要な敵込みBFSを省略）
+      const needsReturnClearCheck =
+        !homeReachability.canReachStaticallyWithCrown ||
+        (this.lockedTarget !== null && this.lockedTarget.blockedCount > 0);
+      if (surroundings.floorItem === 'NONE' && needsReturnClearCheck && !homeReachability.canReachWithCrown) {
         const canBreakWhenEmpty = !player.hasDeath && player.experience >= 4000 && player.magic >= 1;
         const canUnblockByBreak =
           homeReachability.blockingCause === 'BLOCK' &&
           canBreakWhenEmpty &&
           homeReachability.firstBlockingBlockPos !== null;
-        const hasAlternativeOpenCrown = items.crowns.allFloorCrowns.some(
-          c => (c.pos.x !== curPos.x || c.pos.y !== curPos.y) && c.isReachable && c.canReturnHomeWithCrown
-        );
 
-        if (canUnblockByBreak || hasAlternativeOpenCrown) {
-          this.droppedCrownForClearing = true;
-          this.subMode = canUnblockByBreak ? 'CLEARING_RETURN_BLOCK' : 'ACQUIRING_CROWN';
+        if (canUnblockByBreak && homeReachability.firstBlockingBlockPos) {
+          this.lockTarget('BLOCK', homeReachability.firstBlockingBlockPos, snapshot.totalTurns, curPos, map);
+          this.subMode = 'CLEARING_RETURN_BLOCK';
           return {
             type: 'DROP_HOLD_ITEM',
             priority: 97,
-            reason: `👑 王冠運搬路遮断 (${homeReachability.blockingCause}): 道切り開きのため一時ドロップ`,
+            reason: `👑 王冠運搬路遮断 (${homeReachability.blockingCause}): 岩開削のため一時ドロップ`,
+          };
+        }
+
+        const altOpenCrown = MapSituationEvaluator.findAlternativeOpenCrown(snapshot, curPos, engine);
+        if (altOpenCrown) {
+          this.lockTarget('CROWN', altOpenCrown.pos, snapshot.totalTurns, curPos, map);
+          this.subMode = 'ACQUIRING_CROWN';
+          return {
+            type: 'DROP_HOLD_ITEM',
+            priority: 97,
+            reason: `👑 王冠運搬路遮断 (${homeReachability.blockingCause}): 別開通王冠へ切替のため一時ドロップ`,
           };
         }
       }
@@ -332,22 +395,22 @@ export class CrownEscapeMission implements IStrategicMission {
     }
 
     // -------------------------------------------------------------
-    // 2. 手ぶら時 (holdItem === 'NONE') の安全確認・事前開通・王冠回収
+    // 2. 手ぶら時 (holdItem === 'NONE') の状態マシン処理
     // -------------------------------------------------------------
 
-    // 2-0. ロック済みの岩開削ターゲットがある場合は完遂する（往復ピンポン完全防止）
+    // 2-0. CLEARING_RETURN_BLOCK: ロック済みの岩開削ターゲットがある場合は完遂する（往復ピンポン完全防止）
     if (
-      this.clearingBlockPos &&
+      this.subMode === 'CLEARING_RETURN_BLOCK' &&
+      this.lockedTarget?.kind === 'BLOCK' &&
       canCastBreak &&
       !snapshot.threats.isLethalDanger &&
       surroundings.nearbyDangerousEnemies.length === 0
     ) {
-      this.subMode = 'CLEARING_RETURN_BLOCK';
       return {
         type: 'BREACH_SHORTCUT',
-        targetPos: this.clearingBlockPos,
+        targetPos: this.lockedTarget.pos,
         priority: 95,
-        reason: `🔨 王冠運搬路の開削継続 (${this.clearingBlockPos.x}, ${this.clearingBlockPos.y})`,
+        reason: `🔨 王冠運搬路の開削継続 (${this.lockedTarget.pos.x}, ${this.lockedTarget.pos.y})`,
       };
     }
 
@@ -370,12 +433,13 @@ export class CrownEscapeMission implements IStrategicMission {
           };
         }
 
-        const needsBreakReserve = Boolean(this.clearingBlockPos || homeReachability.firstBlockingBlockPos || homeReachability.blockingCause === 'BLOCK');
+        const needsBreakReserve =
+          this.lockedTarget?.kind === 'BLOCK' ||
+          !homeReachability.canReachStaticallyWithCrown;
         const freezeAllowed =
           MagicSystem.canCast(player, 'FREEZE').allowed &&
           (!needsBreakReserve || player.magic >= 2 || !hasEvadeRoute);
 
-        // 拠点近傍以外で8方向隣接に危険敵がいる場合は、8Tで切れる FLASH ではなく永続無力化の FREEZE を最優先
         if (surroundings.canSafelyFreezeAdjacent && freezeAllowed) {
           return {
             type: 'CAST_MAGIC',
@@ -414,6 +478,46 @@ export class CrownEscapeMission implements IStrategicMission {
           };
         }
 
+        // MP=0で足止め魔法・一撃撃破とも不可な場合: ポーション回収または別王冠へ切り替え、退避時の2マス往復を防止
+        if (player.magic === 0) {
+          if (items.nearestPotion && map.getTorusDistance(curPos, items.nearestPotion).manhattan <= 20) {
+            this.subMode = 'ACQUIRING_CROWN';
+            this.lockTarget('POTION', items.nearestPotion, snapshot.totalTurns, curPos, map);
+            if (surroundings.chebyshev1ActiveDangerousEnemies.length === 0) {
+              return {
+                type: 'NAVIGATE_TO_POSITION',
+                targetPos: items.nearestPotion,
+                targetItemType: 'POTION',
+                priority: 95,
+                reason: `🧪 MP枯渇のため先にポーション回収へ (${items.nearestPotion.x}, ${items.nearestPotion.y})`,
+              };
+            }
+          } else {
+            const altOpenCrown = MapSituationEvaluator.findAlternativeOpenCrown(snapshot, curPos, engine);
+            if (altOpenCrown) {
+              this.subMode = 'ACQUIRING_CROWN';
+              this.lockTarget('CROWN', altOpenCrown.pos, snapshot.totalTurns, curPos, map);
+              if (surroundings.chebyshev1ActiveDangerousEnemies.length === 0) {
+                return {
+                  type: 'NAVIGATE_TO_POSITION',
+                  targetPos: altOpenCrown.pos,
+                  targetItemType: 'CROWN',
+                  priority: 95,
+                  reason: `👑 危険敵居座りかつMP=0のため別王冠へ切替 (${altOpenCrown.pos.x}, ${altOpenCrown.pos.y})`,
+                };
+              }
+            }
+          }
+          if (
+            this.lockedTarget?.kind === 'CROWN' &&
+            this.lockedTarget.pos.x === curPos.x &&
+            this.lockedTarget.pos.y === curPos.y
+          ) {
+            snapshot.memory.markTargetUnreachable(curPos, 4, snapshot.totalTurns);
+            this.clearTargetLock();
+          }
+        }
+
         return {
           type: 'EVADE_DANGER',
           priority: 95,
@@ -426,6 +530,7 @@ export class CrownEscapeMission implements IStrategicMission {
         const dist = map.getTorusDistance(curPos, items.nearestPotion).manhattan;
         if (dist <= 15) {
           this.subMode = 'ACQUIRING_CROWN';
+          this.lockTarget('POTION', items.nearestPotion, snapshot.totalTurns, curPos, map);
           return {
             type: 'NAVIGATE_TO_POSITION',
             targetPos: items.nearestPotion,
@@ -437,14 +542,15 @@ export class CrownEscapeMission implements IStrategicMission {
       }
 
       // ③ 我が家までの帰還ルートが王冠所持状態で安全に開通しているか検証
-      // ※開通未達成の間は絶対にそのまま拾わず、対応する開削・敵排除・別ルート確保を完了させる
       if (!homeReachability.canReachWithCrown) {
         // 3-A. 直角隣接または帰還経路上の岩（BLOCK）を優先開削
         if (surroundings.adjacentBlocks.length > 0 && canCastBreak) {
+          const adjBlock = surroundings.adjacentBlocks[0].pos;
           this.subMode = 'CLEARING_RETURN_BLOCK';
+          this.lockTarget('BLOCK', adjBlock, snapshot.totalTurns, curPos, map);
           return {
             type: 'BREACH_SHORTCUT',
-            targetPos: surroundings.adjacentBlocks[0].pos,
+            targetPos: adjBlock,
             priority: 95,
             reason: '🔨 王冠運搬路の事前開削: 直角隣接の岩を破壊',
           };
@@ -455,13 +561,14 @@ export class CrownEscapeMission implements IStrategicMission {
           canCastBreak &&
           !snapshot.memory.isTargetUnreachable(homeReachability.firstBlockingBlockPos, snapshot.totalTurns)
         ) {
+          const blockPos = homeReachability.firstBlockingBlockPos;
           this.subMode = 'CLEARING_RETURN_BLOCK';
-          this.clearingBlockPos = { ...homeReachability.firstBlockingBlockPos };
+          this.lockTarget('BLOCK', blockPos, snapshot.totalTurns, curPos, map);
           return {
             type: 'BREACH_SHORTCUT',
-            targetPos: this.clearingBlockPos,
+            targetPos: blockPos,
             priority: 95,
-            reason: `🔨 王冠運搬路の事前開削: 経路上の岩 (${this.clearingBlockPos.x}, ${this.clearingBlockPos.y}) を破壊へ移動`,
+            reason: `🔨 王冠運搬路の事前開削: 経路上の岩 (${blockPos.x}, ${blockPos.y}) を破壊へ移動`,
           };
         }
 
@@ -479,11 +586,10 @@ export class CrownEscapeMission implements IStrategicMission {
           };
         }
 
-        // 3-C. 危険敵が帰還路を塞いでいる場合（blockingCause === 'DANGEROUS_ENEMY' のみ許可。BLOCK時は絶対撃たない）
-        // ※8方向隣接の危険敵は8T限定の FLASH より永続無力化できる FREEZE を最優先し、FLASH は射程外・拠点近傍のみ使用する
+        // 3-C. 危険敵が帰還路を塞いでいる場合（blockingCause === 'DANGEROUS_ENEMY' のみ許可）
         if (homeReachability.blockingCause === 'DANGEROUS_ENEMY' && !player.hasDeath && player.magic > 0) {
           this.subMode = 'CLEARING_RETURN_ENEMY';
-          const needsBreakReserve = Boolean(this.clearingBlockPos || homeReachability.firstBlockingBlockPos);
+          const needsBreakReserve = !homeReachability.canReachStaticallyWithCrown;
           const freezeAllowed =
             MagicSystem.canCast(player, 'FREEZE').allowed &&
             (!needsBreakReserve || player.magic >= 2 || !hasEvadeRoute);
@@ -519,13 +625,11 @@ export class CrownEscapeMission implements IStrategicMission {
           }
         }
 
-        // 3-D. 他に安全帰還開通済みの王冠があればそちらへ切り替え
-        const altOpenCrown = items.crowns.allFloorCrowns.find(
-          c => (c.pos.x !== curPos.x || c.pos.y !== curPos.y) && c.isReachable && c.canReturnHomeWithCrown
-        );
+        // 3-D. 他に安全帰還開通済みの王冠があればそちらへ切り替え（オンデマンド・アクティブスキャン）
+        const altOpenCrown = MapSituationEvaluator.findAlternativeOpenCrown(snapshot, curPos, engine);
         if (altOpenCrown) {
-          this.droppedCrownForClearing = false;
           this.subMode = 'ACQUIRING_CROWN';
+          this.lockTarget('CROWN', altOpenCrown.pos, snapshot.totalTurns, curPos, map);
           return {
             type: 'NAVIGATE_TO_POSITION',
             targetPos: altOpenCrown.pos,
@@ -535,7 +639,7 @@ export class CrownEscapeMission implements IStrategicMission {
           };
         }
 
-        // 近傍（Chebyshev <= 3）に危険敵がおらず拠点からも遠い（距離 > 6）遠方敵閉塞なら、一旦王冠を拾って接近し、接敵してからFLASH突破する
+        // 近傍に危険敵がおらず拠点からも遠い遠方敵閉塞なら、一旦王冠を拾って接近し、接敵してからFLASH突破する
         const distToHome3E = map.getTorusDistance(curPos, homePos).manhattan;
         if (
           homeReachability.blockingCause === 'DANGEROUS_ENEMY' &&
@@ -545,8 +649,8 @@ export class CrownEscapeMission implements IStrategicMission {
           !player.hasDeath &&
           player.magic >= 1
         ) {
-          this.droppedCrownForClearing = false;
-          this.subMode = 'ACQUIRING_CROWN';
+          this.subMode = 'CARRYING_TO_HOME';
+          this.lockTarget('HOME', homePos, snapshot.totalTurns, curPos, map);
           return {
             type: 'PICKUP_ITEM',
             targetPos: curPos,
@@ -556,11 +660,11 @@ export class CrownEscapeMission implements IStrategicMission {
           };
         }
 
-        // 3-E. 帰還路未開通時の再拾得禁止ゲート:
-        // 開通が確認されるまで拾わずに MP補給 / 安全敵撃破 / 手ぶら突破移動を行う
+        // 3-E. 帰還路未開通時の再拾得禁止ゲート
         this.subMode = homeReachability.blockingCause === 'BLOCK' ? 'CLEARING_RETURN_BLOCK' : 'CLEARING_RETURN_ENEMY';
 
         if (player.magic < 2 && items.nearestPotion) {
+          this.lockTarget('POTION', items.nearestPotion, snapshot.totalTurns, curPos, map);
           return {
             type: 'NAVIGATE_TO_POSITION',
             targetPos: items.nearestPotion,
@@ -595,7 +699,6 @@ export class CrownEscapeMission implements IStrategicMission {
           };
         }
 
-        // これ以上の即時開拓手段がない場合でも「拾う⇄落とす」往復は起こさず、状況打開のため安全徘徊・待機
         return {
           type: 'WANDER_SAFELY',
           priority: 85,
@@ -604,8 +707,8 @@ export class CrownEscapeMission implements IStrategicMission {
       }
 
       // ④ 帰還ルート完全開通確認済み: 安全に王冠を取得！
-      this.droppedCrownForClearing = false;
       this.subMode = 'CARRYING_TO_HOME';
+      this.lockTarget('HOME', homePos, snapshot.totalTurns, curPos, map);
       return {
         type: 'PICKUP_ITEM',
         targetItemType: 'CROWN',
@@ -614,11 +717,10 @@ export class CrownEscapeMission implements IStrategicMission {
       };
     }
 
-    // 2-B. 手ぶら移動中の危険敵接近処理:
-    // 周囲8方向隣接（Chebyshev 1）に危険敵がいる場合は永続無力化の FREEZE を最優先（上下左右の致命脅威・退避路なし・王冠閉塞時のみ限定）し、
-    // 射程外（距離2〜3）への FLASH はチェビシェフ距離2以内・退避路なし・または王冠への経路閉塞時のみに限定してMP枯渇を防ぐ
+    // 2-B. 手ぶら移動中の危険敵接近処理（パッシブ情報とロック遮断回数のみで軽量判定）
     const isCrownPathBlocked =
-      items.crowns.reachableCrown === null && items.crowns.nearestCrown !== null;
+      (this.lockedTarget?.kind === 'CROWN' && this.lockedTarget.blockedCount > 0) ||
+      (items.crowns.nearestCrown !== null && !items.crowns.nearestCrown.isStaticallyReachable);
     const hasCardAdjacentDanger = surroundings.adjacentActiveEnemies.some(
       e => e.defenseThreat === 'LETHAL' || e.damageToPlayer >= player.hp * 0.35
     );
@@ -668,27 +770,71 @@ export class CrownEscapeMission implements IStrategicMission {
       };
     }
 
-    if (player.magic < 2 && items.nearestPotion) {
+    if (player.magic < 2) {
+      const potionTarget =
+        this.lockedTarget?.kind === 'POTION' ? this.lockedTarget.pos : items.nearestPotion;
+      if (potionTarget) {
+        this.subMode = 'ACQUIRING_CROWN';
+        this.lockTarget('POTION', potionTarget, snapshot.totalTurns, curPos, map);
+        return {
+          type: 'NAVIGATE_TO_POSITION',
+          targetPos: potionTarget,
+          targetItemType: 'POTION',
+          priority: 89,
+          reason: `🧪 脱出用MP補給 (${potionTarget.x}, ${potionTarget.y})`,
+        };
+      }
+    }
+
+    // 2-C2. MP=0でロック済み王冠の直近に危険敵が居座っている場合は別王冠へ切替
+    if (
+      player.magic === 0 &&
+      this.lockedTarget?.kind === 'CROWN' &&
+      map.getTorusDistance(curPos, this.lockedTarget.pos).chebyshev <= 2 &&
+      (surroundings.nearbyDangerousEnemies.length > 0 || surroundings.approachingLethalChebyshev3.length > 0)
+    ) {
+      const lockedCrownPos = this.lockedTarget.pos;
+      const altCrown = MapSituationEvaluator.findAlternativeOpenCrown(snapshot, lockedCrownPos, engine);
+      if (altCrown) {
+        this.subMode = 'ACQUIRING_CROWN';
+        this.lockTarget('CROWN', altCrown.pos, snapshot.totalTurns, curPos, map);
+        return {
+          type: 'NAVIGATE_TO_POSITION',
+          targetPos: altCrown.pos,
+          targetItemType: 'CROWN',
+          priority: 88,
+          reason: `👑 危険敵居座りかつMP=0のため別王冠へ切替 (${altCrown.pos.x}, ${altCrown.pos.y})`,
+        };
+      }
+    }
+
+    // 2-D. 床の王冠へ移動:
+    // ロック済みターゲットが有効であればアクティブスキャンを行わずそのまま直行し、
+    // 未ロック・再計画時のみ MapSituationEvaluator.selectBestCrownTarget を明示呼び出しする
+    this.subMode = 'ACQUIRING_CROWN';
+    if (this.lockedTarget?.kind === 'CROWN') {
+      const dist = map.getTorusDistance(curPos, this.lockedTarget.pos).manhattan;
       return {
         type: 'NAVIGATE_TO_POSITION',
-        targetPos: items.nearestPotion,
-        targetItemType: 'POTION',
-        priority: 89,
-        reason: `🧪 脱出用MP補給 (${items.nearestPotion.x}, ${items.nearestPotion.y})`,
+        targetPos: this.lockedTarget.pos,
+        targetItemType: 'CROWN',
+        priority: 88,
+        reason: `👑 床の王冠へ移動 (${this.lockedTarget.pos.x}, ${this.lockedTarget.pos.y}) [距離:${dist}]`,
       };
     }
 
-    // 2-D. 床の王冠へ移動（到達可能＋帰還開通済みを最優先、次いで到達可能、次いで最寄り候補）
-    this.subMode = 'ACQUIRING_CROWN';
-    const targetCrown = items.crowns.reachableCrown ?? items.crowns.nearestCrown;
-    if (targetCrown) {
-      return {
-        type: 'NAVIGATE_TO_POSITION',
-        targetPos: targetCrown.pos,
-        targetItemType: 'CROWN',
-        priority: 88,
-        reason: `👑 床の王冠へ移動 (${targetCrown.pos.x}, ${targetCrown.pos.y}) [距離:${targetCrown.dist}]`,
-      };
+    if (items.crowns.allFloorCrowns.length > 0) {
+      const targetCrown = MapSituationEvaluator.selectBestCrownTarget(snapshot, engine);
+      if (targetCrown) {
+        this.lockTarget('CROWN', targetCrown.pos, snapshot.totalTurns, curPos, map);
+        return {
+          type: 'NAVIGATE_TO_POSITION',
+          targetPos: targetCrown.pos,
+          targetItemType: 'CROWN',
+          priority: 88,
+          reason: `👑 床の王冠へ移動 (${targetCrown.pos.x}, ${targetCrown.pos.y}) [距離:${targetCrown.dist}]`,
+        };
+      }
     }
 
     // 2-E. 床に王冠がなく、ゴーストが王冠を運んでいる場合の追跡

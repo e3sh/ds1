@@ -1,22 +1,21 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
 import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
-import { IStrategicMission, MissionCompletionReason, MissionStatus } from '../StrategicMission.js';
+import { BaseStrategicMission, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 
 /**
  * BootstrapSwordMission (序盤の剣回収作戦)
  *
- * ゲーム開始直後、マップ上の剣（SWORD）を最速で回収し、戦闘能力を獲得する。
+ * 大・中・小分類ステートマシン：
+ * - 中分類 (subMode): APPROACHING_SWORD | PICKING_UP_SWORD
+ * - 小分類 (lockedTarget): SWORD
  */
-export class BootstrapSwordMission implements IStrategicMission {
+export class BootstrapSwordMission extends BaseStrategicMission {
   public readonly id = 'BOOTSTRAP_SWORD';
   public readonly name = '⚔️ 序盤の剣回収作戦';
   public readonly maxTurns = 120;
-  public turnsElapsed = 0;
-  public status: MissionStatus = 'ACTIVE';
-  public completionReason?: MissionCompletionReason;
-  public subMode: 'APPROACHING_SWORD' | 'PICKING_UP_SWORD' = 'APPROACHING_SWORD';
+  public override subMode: 'APPROACHING_SWORD' | 'PICKING_UP_SWORD' = 'APPROACHING_SWORD';
 
   public evaluateStatus(snapshot: TacticalSnapshot, engine: GameEngine): MissionStatus {
     const player = engine.getPlayer();
@@ -34,10 +33,10 @@ export class BootstrapSwordMission implements IStrategicMission {
 
   public generateDirective(snapshot: TacticalSnapshot, engine: GameEngine): StrategicDirective {
     const items = MapSituationEvaluator.get(snapshot, engine).items;
-    // 序盤の剣回収前ハマり（物理的詰み）検知
     if (items.isEarlySwordTrapped) {
       this.completionReason = 'NO_PROGRESS_BLOCKED';
       this.status = 'FAILED';
+      this.clearTargetLock();
       return {
         type: 'GIVE_UP',
         priority: 100,
@@ -48,9 +47,20 @@ export class BootstrapSwordMission implements IStrategicMission {
     const player = engine.getPlayer();
     const map = snapshot.map;
 
+    this.updateLockProgress(player.pos, map);
+    if (
+      this.lockedTarget &&
+      (this.lockedTarget.kind !== 'SWORD' ||
+        map.getItem(this.lockedTarget.pos) !== 'SWORD' ||
+        this.isLockInvalidated(snapshot, 20))
+    ) {
+      this.clearTargetLock();
+    }
+
     // 足元に剣がある場合は拾う
     if (map.getItem(player.pos) === 'SWORD') {
       this.subMode = 'PICKING_UP_SWORD';
+      this.lockTarget('SWORD', player.pos, snapshot.totalTurns, player.pos, map);
       return {
         type: 'PICKUP_ITEM',
         targetItemType: 'SWORD',
@@ -59,10 +69,11 @@ export class BootstrapSwordMission implements IStrategicMission {
       };
     }
 
-    // マップ上の剣を探す (認知層のマップサマリを参照)
-    const swordPos = items.nearestSword;
+    const swordPos =
+      this.lockedTarget?.kind === 'SWORD' ? this.lockedTarget.pos : items.nearestSword;
     if (swordPos) {
       this.subMode = 'APPROACHING_SWORD';
+      this.lockTarget('SWORD', swordPos, snapshot.totalTurns, player.pos, map);
       return {
         type: 'NAVIGATE_TO_POSITION',
         targetPos: swordPos,

@@ -4,9 +4,8 @@ import { MagicSystem } from '../../../systems/MagicSystem.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 import {
-  IStrategicMission,
+  BaseStrategicMission,
   MissionAuditProfile,
-  MissionCompletionReason,
   MissionStatus,
 } from '../StrategicMission.js';
 
@@ -16,17 +15,13 @@ import {
  * L4 (BREACH: 指定岩のBREAK開通) または L5 (RELOCATE: RETURN / JUMP 転移) を実行する。
  * 戦術層へ直接命令せず、通常の StrategicDirective として DirectiveArbiter を通過させる。
  */
-export class StrategicBreakMission implements IStrategicMission {
+export class StrategicBreakMission extends BaseStrategicMission {
   public readonly id = 'STRATEGIC_BREAK';
   public readonly name: string;
   public readonly maxTurns = 12;
-  public turnsElapsed = 0;
-  public startTurn?: number;
-  public status: MissionStatus = 'ACTIVE';
-  public completionReason?: MissionCompletionReason;
-  public subMode: 'BREACH' | 'RETURN' | 'JUMP';
+  public override subMode: 'BREACH' | 'RETURN' | 'JUMP';
 
-  public readonly auditProfile: MissionAuditProfile = {
+  public override readonly auditProfile: MissionAuditProfile = {
     graceTurns: 16,
     tabooable: false,
     maxEscalation: 'TERMINAL',
@@ -38,6 +33,7 @@ export class StrategicBreakMission implements IStrategicMission {
     public readonly mode: 'BREACH' | 'RETURN' | 'JUMP',
     public readonly target: Position | null = null
   ) {
+    super();
     this.subMode = mode;
     this.name =
       mode === 'BREACH'
@@ -45,7 +41,7 @@ export class StrategicBreakMission implements IStrategicMission {
         : `🌀 ${mode} 転移局面打開作戦`;
   }
 
-  public get currentTarget(): Position | null {
+  public override get currentTarget(): Position | null {
     return this.target;
   }
 

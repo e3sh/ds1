@@ -145,6 +145,10 @@ export class StrategicPlanner {
     }
 
     for (const t of orders.tabooTargets) {
+      const isHomeTile =
+        (t.pos.x === snapshot.map.realHomePos.x && t.pos.y === snapshot.map.realHomePos.y) ||
+        snapshot.map.getBaseTile(t.pos) === 'HOME';
+      if (isHomeTile) continue;
       const duration = Math.max(1, t.untilTurn - snapshot.totalTurns);
       snapshot.memory.markTargetUnreachable(t.pos, duration, snapshot.totalTurns);
     }

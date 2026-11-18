@@ -4,9 +4,8 @@ import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 import {
-  IStrategicMission,
+  BaseStrategicMission,
   MissionAuditProfile,
-  MissionCompletionReason,
   MissionStatus,
 } from '../StrategicMission.js';
 
@@ -16,17 +15,13 @@ import {
  * 従来の ExploreWanderMission（1マス移動で即 COMPLETED になる擬似完了）を置き換え、
  * 認知層が算出した未踏地/最古訪問地（frontierTargets）へ計画的に移動する。
  */
-export class ExploreFrontierMission implements IStrategicMission {
+export class ExploreFrontierMission extends BaseStrategicMission {
   public readonly id = 'EXPLORE_FRONTIER';
   public readonly name = '🧭 未踏フロンティア遠征作戦';
   public readonly maxTurns = 24;
-  public turnsElapsed = 0;
-  public startTurn?: number;
-  public status: MissionStatus = 'ACTIVE';
-  public completionReason?: MissionCompletionReason;
-  public subMode: 'NAVIGATING_FRONTIER' | 'WANDERING' = 'NAVIGATING_FRONTIER';
+  public override subMode: 'NAVIGATING_FRONTIER' | 'WANDERING' = 'NAVIGATING_FRONTIER';
 
-  public readonly auditProfile: MissionAuditProfile = {
+  public override readonly auditProfile: MissionAuditProfile = {
     graceTurns: 24,
     tabooable: false,
     maxEscalation: 'TERMINAL',
@@ -35,24 +30,33 @@ export class ExploreFrontierMission implements IStrategicMission {
   private resolvedTarget: Position | null;
 
   constructor(target: Position | null = null) {
+    super();
     this.resolvedTarget = target ? { ...target } : null;
   }
 
-  public get currentTarget(): Position | null {
-    return this.resolvedTarget;
+  public override get currentTarget(): Position | null {
+    return this.lockedTarget ? this.lockedTarget.pos : this.resolvedTarget;
   }
 
   private ensureTarget(snapshot: TacticalSnapshot, engine: GameEngine): Position | null {
     const pos = engine.getPlayer().pos;
+    this.updateLockProgress(pos, snapshot.map);
     if (
       this.resolvedTarget &&
       (this.resolvedTarget.x !== pos.x || this.resolvedTarget.y !== pos.y) &&
-      !snapshot.memory.isTargetUnreachable(this.resolvedTarget, snapshot.totalTurns)
+      !snapshot.memory.isTargetUnreachable(this.resolvedTarget, snapshot.totalTurns) &&
+      !(this.lockedTarget && this.lockedTarget.blockedCount >= 2)
     ) {
+      this.lockTarget('FRONTIER', this.resolvedTarget, snapshot.totalTurns, pos, snapshot.map);
       return this.resolvedTarget;
     }
     const candidates = MapSituationEvaluator.get(snapshot, engine).exploration.frontierTargets;
     this.resolvedTarget = candidates.find(c => c.x !== pos.x || c.y !== pos.y) ?? null;
+    if (this.resolvedTarget) {
+      this.lockTarget('FRONTIER', this.resolvedTarget, snapshot.totalTurns, pos, snapshot.map);
+    } else {
+      this.clearTargetLock();
+    }
     return this.resolvedTarget;
   }
 

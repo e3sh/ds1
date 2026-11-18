@@ -1,28 +1,26 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
 import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
-import { IStrategicMission, MissionCompletionReason, MissionStatus } from '../StrategicMission.js';
+import { BaseStrategicMission, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
-import { ReadinessEvaluator } from '../evaluators/ReadinessEvaluator.js';
+import { DragonReadinessAssessment, ReadinessEvaluator } from '../evaluators/ReadinessEvaluator.js';
 import { MissionSelector } from '../evaluators/MissionSelector.js';
 
 /**
  * PrepareDragonAssaultMission (カテゴリ2: 決戦前リソース備蓄・最終調整作戦)
  *
- * STR達成後、ドラゴン要塞に突撃する前に必要なリソースを計画的に集める：
- * 1. 手持ちコインの一括換金（EXP防御力極大化 ＆ 最大HP超えのオーバーヒール獲得）
- * 2. 決戦・脱出用MPプール（FLASH, RETURN, FREEZE等）のポーション回収・備蓄
- * 3. 不要アイテムの整理
+ * 大・中・小分類ステートマシン：
+ * - 中分類 (subMode): DROPPING_JUNK | CASHING_GOLD | COLLECTING_COIN | COLLECTING_POTION | HEALING_AT_HOME | READY_IDLE
+ * - 小分類 (lockedTarget): HOME | POTION | COIN
+ *
+ * ポーションとコインの回収中に1歩単位でターゲットが目移り（ピンポン移動）しないよう、
+ * 選定した単一ターゲットを回収完了・無効化までロック維持する。
  */
-export class PrepareDragonAssaultMission implements IStrategicMission {
+export class PrepareDragonAssaultMission extends BaseStrategicMission {
   public readonly id = 'PREPARE_DRAGON_ASSAULT';
   public readonly name = '⚔️ 決戦前リソース備蓄・最終調整作戦';
   public readonly maxTurns = 120;
-  public turnsElapsed = 0;
-  public startTurn?: number;
-  public status: MissionStatus = 'ACTIVE';
-  public completionReason?: MissionCompletionReason;
-  public subMode: 'DROPPING_JUNK' | 'CASHING_GOLD' | 'COLLECTING_COIN' | 'COLLECTING_POTION' | 'HEALING_AT_HOME' | 'READY_IDLE' = 'COLLECTING_POTION';
+  public override subMode: 'DROPPING_JUNK' | 'CASHING_GOLD' | 'COLLECTING_COIN' | 'COLLECTING_POTION' | 'HEALING_AT_HOME' | 'READY_IDLE' = 'COLLECTING_POTION';
 
   private hasMadeProgress(snapshot: TacticalSnapshot): boolean {
     const start = this.startTurn ?? snapshot.totalTurns;
@@ -55,8 +53,7 @@ export class PrepareDragonAssaultMission implements IStrategicMission {
       return 'COMPLETED';
     }
 
-    // マップ上に到達可能ポーション・コインが無く、ゴールドも無く、HPも十分でこれ以上補給手段がない場合:
-    // タイムアウトまで無駄に徘徊せず即終了し、決戦・開削・宝箱補給へ転進させる
+    // マップ上に到達可能ポーション・コインが無く、ゴールドも無く、HPも十分でこれ以上補給手段がない場合
     const noReachablePotion = situation.items.nearestPotion === null;
     const hasEnoughHp = player.hp >= player.maxHp * 0.70 || player.hp >= 30000;
 
@@ -72,7 +69,6 @@ export class PrepareDragonAssaultMission implements IStrategicMission {
       return 'ABORTED';
     }
 
-    // タイムアウト時: ステータス進捗があれば COMPLETED(PARTIAL_PROGRESS)、0進捗なら偽完了にせず ABORTED(NO_PROGRESS_TIMEOUT)
     if (this.turnsElapsed >= this.maxTurns) {
       if (madeProgress) {
         this.completionReason = 'PARTIAL_PROGRESS';
@@ -85,11 +81,76 @@ export class PrepareDragonAssaultMission implements IStrategicMission {
     return 'ACTIVE';
   }
 
+  /**
+   * Step 1: 毎ターン先頭でロック済みターゲットの完了・無効化を検証する
+   */
+  private verifyLocks(
+    snapshot: TacticalSnapshot,
+    engine: GameEngine,
+    assessment: DragonReadinessAssessment
+  ): void {
+    const player = engine.getPlayer();
+    const map = snapshot.map;
+    this.updateLockProgress(player.pos, map);
+
+    if (player.holdItem !== 'NONE' && player.holdItem !== 'POWER_STONE') {
+      this.clearTargetLock();
+      this.subMode = 'DROPPING_JUNK';
+      return;
+    }
+
+    if (!this.lockedTarget) return;
+
+    switch (this.lockedTarget.kind) {
+      case 'HOME': {
+        if (this.subMode === 'CASHING_GOLD' && player.gold === 0) {
+          this.clearTargetLock();
+        } else if (
+          this.subMode === 'HEALING_AT_HOME' &&
+          (player.hp >= player.maxHp * 0.70 || player.hp >= 30000 || player.gold > 0)
+        ) {
+          this.clearTargetLock();
+        } else if (this.isLockInvalidated(snapshot, 20)) {
+          this.clearTargetLock();
+        }
+        break;
+      }
+      case 'POTION': {
+        if (
+          map.getItem(this.lockedTarget.pos) !== 'POTION' ||
+          player.magic >= snapshot.params.maxTargetMagic ||
+          this.isLockInvalidated(snapshot, 15)
+        ) {
+          this.clearTargetLock();
+        }
+        break;
+      }
+      case 'COIN': {
+        if (
+          map.getItem(this.lockedTarget.pos) !== 'COIN' ||
+          player.gold >= 8 ||
+          !assessment.needsCoinSweep ||
+          this.isLockInvalidated(snapshot, 15)
+        ) {
+          this.clearTargetLock();
+        }
+        break;
+      }
+      default:
+        this.clearTargetLock();
+        break;
+    }
+  }
+
   public generateDirective(snapshot: TacticalSnapshot, engine: GameEngine): StrategicDirective {
     const player = engine.getPlayer();
     const map = snapshot.map;
+    const assessment = ReadinessEvaluator.evaluateDragonReadiness(snapshot, engine, this.turnsElapsed);
 
-    // 1. 不要アイテム（CROSS, KEY等）の手放し（手ぶらでコイン・ポーションを拾えるようにする）
+    // Step 1: ターゲットロック検証
+    this.verifyLocks(snapshot, engine, assessment);
+
+    // 1. 不要アイテム（CROSS, KEY等）の手放し
     if (player.holdItem !== 'NONE' && player.holdItem !== 'POWER_STONE') {
       this.subMode = 'DROPPING_JUNK';
       return {
@@ -99,7 +160,6 @@ export class PrepareDragonAssaultMission implements IStrategicMission {
       };
     }
 
-    const assessment = ReadinessEvaluator.evaluateDragonReadiness(snapshot, engine, this.turnsElapsed);
     const items = MapSituationEvaluator.get(snapshot, engine).items;
     const floorItem = map.getItem(player.pos);
     const needMoreExp =
@@ -138,12 +198,13 @@ export class PrepareDragonAssaultMission implements IStrategicMission {
       (player.experience < 4000 && afterExp >= 4000) ||
       (player.experience < 12000 && afterExp >= 12000) ||
       (player.experience < snapshot.params.targetDefenseExp && afterExp >= snapshot.params.targetDefenseExp);
-    const nearestCoin = items.nearestCoin;
-    const distNearestCoin = nearestCoin ? map.getTorusDistance(player.pos, nearestCoin).manhattan : Infinity;
+    const coinTarget =
+      this.lockedTarget?.kind === 'COIN' ? this.lockedTarget.pos : items.nearestCoin;
+    const distNearestCoin = coinTarget ? map.getTorusDistance(player.pos, coinTarget).manhattan : Infinity;
     const maxSweepGold = player.experience < 12000 ? 5 : 7;
     const canKeepSweepingCoins =
       Boolean(assessment.needsCoinSweep) &&
-      nearestCoin !== null &&
+      coinTarget !== null &&
       player.gold < maxSweepGold &&
       !reachesMilestone &&
       this.turnsElapsed < 65 &&
@@ -151,6 +212,7 @@ export class PrepareDragonAssaultMission implements IStrategicMission {
 
     if (coinGrantsExp && player.gold > 0 && !canKeepSweepingCoins) {
       this.subMode = 'CASHING_GOLD';
+      this.lockTarget('HOME', map.realHomePos, snapshot.totalTurns, player.pos, map);
       return {
         type: 'NAVIGATE_TO_POSITION',
         targetPos: map.realHomePos,
@@ -159,52 +221,79 @@ export class PrepareDragonAssaultMission implements IStrategicMission {
       };
     }
 
-    // 4. 緊急MP (MP < 3) 時は最寄りポーション優先（BREAK用MP温存・確保）
-    const potionPos = items.nearestPotion;
-    const distNearestPotion = potionPos ? map.getTorusDistance(player.pos, potionPos).manhattan : Infinity;
-    if (player.magic < 3 && potionPos && (distNearestPotion <= distNearestCoin || !canKeepSweepingCoins)) {
+    // 4. 緊急MP (MP < 3) 時は最寄りポーション優先（ただし既にロック中のポーションがあれば維持）
+    const potionTarget =
+      this.lockedTarget?.kind === 'POTION' ? this.lockedTarget.pos : items.nearestPotion;
+    const distNearestPotion = potionTarget ? map.getTorusDistance(player.pos, potionTarget).manhattan : Infinity;
+    if (player.magic < 3 && potionTarget && (distNearestPotion <= distNearestCoin || !canKeepSweepingCoins)) {
       this.subMode = 'COLLECTING_POTION';
+      this.lockTarget('POTION', potionTarget, snapshot.totalTurns, player.pos, map);
       return {
         type: 'NAVIGATE_TO_POSITION',
-        targetPos: potionPos,
+        targetPos: potionTarget,
         targetItemType: 'POTION',
         priority: 90,
-        reason: `決戦前MP備蓄(急務): ポーションへ移動 (${potionPos.x}, ${potionPos.y})`,
+        reason: `決戦前MP備蓄(急務): ポーションへ移動 (${potionTarget.x}, ${potionTarget.y})`,
       };
     }
 
-    // 5. EXP不足時の床コイン一括スイープ回収 (近傍15以内またはEXP<12000なら遠方も対象)
+    // 4-B. ロック中のリソースターゲット（COIN / POTION）が有効なら目移りせず継続する
+    if (this.lockedTarget?.kind === 'COIN' && assessment.needsCoinSweep && player.gold < 8) {
+      this.subMode = 'COLLECTING_COIN';
+      return {
+        type: 'NAVIGATE_TO_POSITION',
+        targetPos: this.lockedTarget.pos,
+        targetItemType: 'COIN',
+        priority: 86,
+        reason: `決戦前EXP育成: 床コイン回収継続 (${this.lockedTarget.pos.x}, ${this.lockedTarget.pos.y}) [所持:${player.gold}G]`,
+      };
+    }
+    if (this.lockedTarget?.kind === 'POTION' && needMagic) {
+      this.subMode = 'COLLECTING_POTION';
+      return {
+        type: 'NAVIGATE_TO_POSITION',
+        targetPos: this.lockedTarget.pos,
+        targetItemType: 'POTION',
+        priority: 88,
+        reason: `決戦前MP備蓄: ポーションへ移動継続 (${this.lockedTarget.pos.x}, ${this.lockedTarget.pos.y})`,
+      };
+    }
+
+    // 5. EXP不足時の床コイン一括スイープ回収
     if (
       assessment.needsCoinSweep &&
-      nearestCoin &&
+      coinTarget &&
       player.gold < 8 &&
       (player.experience < 12000 || distNearestCoin <= 15)
     ) {
       this.subMode = 'COLLECTING_COIN';
+      this.lockTarget('COIN', coinTarget, snapshot.totalTurns, player.pos, map);
       return {
         type: 'NAVIGATE_TO_POSITION',
-        targetPos: nearestCoin,
+        targetPos: coinTarget,
         targetItemType: 'COIN',
         priority: 86,
-        reason: `決戦前EXP育成: 床コイン回収 (${nearestCoin.x}, ${nearestCoin.y}) [所持:${player.gold}G]`,
+        reason: `決戦前EXP育成: 床コイン回収 (${coinTarget.x}, ${coinTarget.y}) [所持:${player.gold}G]`,
       };
     }
 
-    // 6. 通常MP備蓄: マップ全域の安全な最寄りポーションを探索して回収 (認知層のマップサマリを参照)
-    if (potionPos) {
+    // 6. 通常MP備蓄
+    if (potionTarget) {
       this.subMode = 'COLLECTING_POTION';
+      this.lockTarget('POTION', potionTarget, snapshot.totalTurns, player.pos, map);
       return {
         type: 'NAVIGATE_TO_POSITION',
-        targetPos: potionPos,
+        targetPos: potionTarget,
         targetItemType: 'POTION',
         priority: 88,
-        reason: `決戦前MP備蓄: ポーションへ移動 (${potionPos.x}, ${potionPos.y})`,
+        reason: `決戦前MP備蓄: ポーションへ移動 (${potionTarget.x}, ${potionTarget.y})`,
       };
     }
 
     // 7. 残余ゴールドの換金フォールバック
     if (player.gold > 0) {
       this.subMode = 'CASHING_GOLD';
+      this.lockTarget('HOME', map.realHomePos, snapshot.totalTurns, player.pos, map);
       return {
         type: 'NAVIGATE_TO_POSITION',
         targetPos: map.realHomePos,
@@ -216,6 +305,7 @@ export class PrepareDragonAssaultMission implements IStrategicMission {
     // 8. HP不足時 (HP < 70%): 我が家で全回復
     if (player.hp < player.maxHp * 0.70 && player.hp < 30000) {
       this.subMode = 'HEALING_AT_HOME';
+      this.lockTarget('HOME', map.realHomePos, snapshot.totalTurns, player.pos, map);
       return {
         type: 'NAVIGATE_TO_POSITION',
         targetPos: map.realHomePos,
@@ -226,6 +316,7 @@ export class PrepareDragonAssaultMission implements IStrategicMission {
 
     // 準備完了（または到達可能資源なし）
     this.subMode = 'READY_IDLE';
+    this.clearTargetLock();
     return {
       type: 'WANDER_SAFELY',
       priority: 20,

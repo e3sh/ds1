@@ -1,30 +1,29 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
 import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
-import { IStrategicMission, MissionCompletionReason, MissionStatus } from '../StrategicMission.js';
+import { BaseStrategicMission, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 import { Position } from '../../../models/Types.js';
 import { WorldMap } from '../../../models/WorldMap.js';
+import { Dragon } from '../../../models/Dragon.js';
+import { Player } from '../../../models/Player.js';
 
 /**
  * SlayDragonMission (ドラゴン討伐決戦作戦)
  *
- * 決戦準備完了後、ドラゴンの各首を接近・撃破し、ドラゴンを完全討伐する。
- * 戦術層に丸投げせず、ミッション内部でサブステップを明示的に管理：
- * 1. 決戦前の身軽化（不要手持ち品ドロップ）
- * 2. HP危機時・MP枯渇時の一時帰還
- * 3. 首の斜め隣接マスからの直接攻撃 (ATTACK_TARGET)
- * 4. ブレス射線を避けた斜め安全マスへの位置取り進軍 (NAVIGATE_TO_POSITION)
+ * 大・中・小分類ステートマシン：
+ * - 中分類 (subMode): DROPPING_ITEM | RETREATING_HEAL | RESUPPLY_MP | ATTACKING_HEAD | APPROACHING_SPOT
+ * - 小分類 (lockedTarget): HOME | POTION | DRAGON_HEAD | DRAGON_SPOT
+ *
+ * 確定した斜め安全攻撃マス（DRAGON_SPOT）をロック維持し、
+ * 複数首・複数スポット間での目移り往復を防止する。
  */
-export class SlayDragonMission implements IStrategicMission {
+export class SlayDragonMission extends BaseStrategicMission {
   public readonly id = 'SLAY_DRAGON';
   public readonly name = '🐉 ドラゴン討伐決戦作戦';
   public readonly maxTurns = 800;
-  public turnsElapsed = 0;
-  public status: MissionStatus = 'ACTIVE';
-  public completionReason?: MissionCompletionReason;
-  public subMode: 'DROPPING_ITEM' | 'RETREATING_HEAL' | 'RESUPPLY_MP' | 'ATTACKING_HEAD' | 'APPROACHING_SPOT' = 'APPROACHING_SPOT';
-  public readonly auditProfile = {
+  public override subMode: 'DROPPING_ITEM' | 'RETREATING_HEAL' | 'RESUPPLY_MP' | 'ATTACKING_HEAD' | 'APPROACHING_SPOT' = 'APPROACHING_SPOT';
+  public override readonly auditProfile = {
     graceTurns: 48,
     tabooable: true,
     maxEscalation: 'TERMINAL' as const,
@@ -54,7 +53,6 @@ export class SlayDragonMission implements IStrategicMission {
       return 'ABORTED';
     }
 
-    // 要件3: 生存首の攻撃スポットがすべて到達不能な場合は早期アボートして開削・準備へ回る
     const map = snapshot.map;
     const hasAnyReachableSpot = livingHeads.some(head => {
       const spots = snapshot.spatial.calculateHeadAttackSpots(head, dragon, map);
@@ -66,6 +64,73 @@ export class SlayDragonMission implements IStrategicMission {
     }
 
     return 'ACTIVE';
+  }
+
+  /**
+   * Step 1: ロック済みターゲットの完了・有効性確認と状態遷移
+   */
+  private verifyLocks(
+    snapshot: TacticalSnapshot,
+    player: Player,
+    dragon: Dragon,
+    isHpDanger: boolean,
+    livingHeadsCount: number
+  ): void {
+    const map = snapshot.map;
+    this.updateLockProgress(player.pos, map);
+
+    if (player.holdItem !== 'NONE') {
+      this.clearTargetLock();
+      this.subMode = 'DROPPING_ITEM';
+      return;
+    }
+
+    if (!this.lockedTarget) return;
+
+    switch (this.lockedTarget.kind) {
+      case 'HOME': {
+        if (!isHpDanger || this.isLockInvalidated(snapshot, 20)) {
+          this.clearTargetLock();
+        }
+        break;
+      }
+      case 'POTION': {
+        if (
+          livingHeadsCount !== 1 ||
+          player.magic >= 2 ||
+          map.getItem(this.lockedTarget.pos) !== 'POTION' ||
+          this.isLockInvalidated(snapshot, 15)
+        ) {
+          this.clearTargetLock();
+        }
+        break;
+      }
+      case 'DRAGON_HEAD': {
+        const head = dragon.heads.find(h => h.type === this.lockedTarget?.entityId);
+        if (!head || !head.isAlive || !this.isDiagonalAdjacent(player.pos, head.pos, map)) {
+          this.clearTargetLock();
+        }
+        break;
+      }
+      case 'DRAGON_SPOT': {
+        const head = dragon.heads.find(h => h.type === this.lockedTarget?.entityId);
+        if (!head || !head.isAlive || this.isLockInvalidated(snapshot, 20)) {
+          this.clearTargetLock();
+          break;
+        }
+        const validSpots = snapshot.spatial.calculateHeadAttackSpots(head, dragon, map);
+        const stillValidSpot = validSpots.some(
+          s => s.x === this.lockedTarget!.pos.x && s.y === this.lockedTarget!.pos.y
+        );
+        if (!stillValidSpot) {
+          this.clearTargetLock();
+        }
+        break;
+      }
+      default:
+        this.clearTargetLock();
+        break;
+    }
   }
 
   public generateDirective(snapshot: TacticalSnapshot, engine: GameEngine): StrategicDirective {
@@ -83,8 +148,12 @@ export class SlayDragonMission implements IStrategicMission {
       return { type: 'WANDER_SAFELY', priority: 10, reason: '全首討伐済み' };
     }
 
+    const isHpDanger = player.hp < player.maxHp * 0.35 && player.hp < 20000;
+
+    // Step 1: 毎ターン先頭での成否・ロック検証
+    this.verifyLocks(snapshot, player, dragon, isHpDanger, livingHeads.length);
+
     // サブステップ 1: 不要アイテムの手放し（手ぶら化）
-    // 決戦時は身軽である必要があり、足元が空床なら即座にドロップ
     if (player.holdItem !== 'NONE') {
       this.subMode = 'DROPPING_ITEM';
       return {
@@ -106,10 +175,9 @@ export class SlayDragonMission implements IStrategicMission {
     }
 
     // サブステップ 2: HP危機時 (HP < 35% かつ HP < 20,000) の一時帰還
-    const isHpDanger = player.hp < player.maxHp * 0.35 && player.hp < 20000;
     if (isHpDanger) {
       this.subMode = 'RETREATING_HEAL';
-      // ポーション温存のため前線基地（我が家）へ徒歩帰還を優先
+      this.lockTarget('HOME', bestHome, snapshot.totalTurns, player.pos, map);
       return {
         type: 'NAVIGATE_TO_POSITION',
         targetPos: bestHome,
@@ -119,8 +187,6 @@ export class SlayDragonMission implements IStrategicMission {
     }
 
     // サブステップ 3: 最後の首撃破前の MP 補給 (残存首1体かつ MP < 2)
-    // （王冠脱出時の魔法 FLASH/RETURN/FREEZE 用のMPを確保）
-    // ※我が家ではMPは回復しないため、マップ上の安全なポーションのみを探索
     if (livingHeads.length === 1 && player.magic < 2) {
       if (map.getItem(player.pos) === 'POTION') {
         this.subMode = 'RESUPPLY_MP';
@@ -131,18 +197,21 @@ export class SlayDragonMission implements IStrategicMission {
           reason: '最終首決戦前のMP補給（足元のポーション取得）',
         };
       }
-      const nearestPotion = MapSituationEvaluator.get(snapshot, engine).items.nearestPotion;
-      if (nearestPotion) {
+      const potionTarget =
+        this.lockedTarget?.kind === 'POTION'
+          ? this.lockedTarget.pos
+          : MapSituationEvaluator.get(snapshot, engine).items.nearestPotion;
+      if (potionTarget) {
         this.subMode = 'RESUPPLY_MP';
+        this.lockTarget('POTION', potionTarget, snapshot.totalTurns, player.pos, map);
         return {
           type: 'NAVIGATE_TO_POSITION',
-          targetPos: nearestPotion,
+          targetPos: potionTarget,
           targetItemType: 'POTION',
           priority: 95,
-          reason: `最終首決戦前のMP補給ポーションへ移動 (${nearestPotion.x}, ${nearestPotion.y})`,
+          reason: `最終首決戦前のMP補給ポーションへ移動 (${potionTarget.x}, ${potionTarget.y})`,
         };
       }
-      // マップ上にポーションがなければ我が家には戻らず、そのまま首攻撃へフォールスルー
     }
 
     // プレイヤーのSTRで倒せる首（killableHeads）を優先
@@ -155,6 +224,9 @@ export class SlayDragonMission implements IStrategicMission {
     for (const head of candidateHeads) {
       if (this.isDiagonalAdjacent(player.pos, head.pos, map)) {
         this.subMode = 'ATTACKING_HEAD';
+        this.lockTarget('DRAGON_HEAD', head.pos, snapshot.totalTurns, player.pos, map, {
+          entityId: head.type,
+        });
         return {
           type: 'ATTACK_TARGET',
           targetPos: head.pos,
@@ -165,7 +237,22 @@ export class SlayDragonMission implements IStrategicMission {
     }
 
     // サブステップ 5: 斜め安全攻撃可能マス (Attack Spot) への位置取り進軍
-    // 要件3: isTargetUnreachable を必ず検査し、到達不能スポット・首は候補から除外
+    // ロック済みスポットが有効であれば再選定せずそのまま進軍を維持する
+    if (this.lockedTarget?.kind === 'DRAGON_SPOT') {
+      const lockedHead = livingHeads.find(h => h.type === this.lockedTarget?.entityId);
+      if (lockedHead) {
+        const d = map.getTorusDistance(player.pos, this.lockedTarget.pos).chebyshev;
+        this.subMode = 'APPROACHING_SPOT';
+        return {
+          type: 'NAVIGATE_TO_POSITION',
+          targetPos: this.lockedTarget.pos,
+          priority: 90,
+          policy: { disallowFreezeNearHome: true },
+          reason: `🐉 首(${lockedHead.pos.x}, ${lockedHead.pos.y})の斜め安全位置(${this.lockedTarget.pos.x}, ${this.lockedTarget.pos.y})へ進軍 [距離:${d}]`,
+        };
+      }
+    }
+
     let bestSpot: Position | null = null;
     let targetHead = null;
     let minDistance = Infinity;
@@ -187,6 +274,10 @@ export class SlayDragonMission implements IStrategicMission {
 
     if (bestSpot && targetHead) {
       this.subMode = 'APPROACHING_SPOT';
+      this.lockTarget('DRAGON_SPOT', bestSpot, snapshot.totalTurns, player.pos, map, {
+        entityId: targetHead.type,
+        secondaryPos: targetHead.pos,
+      });
       return {
         type: 'NAVIGATE_TO_POSITION',
         targetPos: bestSpot,
@@ -200,6 +291,7 @@ export class SlayDragonMission implements IStrategicMission {
     const killedAnyHead = this.initialLivingHeads !== null && livingHeads.length < this.initialLivingHeads;
     this.completionReason = killedAnyHead ? 'PARTIAL_PROGRESS' : 'NO_PROGRESS_BLOCKED';
     this.status = 'ABORTED';
+    this.clearTargetLock();
     return {
       type: 'WANDER_SAFELY',
       priority: 10,
@@ -214,6 +306,4 @@ export class SlayDragonMission implements IStrategicMission {
     if (dy > map.height / 2) dy = map.height - dy;
     return dx === 1 && dy === 1;
   }
-
-
 }

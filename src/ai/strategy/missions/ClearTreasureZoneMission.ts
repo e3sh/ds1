@@ -1,7 +1,7 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
 import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
-import { IStrategicMission, MissionCompletionReason, MissionStatus } from '../StrategicMission.js';
+import { BaseStrategicMission, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 import { Position } from '../../../models/Types.js';
 import { WorldMap } from '../../../models/WorldMap.js';
@@ -10,30 +10,27 @@ import { MagicSystem } from '../../../systems/MagicSystem.js';
 /**
  * ClearTreasureZoneMission (宝物庫ゾーン一括攻略作戦)
  *
- * 特定ゾーン内の宝箱を一括開錠し、出現したパワーストーン等の資源を回収する。
- * BREAK習得済みならショートカット開削（breachShortcutPositions）を積極的に活用する。
+ * 大・中・小分類ステートマシン：
+ * - 中分類 (subMode): BREACHING_ENTRY | COLLECTING_DROP | FETCHING_KEY | OPENING_CHEST | EXHAUSTED
+ * - 小分類 (lockedTarget): BLOCK | POWER_STONE | DEATH | KEY | CHEST
+ *
+ * 確定した単一ターゲット（ショートカット岩・鍵・宝箱・ドロップ石）をロックし、
+ * 達成・消失・遮断まで維持することで1歩ごとの目移り・ピンポン移動を根絶する。
  */
-export class ClearTreasureZoneMission implements IStrategicMission {
+export class ClearTreasureZoneMission extends BaseStrategicMission {
   public readonly id = 'CLEAR_TREASURE_ZONE';
   public readonly name: string;
   public readonly maxTurns = 75;
-  public turnsElapsed = 0;
-  public startTurn?: number;
-  public status: MissionStatus = 'ACTIVE';
-  public completionReason?: MissionCompletionReason;
-  public subMode: 'BREACHING_ENTRY' | 'COLLECTING_DROP' | 'FETCHING_KEY' | 'OPENING_CHEST' | 'EXHAUSTED' = 'OPENING_CHEST';
+  public override subMode: 'BREACHING_ENTRY' | 'COLLECTING_DROP' | 'FETCHING_KEY' | 'OPENING_CHEST' | 'EXHAUSTED' = 'OPENING_CHEST';
 
-  public readonly auditProfile = {
+  public override readonly auditProfile = {
     graceTurns: 40,
     tabooable: true,
     maxEscalation: 'TERMINAL' as const,
   };
 
-  private lastTargetChestPos: Position | null = null;
-  private lastTargetChestDist: number = Infinity;
-  private targetChestTurns: number = 0;
-
-  constructor(public readonly zoneId: string) {
+  constructor(public override readonly zoneId: string) {
+    super();
     this.name = zoneId === 'GLOBAL_ALL'
       ? '📦 マップ残存宝箱一括開錠作戦'
       : `📦 宝物庫ゾーン攻略 [Zone: ${zoneId}]`;
@@ -57,7 +54,6 @@ export class ClearTreasureZoneMission implements IStrategicMission {
     }
 
     // ゾーン内の未開封宝箱（または到達可能宝箱）の検証
-    // 注意: 実際に宝箱を開けたのではなく、PATH_BLOCKED ブラックリスト入りで到達可能数が0になっただけなら偽完了(COMPLETED)にしない！
     if (this.zoneId !== 'GLOBAL_ALL') {
       const zone = snapshot.spatial.treasureZones.get(this.zoneId);
       if (zone) {
@@ -126,17 +122,101 @@ export class ClearTreasureZoneMission implements IStrategicMission {
     return 'ACTIVE';
   }
 
+  /**
+   * Step 1: 毎ターン先頭で現在のロック対象の成否・有効性を検証する
+   */
+  private verifyAndTransitionLocks(
+    snapshot: TacticalSnapshot,
+    playerPos: Position,
+    holdItem: string,
+    hasDeath: boolean,
+    canCastBreach: boolean
+  ): void {
+    const map = snapshot.map;
+    this.updateLockProgress(playerPos, map);
+    if (!this.lockedTarget) return;
+
+    switch (this.lockedTarget.kind) {
+      case 'BLOCK': {
+        if (
+          !canCastBreach ||
+          map.getObject(this.lockedTarget.pos) !== 'BLOCK' ||
+          this.isLockInvalidated(snapshot, 15)
+        ) {
+          this.clearTargetLock();
+        }
+        break;
+      }
+      case 'POWER_STONE': {
+        if (
+          holdItem === 'POWER_STONE' ||
+          map.getItem(this.lockedTarget.pos) !== 'POWER_STONE' ||
+          map.getTorusDistance(playerPos, this.lockedTarget.pos).manhattan > 10 ||
+          this.isLockInvalidated(snapshot, 12)
+        ) {
+          this.clearTargetLock();
+        }
+        break;
+      }
+      case 'DEATH': {
+        if (
+          !hasDeath ||
+          map.getItem(this.lockedTarget.pos) !== 'DEATH' ||
+          this.isLockInvalidated(snapshot, 10)
+        ) {
+          this.clearTargetLock();
+        }
+        break;
+      }
+      case 'KEY': {
+        if (
+          holdItem === 'KEY' ||
+          map.getItem(this.lockedTarget.pos) !== 'KEY' ||
+          this.isLockInvalidated(snapshot, 15)
+        ) {
+          this.clearTargetLock();
+        }
+        break;
+      }
+      case 'CHEST': {
+        if (holdItem !== 'KEY' || map.getObject(this.lockedTarget.pos) !== 'CHEST') {
+          this.clearTargetLock();
+        } else if (this.isLockInvalidated(snapshot, 15)) {
+          snapshot.memory.markTargetUnreachable(this.lockedTarget.pos, 20, snapshot.totalTurns);
+          this.clearTargetLock();
+        }
+        break;
+      }
+      default:
+        this.clearTargetLock();
+        break;
+    }
+  }
+
   public generateDirective(snapshot: TacticalSnapshot, engine: GameEngine): StrategicDirective {
     const player = engine.getPlayer();
     const map = snapshot.map;
     const isGlobal = this.zoneId === 'GLOBAL_ALL';
     const zone = !isGlobal ? snapshot.spatial.treasureZones.get(this.zoneId) : undefined;
+    const canCastBreach =
+      snapshot.milestones.canBreak &&
+      (MagicSystem.canCast(player, 'BREAK').allowed || MagicSystem.canCast(player, 'KICK').allowed);
 
-    // 1. ショートカット開削の検討:
-    // BREAK習得済み (EXP >= 4000) かつ詠唱可能 (MP >= 1, 死神なし) で、このゾーンに関連する未開削ショートカットがあり、
-    // まだ開通していないなら開削を指示
-    const canCastBreach = snapshot.milestones.canBreak && (MagicSystem.canCast(player, 'BREAK').allowed || MagicSystem.canCast(player, 'KICK').allowed);
+    // Step 1: ターゲットロックの有効性検証
+    this.verifyAndTransitionLocks(snapshot, player.pos, player.holdItem, player.hasDeath, canCastBreach);
+
+    // 1. ショートカット開削の検討（ロック中の岩があればそのまま継続）
     if (canCastBreach) {
+      if (this.lockedTarget?.kind === 'BLOCK') {
+        this.subMode = 'BREACHING_ENTRY';
+        return {
+          type: 'BREACH_SHORTCUT',
+          targetPos: this.lockedTarget.pos,
+          priority: 85,
+          reason: `ショートカット壁・岩を開削継続 (${this.lockedTarget.pos.x}, ${this.lockedTarget.pos.y})`,
+        };
+      }
+
       const viableShortcuts = snapshot.spatial.getViableBreachShortcuts(player, map);
       for (const sc of viableShortcuts) {
         if (snapshot.memory.isTargetUnreachable(sc.pos, snapshot.totalTurns)) continue;
@@ -147,6 +227,7 @@ export class ClearTreasureZoneMission implements IStrategicMission {
           const distToZone = this.getDistanceToZoneBounds(sc.pos, zone);
           if (distToZone <= 4) {
             this.subMode = 'BREACHING_ENTRY';
+            this.lockTarget('BLOCK', sc.pos, snapshot.totalTurns, player.pos, map);
             return {
               type: 'BREACH_SHORTCUT',
               targetPos: sc.pos,
@@ -154,23 +235,20 @@ export class ClearTreasureZoneMission implements IStrategicMission {
               reason: `ゾーン ${this.zoneId} へのショートカット壁・岩を開削 (${sc.pos.x}, ${sc.pos.y})`,
             };
           }
-        } else {
-          // GLOBAL_ALL の場合は最寄りショートカットを開削
-          if (distFromPlayer <= 8) {
-            this.subMode = 'BREACHING_ENTRY';
-            return {
-              type: 'BREACH_SHORTCUT',
-              targetPos: sc.pos,
-              priority: 85,
-              reason: `未開通ショートカットを開削 (${sc.pos.x}, ${sc.pos.y})`,
-            };
-          }
+        } else if (distFromPlayer <= 8) {
+          this.subMode = 'BREACHING_ENTRY';
+          this.lockTarget('BLOCK', sc.pos, snapshot.totalTurns, player.pos, map);
+          return {
+            type: 'BREACH_SHORTCUT',
+            targetPos: sc.pos,
+            priority: 85,
+            reason: `未開通ショートカットを開削 (${sc.pos.x}, ${sc.pos.y})`,
+          };
         }
       }
     }
 
-    // 2. 足元に有益アイテム（POWER_STONE, POTION, COIN）が出現した場合:
-    // 鍵所持中なら一時置きスワップ（SWAP_KEY_FOR_ITEM）、手ぶらなら直接拾い（PICKUP_ITEM）
+    // 2. 足元・近傍の有益アイテム回収
     const floorItem = map.getItem(player.pos);
     const needStr = player.strength < snapshot.params.targetStr;
     const needExp = player.experience < snapshot.params.targetDefenseExp;
@@ -180,10 +258,11 @@ export class ClearTreasureZoneMission implements IStrategicMission {
     const hasPendingRoomChests =
       itemsSummary.nearbyChestCountWithin8 > 0 || itemsSummary.activeZoneRemainingChests > 0;
 
-    // 2-A. パワーストーン
+    // 2-A. 足元パワーストーン
     if (floorItem === 'POWER_STONE' && needStr) {
       if (!itemsSummary.shouldContinueChestChain) {
         this.subMode = 'COLLECTING_DROP';
+        this.lockTarget('POWER_STONE', player.pos, snapshot.totalTurns, player.pos, map);
         if (player.holdItem === 'KEY') {
           return {
             type: 'SWAP_KEY_FOR_ITEM',
@@ -202,27 +281,37 @@ export class ClearTreasureZoneMission implements IStrategicMission {
       }
     }
 
-    // 2-A2. 同一宝物庫内（距離 <= 8）に出現しているパワーストーンの回収
-    if (needStr) {
-      const nearbyStone = itemsSummary.nearestPowerStone;
-      if (
-        nearbyStone &&
-        !itemsSummary.shouldContinueChestChain &&
-        map.getTorusDistance(player.pos, nearbyStone).manhattan <= 8 &&
+    // 2-A2. 同一宝物庫内（距離 <= 8）のパワーストーン回収（ロック維持対応）
+    if (needStr && !itemsSummary.shouldContinueChestChain) {
+      let stoneTarget: Position | null = null;
+      if (this.lockedTarget?.kind === 'POWER_STONE') {
+        stoneTarget = this.lockedTarget.pos;
+      } else if (
+        itemsSummary.nearestPowerStone &&
+        map.getTorusDistance(player.pos, itemsSummary.nearestPowerStone).manhattan <= 8 &&
         (player.holdItem === 'NONE' || !itemsSummary.hasChestWithin2To8)
       ) {
+        const candidate = itemsSummary.nearestPowerStone;
+        const inCurrentZone = zone ? this.getDistanceToZoneBounds(candidate, zone) === 0 : false;
+        const withinPath10 = itemsSummary.getNoBreakDist(candidate) <= 10;
+        if (inCurrentZone || withinPath10) {
+          stoneTarget = candidate;
+        }
+      }
+      if (stoneTarget) {
         this.subMode = 'COLLECTING_DROP';
+        this.lockTarget('POWER_STONE', stoneTarget, snapshot.totalTurns, player.pos, map);
         return {
           type: 'NAVIGATE_TO_POSITION',
-          targetPos: nearbyStone,
+          targetPos: stoneTarget,
           targetItemType: 'POWER_STONE',
           priority: 93,
-          reason: `宝物庫内で出現したパワーストーンを回収 (${nearbyStone.x}, ${nearbyStone.y})`,
+          reason: `宝物庫内で出現したパワーストーンを回収 (${stoneTarget.x}, ${stoneTarget.y})`,
         };
       }
     }
 
-    // 2-B. 魔法の壺 (POTION): 部屋内に開けるべき宝箱が残っている間は鍵スワップして手数を消費しない（手ぶら時または全開錠後に回収）
+    // 2-B. 足元の魔法の壺 (POTION)
     if (floorItem === 'POTION') {
       if (player.holdItem === 'KEY' && needMagic && !hasPendingRoomChests) {
         this.subMode = 'COLLECTING_DROP';
@@ -245,7 +334,7 @@ export class ClearTreasureZoneMission implements IStrategicMission {
       }
     }
 
-    // 2-C. 金貨 (COIN): 部屋内に宝箱が残っている間は鍵スワップを避け、全開錠後に回収する
+    // 2-C. 足元の金貨 (COIN)
     if (floorItem === 'COIN') {
       if (player.holdItem === 'KEY' && needExp && !hasPendingRoomChests) {
         this.subMode = 'COLLECTING_DROP';
@@ -268,33 +357,47 @@ export class ClearTreasureZoneMission implements IStrategicMission {
       }
     }
 
-    // 2-D. 既に死神憑依中の場合、近傍の地面の死神を踏んで事前排除（追加の悪影響なし・手持ち維持）
-    if (player.hasDeath && !itemsSummary.shouldContinueChestChain && itemsSummary.nearestDeath) {
-      const deathDist = map.getTorusDistance(player.pos, itemsSummary.nearestDeath).manhattan;
-      if (deathDist >= 1 && deathDist <= 8) {
+    // 2-D. 死神憑依中の地面死神先行排除
+    if (player.hasDeath && !itemsSummary.shouldContinueChestChain) {
+      const deathTarget =
+        this.lockedTarget?.kind === 'DEATH'
+          ? this.lockedTarget.pos
+          : (itemsSummary.nearestDeath &&
+             map.getTorusDistance(player.pos, itemsSummary.nearestDeath).manhattan >= 1 &&
+             map.getTorusDistance(player.pos, itemsSummary.nearestDeath).manhattan <= 8
+              ? itemsSummary.nearestDeath
+              : null);
+      if (deathTarget) {
         this.subMode = 'COLLECTING_DROP';
+        this.lockTarget('DEATH', deathTarget, snapshot.totalTurns, player.pos, map);
         return {
           type: 'NAVIGATE_TO_POSITION',
-          targetPos: itemsSummary.nearestDeath,
+          targetPos: deathTarget,
           priority: 91,
-          reason: `💀 死神憑依中のため近傍の地面の死神を先行排除 (${itemsSummary.nearestDeath.x}, ${itemsSummary.nearestDeath.y})`,
+          reason: `💀 死神憑依中のため近傍の地面の死神を先行排除 (${deathTarget.x}, ${deathTarget.y})`,
         };
       }
     }
 
-    // 3. 鍵を持っていない場合: 鍵を回収
+    // 3. FETCHING_KEY: 鍵を持っていない場合（ロック済み鍵を維持して移動）
     if (player.holdItem !== 'KEY') {
       this.subMode = 'FETCHING_KEY';
-      const keyPos = this.findNearestAvailableKey(player.pos, map, snapshot);
+      if (floorItem === 'KEY') {
+        this.lockTarget('KEY', player.pos, snapshot.totalTurns, player.pos, map);
+        return {
+          type: 'PICKUP_ITEM',
+          targetItemType: 'KEY',
+          priority: 88,
+          reason: '足元の鍵を拾う',
+        };
+      }
+
+      const keyPos =
+        this.lockedTarget?.kind === 'KEY'
+          ? this.lockedTarget.pos
+          : this.findNearestAvailableKey(player.pos, map, snapshot);
       if (keyPos) {
-        if (map.getItem(player.pos) === 'KEY') {
-          return {
-            type: 'PICKUP_ITEM',
-            targetItemType: 'KEY',
-            priority: 88,
-            reason: '足元の鍵を拾う',
-          };
-        }
+        this.lockTarget('KEY', keyPos, snapshot.totalTurns, player.pos, map);
         return {
           type: 'NAVIGATE_TO_POSITION',
           targetPos: keyPos,
@@ -303,10 +406,11 @@ export class ClearTreasureZoneMission implements IStrategicMission {
           reason: `宝箱開錠用の鍵へ移動 (${keyPos.x}, ${keyPos.y})`,
         };
       }
-      // 到達可能な鍵がマップ上にない場合は即座にアボート
+
       this.completionReason = this.hasMadeProgress(snapshot) ? 'PARTIAL_PROGRESS' : 'NO_PROGRESS_BLOCKED';
       this.status = 'ABORTED';
       this.subMode = 'EXHAUSTED';
+      this.clearTargetLock();
       return {
         type: 'WANDER_SAFELY',
         priority: 20,
@@ -314,22 +418,9 @@ export class ClearTreasureZoneMission implements IStrategicMission {
       };
     }
 
-    // 4. 鍵を所持している場合: 最寄り未開封宝箱へ移動し、8歩周期開錠
+    // 4. OPENING_CHEST: 鍵所持中 -> 8歩周期チェインまたはロック済み宝箱への移動・開錠
     if (player.holdItem === 'KEY') {
       this.subMode = 'OPENING_CHEST';
-      const nearestGlobal = this.findNearestChestGlobal(player.pos, map, snapshot);
-      const nearestInZone = zone ? this.findNearestChestInZone(player.pos, zone, map, snapshot) : null;
-
-      let nearestChest = nearestInZone;
-      if (nearestGlobal) {
-        if (!nearestInZone) {
-          nearestChest = nearestGlobal;
-        } else {
-          const distGlobal = map.getTorusDistance(player.pos, nearestGlobal).manhattan;
-          const distZone = map.getTorusDistance(player.pos, nearestInZone).manhattan;
-          nearestChest = distGlobal < distZone ? nearestGlobal : nearestInZone;
-        }
-      }
 
       const needMoreStr =
         player.strength < snapshot.params.targetStr &&
@@ -359,8 +450,22 @@ export class ClearTreasureZoneMission implements IStrategicMission {
             }
           }
         }
-        if (bestParityChest) {
-          nearestChest = bestParityChest;
+      }
+
+      let targetChest: Position | null = null;
+      if (bestParityChest) {
+        targetChest = bestParityChest;
+      } else if (this.lockedTarget?.kind === 'CHEST') {
+        targetChest = this.lockedTarget.pos;
+      } else {
+        const nearestGlobal = this.findNearestChestGlobal(player.pos, map, snapshot);
+        const nearestInZone = zone ? this.findNearestChestInZone(player.pos, zone, map, snapshot) : null;
+        if (nearestGlobal && nearestInZone) {
+          const distGlobal = map.getTorusDistance(player.pos, nearestGlobal).manhattan;
+          const distZone = map.getTorusDistance(player.pos, nearestInZone).manhattan;
+          targetChest = distGlobal < distZone ? nearestGlobal : nearestInZone;
+        } else {
+          targetChest = nearestInZone ?? nearestGlobal;
         }
       }
 
@@ -368,45 +473,22 @@ export class ClearTreasureZoneMission implements IStrategicMission {
         player.stepCountSinceStone === 8 && map.getObject(player.pos) === 'CHEST';
       const useEightStep = needMoreStr && (bestParityChest !== null || isAtChestStep8);
 
-      if (nearestChest) {
-        const chestDist = map.getTorusDistance(player.pos, nearestChest).manhattan;
-        if (this.lastTargetChestPos && this.lastTargetChestPos.x === nearestChest.x && this.lastTargetChestPos.y === nearestChest.y) {
-          // 接近している間は停滞カウントをリセットし、遠方宝箱への移動中に誤ブラックリスト化されるのを防ぐ
-          if (chestDist < this.lastTargetChestDist) {
-            this.targetChestTurns = 0;
-          } else {
-            this.targetChestTurns++;
-          }
-          this.lastTargetChestDist = chestDist;
-
-          if (this.targetChestTurns > 15) {
-            snapshot.memory.markTargetUnreachable(nearestChest, 20, snapshot.totalTurns);
-            this.lastTargetChestPos = null;
-            this.lastTargetChestDist = Infinity;
-            this.targetChestTurns = 0;
-            // 次の宝箱へフォールバック
-            const nextChest = this.findNearestChestGlobal(player.pos, map, snapshot);
-            if (nextChest) {
-              nearestChest = nextChest;
-            }
-          }
-        } else {
-          this.lastTargetChestPos = { ...nearestChest };
-          this.lastTargetChestDist = chestDist;
-          this.targetChestTurns = 0;
-        }
-
+      if (targetChest) {
+        this.lockTarget('CHEST', targetChest, snapshot.totalTurns, player.pos, map);
         return {
           type: useEightStep ? 'UNLOCK_CHEST_8STEP' : 'UNLOCK_CHEST_RAPID',
-          targetPos: nearestChest,
+          targetPos: targetChest,
           priority: 88,
-          reason: useEightStep ? `宝箱の8歩開錠 (${nearestChest.x}, ${nearestChest.y})` : `宝箱の最速開錠 (${nearestChest.x}, ${nearestChest.y})`,
+          reason: useEightStep
+            ? `宝箱の8歩開錠 (${targetChest.x}, ${targetChest.y})`
+            : `宝箱の最速開錠 (${targetChest.x}, ${targetChest.y})`,
         };
       }
 
-      // 到達可能宝箱が枯渇している場合: 実宝箱が0なら達成完了、まだ残っていればブロック遮断によるアボート
-      const curActual = MapSituationEvaluator.get(snapshot, engine).items.totalActualChests;
+      // 到達可能宝箱が枯渇している場合
+      const curActual = itemsSummary.totalActualChests;
       this.subMode = 'EXHAUSTED';
+      this.clearTargetLock();
       if (curActual === 0) {
         this.completionReason = 'OBJECTIVE_ACHIEVED';
         this.status = 'COMPLETED';
@@ -426,7 +508,7 @@ export class ClearTreasureZoneMission implements IStrategicMission {
       }
     }
 
-    // 5. フォールバック: ゾーン中心へ移動（中心が到達不能ならアボート）
+    // 5. フォールバック: ゾーン中心へ移動
     if (zone) {
       const centerX = Math.floor((zone.bounds.x1 + zone.bounds.x2) / 2);
       const centerY = Math.floor((zone.bounds.y1 + zone.bounds.y2) / 2);

@@ -1,7 +1,7 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
 import { MapSituationEvaluator } from '../../perception/MapSituationEvaluator.js';
-import { IStrategicMission, MissionCompletionReason, MissionStatus } from '../StrategicMission.js';
+import { BaseStrategicMission, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 import { Position } from '../../../models/Types.js';
 import { MissionSelector } from '../evaluators/MissionSelector.js';
@@ -9,26 +9,30 @@ import { MissionSelector } from '../evaluators/MissionSelector.js';
 /**
  * HarvestPowerStoneMission (パワーストーン回収＆奉納作戦)
  *
- * 出現したパワーストーンを回収し、我が家へ帰還して奉納するまでをコミット。
+ * 大・中・小分類ステートマシン：
+ * - 中分類 (subMode): APPROACHING_STONE | CHAINING_CHEST | DELIVERING_TO_HOME
+ * - 小分類 (lockedTarget): POWER_STONE | CHEST | HOME
  */
-export class HarvestPowerStoneMission implements IStrategicMission {
+export class HarvestPowerStoneMission extends BaseStrategicMission {
   public readonly id = 'HARVEST_POWER_STONE';
   public readonly name: string;
   public readonly maxTurns = 120;
-  public turnsElapsed = 0;
-  public status: MissionStatus = 'ACTIVE';
-  public completionReason?: MissionCompletionReason;
-  public subMode: 'APPROACHING_STONE' | 'CHAINING_CHEST' | 'DELIVERING_TO_HOME' = 'APPROACHING_STONE';
+  public override subMode: 'APPROACHING_STONE' | 'CHAINING_CHEST' | 'DELIVERING_TO_HOME' = 'APPROACHING_STONE';
   private stonePos: Position;
   private hasPickedUpStone: boolean = false;
   private initialStrength: number | null = null;
 
   constructor(targetStonePos: Position) {
+    super();
     this.stonePos = { ...targetStonePos };
     this.name = `💎 パワーストーン回収＆奉納 (${this.stonePos.x}, ${this.stonePos.y})`;
   }
 
-  private ensureInitialized(engine: GameEngine): void {
+  public override get currentTarget(): Position | null {
+    return this.lockedTarget ? this.lockedTarget.pos : this.stonePos;
+  }
+
+  private ensureInitialized(engine: GameEngine, snapshot: TacticalSnapshot): void {
     const player = engine.getPlayer();
     if (this.initialStrength === null) {
       this.initialStrength = player.strength;
@@ -36,11 +40,14 @@ export class HarvestPowerStoneMission implements IStrategicMission {
     if (player.holdItem === 'POWER_STONE') {
       this.hasPickedUpStone = true;
       this.subMode = 'DELIVERING_TO_HOME';
+      this.lockTarget('HOME', snapshot.map.realHomePos, snapshot.totalTurns, player.pos, snapshot.map);
+    } else if (!this.lockedTarget) {
+      this.lockTarget('POWER_STONE', this.stonePos, snapshot.totalTurns, player.pos, snapshot.map);
     }
   }
 
   public evaluateStatus(snapshot: TacticalSnapshot, engine: GameEngine): MissionStatus {
-    this.ensureInitialized(engine);
+    this.ensureInitialized(engine, snapshot);
     const player = engine.getPlayer();
     const map = snapshot.map;
     const baseStrength = this.initialStrength ?? player.strength;
@@ -65,11 +72,11 @@ export class HarvestPowerStoneMission implements IStrategicMission {
         return 'COMPLETED';
       }
 
-      // 納品によるSTR増加が確認できない（道中ドロップ・ゴースト略奪等）ため偽完了させない
       if (map.getItem(player.pos) === 'POWER_STONE') {
         this.hasPickedUpStone = false;
         this.stonePos = { ...player.pos };
         this.subMode = 'APPROACHING_STONE';
+        this.lockTarget('POWER_STONE', this.stonePos, snapshot.totalTurns, player.pos, map);
         return 'ACTIVE';
       }
 
@@ -78,6 +85,7 @@ export class HarvestPowerStoneMission implements IStrategicMission {
         this.hasPickedUpStone = false;
         this.stonePos = { ...nearestStone };
         this.subMode = 'APPROACHING_STONE';
+        this.lockTarget('POWER_STONE', this.stonePos, snapshot.totalTurns, player.pos, map);
         return 'ACTIVE';
       }
 
@@ -90,7 +98,6 @@ export class HarvestPowerStoneMission implements IStrategicMission {
       return 'COMPLETED';
     }
 
-    // まだ拾っておらず、指定位置の石が消失した（誰かに奪われた等）場合
     if (!this.hasPickedUpStone) {
       if (map.getItem(this.stonePos) !== 'POWER_STONE') {
         this.completionReason = 'TARGET_LOST';
@@ -102,7 +109,6 @@ export class HarvestPowerStoneMission implements IStrategicMission {
       }
     }
 
-    // STRカンスト済みで石をまだ拾っていない場合は、これ以上の奉納は無意味なためアボート
     if (!this.hasPickedUpStone && snapshot.milestones.isStrCapped) {
       this.completionReason = 'OBJECTIVE_ACHIEVED';
       return 'ABORTED';
@@ -117,9 +123,11 @@ export class HarvestPowerStoneMission implements IStrategicMission {
   }
 
   public generateDirective(snapshot: TacticalSnapshot, engine: GameEngine): StrategicDirective {
-    this.ensureInitialized(engine);
+    this.ensureInitialized(engine, snapshot);
     const player = engine.getPlayer();
     const map = snapshot.map;
+    this.updateLockProgress(player.pos, map);
+
     const allHomes = map.getAllHomePositions();
     let bestHome = map.realHomePos;
     let minDist = Infinity;
@@ -131,9 +139,10 @@ export class HarvestPowerStoneMission implements IStrategicMission {
       }
     }
 
-    // 1. パワーストーン所持中: 我が家へ徒歩帰還（BREAKで岩を開削しながら前進し、ポットを温存）
+    // 1. パワーストーン所持中: 我が家へ徒歩帰還
     if (player.holdItem === 'POWER_STONE') {
       this.subMode = 'DELIVERING_TO_HOME';
+      this.lockTarget('HOME', bestHome, snapshot.totalTurns, player.pos, map);
       return {
         type: 'NAVIGATE_TO_POSITION',
         targetPos: bestHome,
@@ -152,6 +161,7 @@ export class HarvestPowerStoneMission implements IStrategicMission {
         const nearestChest = MapSituationEvaluator.get(snapshot, engine).items.nearestChest;
         if (nearestChest) {
           this.subMode = 'CHAINING_CHEST';
+          this.lockTarget('CHEST', nearestChest, snapshot.totalTurns, player.pos, map);
           return {
             type: 'UNLOCK_CHEST_8STEP',
             targetPos: nearestChest,
@@ -162,7 +172,7 @@ export class HarvestPowerStoneMission implements IStrategicMission {
       }
 
       this.subMode = 'APPROACHING_STONE';
-      // 既に何か手持ち品（KEY等）がある場合はスワップまたはドロップ
+      this.lockTarget('POWER_STONE', player.pos, snapshot.totalTurns, player.pos, map);
       if (player.holdItem !== 'NONE') {
         if (player.holdItem === 'KEY') {
           return {
@@ -187,8 +197,9 @@ export class HarvestPowerStoneMission implements IStrategicMission {
       };
     }
 
-    // 3. 石の位置へ移動 (道中の近傍コイン/ポーションついで拾い priority 87..92 を許容するため priority 85)
+    // 3. 石の位置へ移動
     this.subMode = 'APPROACHING_STONE';
+    this.lockTarget('POWER_STONE', this.stonePos, snapshot.totalTurns, player.pos, map);
     return {
       type: 'NAVIGATE_TO_POSITION',
       targetPos: this.stonePos,

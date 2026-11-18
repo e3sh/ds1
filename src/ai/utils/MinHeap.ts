@@ -12,6 +12,17 @@ export class CostMinHeap<T> {
     return this.items.length;
   }
 
+  public peekCost(): number {
+    return this.costs[0];
+  }
+
+  public clear(): void {
+    this.items.length = 0;
+    this.costs.length = 0;
+    this.seqs.length = 0;
+    this.nextSeq = 0;
+  }
+
   public push(item: T, cost: number): void {
     const idx = this.items.length;
     this.items.push(item);

@@ -1,24 +1,23 @@
 import { GameEngine } from '../../../core/GameEngine.js';
 import { TacticalSnapshot } from '../../perception/TacticalSnapshot.js';
-import { IStrategicMission, MissionCompletionReason, MissionStatus } from '../StrategicMission.js';
+import { BaseStrategicMission, MissionStatus } from '../StrategicMission.js';
 import { StrategicDirective } from '../StrategicDirective.js';
 
 /**
  * CashInGoldMission (コイン換金帰還作戦)
  *
- * 手持ちのゴールドを我が家で換金し、重要なEXPマイルストーンや目標防御力に到達する。
+ * 大・中・小分類ステートマシン：
+ * - 中分類 (subMode): RETURNING_HOME | COMPLETED_CASHIN
+ * - 小分類 (lockedTarget): HOME
  */
-export class CashInGoldMission implements IStrategicMission {
+export class CashInGoldMission extends BaseStrategicMission {
   public readonly id = 'CASH_IN_GOLD';
   public readonly name: string;
   public readonly maxTurns = 100;
-  public turnsElapsed = 0;
-  public startTurn?: number;
-  public status: MissionStatus = 'ACTIVE';
-  public completionReason?: MissionCompletionReason;
-  public subMode: 'RETURNING_HOME' | 'COMPLETED_CASHIN' = 'RETURNING_HOME';
+  public override subMode: 'RETURNING_HOME' | 'COMPLETED_CASHIN' = 'RETURNING_HOME';
 
   constructor(private readonly initialGoldAmount: number) {
+    super();
     this.name = `🪙 コイン一括換金帰還 [所持: ${initialGoldAmount}G]`;
   }
 
@@ -28,7 +27,6 @@ export class CashInGoldMission implements IStrategicMission {
     const gains = snapshot.progress.substantiveGainsSince(start);
     const gainedExp = gains.some(g => g.kind === 'EXP_UP' || g.kind === 'GOLD_CASHED');
 
-    // 我が家に到達して換金完了 (player.gold === 0 かつ EXP 増加または初期所持あり)
     if (player.gold === 0) {
       if (this.initialGoldAmount > 0 || gainedExp) {
         this.subMode = 'COMPLETED_CASHIN';
@@ -51,6 +49,8 @@ export class CashInGoldMission implements IStrategicMission {
     this.subMode = 'RETURNING_HOME';
     const player = engine.getPlayer();
     const map = snapshot.map;
+    this.updateLockProgress(player.pos, map);
+
     const allHomes = map.getAllHomePositions();
     let bestHome = map.realHomePos;
     let minDist = Infinity;
@@ -62,8 +62,8 @@ export class CashInGoldMission implements IStrategicMission {
       }
     }
 
-    // ポーション（MP）浪費を防ぐため安易なRETURNは行わず、徒歩で我が家へ帰還
-    // （道中の岩はBREAK開削で恒久的通路を作りながら前進）
+    this.lockTarget('HOME', bestHome, snapshot.totalTurns, player.pos, map);
+
     return {
       type: 'NAVIGATE_TO_POSITION',
       targetPos: bestHome,

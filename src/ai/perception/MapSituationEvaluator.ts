@@ -27,6 +27,8 @@ export interface HomeReachabilitySummary {
   isAtHome: boolean;
   isNearRealHome: boolean;
   isNearSpawnHome: boolean;
+  /** 1-pass Dial BFS による、岩破壊なしの静的到達可否（BFS追加発火なし） */
+  canReachStaticallyWithCrown: boolean;
   canReachWithCrown: boolean;
   canReachHandsFree: boolean;
   blockingCause: HomeBlockingCause;
@@ -36,6 +38,10 @@ export interface HomeReachabilitySummary {
 export interface CrownCandidate {
   pos: Position;
   dist: number;
+  /** 1-pass Dial BFS による静的到達可否（BFS追加発火なし） */
+  isStaticallyReachable: boolean;
+  /** 1-pass Dial BFS による岩破壊なし静的到達可否 */
+  isReachableWithoutBreak: boolean;
   isReachable: boolean;
   firstDir: Direction | null;
   canReturnHomeWithCrown?: boolean;
@@ -84,6 +90,7 @@ export interface ItemReachabilitySummary {
   shouldContinueChestChain: boolean;
   bestOpportunisticItem: OpportunisticItemCandidate | null;
   getReachableChestsInZone: (zoneBounds: { x1: number; y1: number; x2: number; y2: number }) => Position[];
+  getNoBreakDist: (pos: Position) => number;
   readonly isEarlySwordTrapped: boolean;
 }
 
@@ -163,6 +170,10 @@ export class MapSituationEvaluator {
     'UP_LEFT', 'UP_RIGHT', 'DOWN_LEFT', 'DOWN_RIGHT',
   ];
   private static fallbackNav: AdaptiveNavigator | null = null;
+  private static blockingVisitedBuf: Float64Array = new Float64Array(0);
+  private static blockingFirstBlockBuf: Int32Array = new Int32Array(0);
+  private static readonly blockingHeap = new CostMinHeap<number>();
+  private static readonly scratchPos: Position = { x: 0, y: 0 };
 
   /**
    * 現在の状況サマリーを取得する。
@@ -206,7 +217,7 @@ export class MapSituationEvaluator {
   }
 
   /**
-   * マップ全体の状況を一括評価してサマリーを生成する
+   * マップ全体の状況を一括評価してサマリーを生成する（パッシブスキャン: 軽量・複数王冠BFSなし）
    */
   public static evaluate(
     player: Player,
@@ -225,12 +236,12 @@ export class MapSituationEvaluator {
     const curPos = player.pos;
     const stateKey = precomputedStateKey ?? this.buildStateKey(player, map, enemies, totalTurns);
 
-    const homeReachability = this.evaluateHomeReachability(
-      player, map, enemies, dragon, ghosts, nav, resolvedParams
+    const { items, exploration, homeNoBreakReachable } = this.evaluateItems(
+      curPos, player, map, enemies, dragon, ghosts, nav, memory, resolvedParams, totalTurns, spatial
     );
 
-    const { items, exploration } = this.evaluateItems(
-      curPos, player, map, enemies, dragon, ghosts, nav, memory, resolvedParams, totalTurns, spatial
+    const homeReachability = this.evaluateHomeReachability(
+      player, map, enemies, dragon, ghosts, nav, resolvedParams, homeNoBreakReachable
     );
 
     const surroundings = this.evaluateSurroundings(
@@ -247,8 +258,53 @@ export class MapSituationEvaluator {
   }
 
   /**
-   * 拠点（我が家）への到達可能性・閉塞原因・最初の開削岩を評価
+   * アクティブスキャン（オンデマンド明示呼び出し）:
+   * 複数王冠の到達性と帰還開通性を精査し、最良の王冠ターゲットを1つ選定する。
+   * CrownEscapeMission がターゲット未ロック時・再選定時のみ呼び出す。
    */
+  public static selectBestCrownTarget(
+    snapshot: TacticalSnapshot,
+    engine?: GameEngine,
+    excludePos?: Position
+  ): CrownCandidate | null {
+    const summary = this.get(snapshot, engine);
+    const candidates = summary.items.crowns.allFloorCrowns.filter(
+      c => !excludePos || c.pos.x !== excludePos.x || c.pos.y !== excludePos.y
+    );
+    if (candidates.length === 0) return null;
+
+    let bestReachable: CrownCandidate | null = null;
+    for (const c of candidates) {
+      if (!c.isReachable) continue;
+      if (c.canReturnHomeWithCrown) {
+        return c;
+      }
+      if (!bestReachable) {
+        bestReachable = c;
+      }
+    }
+    return bestReachable ?? candidates[0];
+  }
+
+  /**
+   * アクティブスキャン（オンデマンド明示呼び出し）:
+   * 現在地以外の床王冠から、安全に拾えてそのまま我が家へ帰還開通済みの代替王冠を探す。
+   */
+  public static findAlternativeOpenCrown(
+    snapshot: TacticalSnapshot,
+    curPos: Position,
+    engine?: GameEngine
+  ): CrownCandidate | null {
+    const summary = this.get(snapshot, engine);
+    for (const c of summary.items.crowns.allFloorCrowns) {
+      if (c.pos.x === curPos.x && c.pos.y === curPos.y) continue;
+      if (c.isReachable && c.canReturnHomeWithCrown) {
+        return c;
+      }
+    }
+    return null;
+  }
+
   /**
    * 拠点（我が家）への到達可能性・閉塞原因・最初の開削岩を評価
    *
@@ -262,7 +318,8 @@ export class MapSituationEvaluator {
     dragon: Dragon | undefined,
     ghosts: Ghost[],
     nav: AdaptiveNavigator,
-    params: DynamicBotParameters
+    params: DynamicBotParameters,
+    precomputedStaticNoBreakReachable?: boolean
   ): HomeReachabilitySummary {
     const curPos = { ...player.pos };
     const bestHomePos = { ...map.realHomePos };
@@ -275,6 +332,7 @@ export class MapSituationEvaluator {
     const isNearSpawnHome = map.spawnHomePos
       ? map.getTorusDistance(curPos, map.spawnHomePos).chebyshev <= 3
       : false;
+    const canReachStaticallyWithCrown = isAtHome || (precomputedStaticNoBreakReachable ?? true);
 
     if (isAtHome) {
       return {
@@ -282,6 +340,7 @@ export class MapSituationEvaluator {
         isAtHome: true,
         isNearRealHome,
         isNearSpawnHome,
+        canReachStaticallyWithCrown: true,
         canReachWithCrown: true,
         canReachHandsFree: true,
         blockingCause: 'NONE',
@@ -296,7 +355,31 @@ export class MapSituationEvaluator {
     const ensureCrownReachability = () => {
       if (crownEvaluated) return;
       crownEvaluated = true;
+
+      // 1-pass Dial法 BFS により岩破壊なしで静的到達不能と確定している場合は BFS をスキップ
+      if (precomputedStaticNoBreakReachable === false) {
+        cachedStatsStaticWithCrown = null;
+        cachedCanReachWithCrown = false;
+        return;
+      }
+
       const playerWithCrown = this.clonePlayerWithHold(player, 'CROWN');
+      const hasLivingDragon = Boolean(dragon && !dragon.isAllHeadsDefeated);
+      const hasNearDynamicHazards =
+        hasLivingDragon ||
+        (ghosts && ghosts.length > 0) ||
+        enemies.some(e => {
+          if (!e.isAlive || e.isPermanentlyFrozen) return false;
+          if (e.frozenTimer > 0) return true;
+          return map.getTorusDistance(curPos, e.pos).chebyshev <= 6;
+        });
+
+      // 近傍6マスに敵もゴーストも生存ドラゴンもおらず静的開通が保証されていれば高速確定
+      if (precomputedStaticNoBreakReachable === true && !hasNearDynamicHazards) {
+        cachedCanReachWithCrown = true;
+        return;
+      }
+
       const statsWithCrown = nav.executeBfs(
         curPos,
         bestHomePos,
@@ -306,6 +389,26 @@ export class MapSituationEvaluator {
         params,
         { dragon, isEscapePhase: true, ghosts }
       );
+
+      if (!statsWithCrown || statsWithCrown.cost >= 5000) {
+        if (precomputedStaticNoBreakReachable === true && !hasLivingDragon) {
+          // 静的地形で到達可能なので敵を除外した追加BFSなしで原因を切り分けられる
+          cachedStatsStaticWithCrown = { cost: 1, steps: 1 };
+        } else {
+          cachedStatsStaticWithCrown = nav.executeBfs(
+            curPos,
+            bestHomePos,
+            map,
+            playerWithCrown,
+            [],
+            params,
+            { dragon, isEscapePhase: true }
+          );
+        }
+        cachedCanReachWithCrown = false;
+        return;
+      }
+
       cachedStatsStaticWithCrown = nav.executeBfs(
         curPos,
         bestHomePos,
@@ -383,6 +486,7 @@ export class MapSituationEvaluator {
       isAtHome,
       isNearRealHome,
       isNearSpawnHome,
+      canReachStaticallyWithCrown,
       get canReachWithCrown(): boolean {
         ensureCrownReachability();
         return cachedCanReachWithCrown;
@@ -425,86 +529,111 @@ export class MapSituationEvaluator {
     player: Player,
     maxBfsSteps: number
   ): Position | null {
-    if (from.x === to.x && from.y === to.y) return null;
+    const mapW = map.width;
+    const mapH = map.height;
+    const totalCells = mapW * mapH;
+    const sx = ((from.x % mapW) + mapW) % mapW;
+    const sy = ((from.y % mapH) + mapH) % mapH;
+    const tx = ((to.x % mapW) + mapW) % mapW;
+    const ty = ((to.y % mapH) + mapH) % mapH;
+    const startIdx = sy * mapW + sx;
+    const targetIdx = ty * mapW + tx;
+
+    if (startIdx === targetIdx) return null;
 
     const allowDiagonal = player.canDiagonal || player.experience >= 12000;
-    const cardDeltas: { dir: Direction; dx: number; dy: number }[] = [
-      { dir: 'UP', dx: 0, dy: -1 },
-      { dir: 'DOWN', dx: 0, dy: 1 },
-      { dir: 'LEFT', dx: -1, dy: 0 },
-      { dir: 'RIGHT', dx: 1, dy: 0 },
-    ];
-    const diagDeltas: { dir: Direction; dx: number; dy: number }[] = [
-      { dir: 'UP_LEFT', dx: -1, dy: -1 },
-      { dir: 'UP_RIGHT', dx: 1, dy: -1 },
-      { dir: 'DOWN_LEFT', dx: -1, dy: 1 },
-      { dir: 'DOWN_RIGHT', dx: 1, dy: 1 },
-    ];
-    const dirs = allowDiagonal ? [...cardDeltas, ...diagDeltas] : cardDeltas;
+    const dirs: { dx: number; dy: number; isDiag: boolean }[] = allowDiagonal
+      ? [
+          { dx: 0, dy: -1, isDiag: false },
+          { dx: 0, dy: 1, isDiag: false },
+          { dx: -1, dy: 0, isDiag: false },
+          { dx: 1, dy: 0, isDiag: false },
+          { dx: -1, dy: -1, isDiag: true },
+          { dx: 1, dy: -1, isDiag: true },
+          { dx: -1, dy: 1, isDiag: true },
+          { dx: 1, dy: 1, isDiag: true },
+        ]
+      : [
+          { dx: 0, dy: -1, isDiag: false },
+          { dx: 0, dy: 1, isDiag: false },
+          { dx: -1, dy: 0, isDiag: false },
+          { dx: 1, dy: 0, isDiag: false },
+        ];
 
-    interface Node {
-      pos: Position;
-      cost: number;
-      firstBlock: Position | null;
+    if (this.blockingVisitedBuf.length < totalCells) {
+      this.blockingVisitedBuf = new Float64Array(totalCells);
+      this.blockingFirstBlockBuf = new Int32Array(totalCells);
     }
+    const visited = this.blockingVisitedBuf;
+    const firstBlockIdxBuf = this.blockingFirstBlockBuf;
+    visited.fill(Infinity, 0, totalCells);
+    firstBlockIdxBuf.fill(-1, 0, totalCells);
 
-    const queue = new CostMinHeap<Node>();
-    queue.push({ pos: { ...from }, cost: 0, firstBlock: null }, 0);
-    const visited = new Map<string, number>();
-    visited.set(`${from.x},${from.y}`, 0);
+    const queue = this.blockingHeap;
+    queue.clear();
+    visited[startIdx] = 0;
+    queue.push(startIdx, 0);
 
+    const scratch = this.scratchPos;
     let stepCount = 0;
     while (queue.length > 0 && stepCount < maxBfsSteps) {
       stepCount++;
-      const current = queue.pop()!;
-      if (current.pos.x === to.x && current.pos.y === to.y) {
-        return current.firstBlock;
+      const curCost = queue.peekCost();
+      const curIdx = queue.pop()!;
+      if (curCost > visited[curIdx]) continue;
+
+      if (curIdx === targetIdx) {
+        const fbIdx = firstBlockIdxBuf[curIdx];
+        if (fbIdx < 0) return null;
+        return { x: fbIdx % mapW, y: Math.floor(fbIdx / mapW) };
       }
 
-      for (const d of dirs) {
-        const nextPos = map.wrapPosition({
-          x: current.pos.x + d.dx,
-          y: current.pos.y + d.dy,
-        });
+      const cx = curIdx % mapW;
+      const cy = (curIdx - cx) / mapW;
+      const curFirstBlock = firstBlockIdxBuf[curIdx];
 
-        const base = map.getBaseTile(nextPos);
-        const obj = map.getObject(nextPos);
+      for (let i = 0; i < dirs.length; i++) {
+        const d = dirs[i];
+        const nx = (cx + d.dx + mapW) % mapW;
+        const ny = (cy + d.dy + mapH) % mapH;
+        const nextIdx = ny * mapW + nx;
+
+        const base = map.getBaseTile(nx, ny);
+        const obj = map.getObject(nx, ny);
 
         if (base === 'WALL_STATIC') continue;
         if (base === 'GRAVE' && obj === 'NONE') continue;
 
         let stepCost = 1;
-        let nextFirstBlock = current.firstBlock;
+        let nextFirstBlock = curFirstBlock;
 
         if (obj === 'BLOCK') {
           // 岩破壊（BREAK）は直交4方向からのみ行うため、斜め進入は除外
-          if (d.dir.includes('_')) continue;
-          if (AdaptiveNavigator.isProtectedGraveBlock(nextPos, map)) continue;
+          if (d.isDiag) continue;
+          scratch.x = nx;
+          scratch.y = ny;
+          if (AdaptiveNavigator.isProtectedGraveBlock(scratch, map)) continue;
           stepCost = 100;
-          if (!nextFirstBlock) {
-            nextFirstBlock = { ...nextPos };
+          if (nextFirstBlock < 0) {
+            nextFirstBlock = nextIdx;
           }
         }
 
-        let actualNextPos = nextPos;
-        if (base === 'WARP' && !(nextPos.x === to.x && nextPos.y === to.y)) {
-          const warpDest = map.getWarpDestination(nextPos);
-          if (warpDest) actualNextPos = warpDest;
+        let actualIdx = nextIdx;
+        if (base === 'WARP' && nextIdx !== targetIdx) {
+          scratch.x = nx;
+          scratch.y = ny;
+          const warpDest = map.getWarpDestination(scratch);
+          if (warpDest) actualIdx = warpDest.y * mapW + warpDest.x;
           stepCost += 20;
         }
 
-        const key = `${actualNextPos.x},${actualNextPos.y}`;
-        const newCost = current.cost + stepCost;
-        const prevCost = visited.get(key);
-        if (prevCost !== undefined && prevCost <= newCost) continue;
+        const newCost = curCost + stepCost;
+        if (visited[actualIdx] <= newCost) continue;
 
-        visited.set(key, newCost);
-        const node: Node = {
-          pos: actualNextPos,
-          cost: newCost,
-          firstBlock: nextFirstBlock,
-        };
-        queue.push(node, newCost);
+        visited[actualIdx] = newCost;
+        firstBlockIdxBuf[actualIdx] = nextFirstBlock;
+        queue.push(actualIdx, newCost);
       }
     }
 
@@ -526,8 +655,8 @@ export class MapSituationEvaluator {
     params: DynamicBotParameters,
     totalTurns: number,
     spatial?: SpatialKnowledge
-  ): { items: ItemReachabilitySummary; exploration: ExplorationSummary } {
-    const rawCrowns: { pos: Position; dist: number }[] = [];
+  ): { items: ItemReachabilitySummary; exploration: ExplorationSummary; homeNoBreakReachable: boolean } {
+    const rawCrowns: { pos: Position; dist: number; isStaticallyReachable: boolean; isReachableWithoutBreak: boolean; staticDist: number }[] = [];
     const swordsWithDist: { pos: Position; dist: number }[] = [];
     const fallbackSwordsWithDist: { pos: Position; dist: number }[] = [];
     const keysWithDist: { pos: Position; dist: number }[] = [];
@@ -544,90 +673,149 @@ export class MapSituationEvaluator {
     let nearbyPowerStoneCountWithin8 = 0;
     let totalActualChests = 0;
 
-    // 1-pass Dial法 BFS で現在位置から物理的に到達可能な実歩行距離を計算
-    // (!canBreak 時に BLOCK 壁奥を除外し、壁越しの近い金貨・壺へ大回りループするのを防止)
+    // 1-pass Dial法 BFS で現在位置から物理的に到達可能な実歩行距離と「岩破壊なし到達性」を同時計算
+    // (state = (idx << 1) | usedBreak により、配列・オブジェクト生成なしで厳密に判定)
     const canBreakNow = !player.hasDeath && player.experience >= 4000 && player.magic >= 1;
     const canDiagNow = player.canDiagonal || player.experience >= 12000;
-    const bfsDist = new Int16Array(map.width * map.height);
+    const mapW = map.width;
+    const mapH = map.height;
+    const totalCells = mapW * mapH;
+    const bfsDist = new Int16Array(totalCells);
+    const bfsNoBreakDist = new Int16Array(totalCells);
     bfsDist.fill(-1);
-    const bfsDirs: { dx: number; dy: number }[] = canDiagNow
+    bfsNoBreakDist.fill(-1);
+    const bfsDirs: { dx: number; dy: number; isDiag: boolean }[] = canDiagNow
       ? [
-          { dx: 0, dy: -1 },
-          { dx: 1, dy: 0 },
-          { dx: 0, dy: 1 },
-          { dx: -1, dy: 0 },
-          { dx: 1, dy: -1 },
-          { dx: 1, dy: 1 },
-          { dx: -1, dy: 1 },
-          { dx: -1, dy: -1 },
+          { dx: 0, dy: -1, isDiag: false },
+          { dx: 1, dy: 0, isDiag: false },
+          { dx: 0, dy: 1, isDiag: false },
+          { dx: -1, dy: 0, isDiag: false },
+          { dx: 1, dy: -1, isDiag: true },
+          { dx: 1, dy: 1, isDiag: true },
+          { dx: -1, dy: 1, isDiag: true },
+          { dx: -1, dy: -1, isDiag: true },
         ]
       : [
-          { dx: 0, dy: -1 },
-          { dx: 1, dy: 0 },
-          { dx: 0, dy: 1 },
-          { dx: -1, dy: 0 },
+          { dx: 0, dy: -1, isDiag: false },
+          { dx: 1, dy: 0, isDiag: false },
+          { dx: 0, dy: 1, isDiag: false },
+          { dx: -1, dy: 0, isDiag: false },
         ];
-    const startIdx = curPos.y * map.width + curPos.x;
-    if (startIdx >= 0 && startIdx < bfsDist.length) {
+
+    const sx = ((curPos.x % mapW) + mapW) % mapW;
+    const sy = ((curPos.y % mapH) + mapH) % mapH;
+    const startIdx = sy * mapW + sx;
+    const scratch = this.scratchPos;
+
+    if (startIdx >= 0 && startIdx < totalCells) {
       bfsDist[startIdx] = 0;
-      const buckets: Position[][] = [[{ x: curPos.x, y: curPos.y }]];
+      bfsNoBreakDist[startIdx] = 0;
+      const buckets: number[][] = [[startIdx << 1]];
+
       for (let dist = 0; dist < buckets.length; dist++) {
         const bucket = buckets[dist];
         if (!bucket || bucket.length === 0) continue;
         for (let i = 0; i < bucket.length; i++) {
-          const cur = bucket[i];
-          const curIdx = cur.y * map.width + cur.x;
-          if (bfsDist[curIdx] < dist) continue;
-          for (const d of bfsDirs) {
-            const nextPos = map.wrapPosition({ x: cur.x + d.dx, y: cur.y + d.dy });
-            const nextIdx = nextPos.y * map.width + nextPos.x;
+          const state = bucket[i];
+          const curIdx = state >> 1;
+          const curUsedBreak = state & 1;
 
-            const base = map.getBaseTile(nextPos);
-            const obj = map.getObject(nextPos);
+          if (curUsedBreak === 0) {
+            if (bfsNoBreakDist[curIdx] < dist) continue;
+          } else {
+            if (bfsDist[curIdx] < dist) continue;
+          }
+
+          const cx = curIdx % mapW;
+          const cy = (curIdx - cx) / mapW;
+
+          for (let di = 0; di < bfsDirs.length; di++) {
+            const d = bfsDirs[di];
+            const nx = (cx + d.dx + mapW) % mapW;
+            const ny = (cy + d.dy + mapH) % mapH;
+            const nextIdx = ny * mapW + nx;
+
+            const base = map.getBaseTile(nx, ny);
             if (base === 'WALL_STATIC') continue;
+
+            const obj = map.getObject(nx, ny);
             if (base === 'GRAVE' && obj === 'NONE') continue;
+
+            let isBlock = false;
             if (obj === 'BLOCK') {
-              if (!canBreakNow || (d.dx !== 0 && d.dy !== 0) || AdaptiveNavigator.isProtectedGraveBlock(nextPos, map)) {
-                continue;
-              }
+              if (!canBreakNow || d.isDiag) continue;
+              scratch.x = nx;
+              scratch.y = ny;
+              if (AdaptiveNavigator.isProtectedGraveBlock(scratch, map)) continue;
+              isBlock = true;
             }
 
-            const stepCost = obj === 'BLOCK' ? 4 : 1;
+            const nextUsedBreak = (curUsedBreak === 1 || isBlock) ? 1 : 0;
+            const stepCost = isBlock ? 4 : 1;
             const nextCost = dist + stepCost;
-            if (bfsDist[nextIdx] >= 0 && bfsDist[nextIdx] <= nextCost) continue;
-            bfsDist[nextIdx] = nextCost;
+
+            if (nextUsedBreak === 0) {
+              if (bfsNoBreakDist[nextIdx] >= 0 && bfsNoBreakDist[nextIdx] <= nextCost) continue;
+              bfsNoBreakDist[nextIdx] = nextCost;
+              if (bfsDist[nextIdx] < 0 || nextCost < bfsDist[nextIdx]) {
+                bfsDist[nextIdx] = nextCost;
+              }
+            } else {
+              if (bfsDist[nextIdx] >= 0 && bfsDist[nextIdx] <= nextCost) continue;
+              bfsDist[nextIdx] = nextCost;
+            }
 
             if (base === 'WARP') {
-              const warpDest = map.getWarpDestination(nextPos);
+              scratch.x = nx;
+              scratch.y = ny;
+              const warpDest = map.getWarpDestination(scratch);
               if (warpDest) {
-                const wIdx = warpDest.y * map.width + warpDest.x;
+                const wIdx = warpDest.y * mapW + warpDest.x;
                 const wCost = dist + 2;
-                if (bfsDist[wIdx] < 0 || wCost < bfsDist[wIdx]) {
-                  bfsDist[wIdx] = wCost;
-                  if (!buckets[wCost]) buckets[wCost] = [];
-                  buckets[wCost].push({ x: warpDest.x, y: warpDest.y });
+                if (nextUsedBreak === 0) {
+                  if (bfsNoBreakDist[wIdx] < 0 || wCost < bfsNoBreakDist[wIdx]) {
+                    bfsNoBreakDist[wIdx] = wCost;
+                    if (bfsDist[wIdx] < 0 || wCost < bfsDist[wIdx]) {
+                      bfsDist[wIdx] = wCost;
+                    }
+                    if (!buckets[wCost]) buckets[wCost] = [];
+                    buckets[wCost].push(wIdx << 1);
+                  }
+                } else {
+                  if (bfsDist[wIdx] < 0 || wCost < bfsDist[wIdx]) {
+                    bfsDist[wIdx] = wCost;
+                    if (!buckets[wCost]) buckets[wCost] = [];
+                    buckets[wCost].push((wIdx << 1) | 1);
+                  }
                 }
               } else {
                 if (!buckets[nextCost]) buckets[nextCost] = [];
-                buckets[nextCost].push(nextPos);
+                buckets[nextCost].push((nextIdx << 1) | nextUsedBreak);
               }
             } else {
               if (!buckets[nextCost]) buckets[nextCost] = [];
-              buckets[nextCost].push(nextPos);
+              buckets[nextCost].push((nextIdx << 1) | nextUsedBreak);
             }
           }
         }
       }
     }
 
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        const p: Position = { x, y };
-        const obj = map.getObject(p);
-        const item = map.getItem(p);
+    const homeX = ((map.realHomePos.x % mapW) + mapW) % mapW;
+    const homeY = ((map.realHomePos.y % mapH) + mapH) % mapH;
+    const homeNoBreakReachable = bfsNoBreakDist[homeY * mapW + homeX] >= 0;
 
+    for (let y = 0; y < mapH; y++) {
+      for (let x = 0; x < mapW; x++) {
+        const obj = map.getObject(x, y);
+        const item = map.getItem(x, y);
+        if (obj !== 'CHEST' && item === 'NONE') continue;
+
+        const p: Position = { x, y };
         const isUnreachable = memory.isTargetUnreachable(p, totalTurns);
-        const tileBfsDist = bfsDist[y * map.width + x];
+        const cellIdx = y * mapW + x;
+        const tileBfsDist = bfsDist[cellIdx];
+        const tileNoBreakDist = bfsNoBreakDist[cellIdx];
         const isTileReachable = tileBfsDist >= 0;
 
         if (obj === 'CHEST') {
@@ -656,7 +844,13 @@ export class MapSituationEvaluator {
 
         if (item === 'CROWN') {
           if (!isUnreachable) {
-            rawCrowns.push({ pos: p, dist: d });
+            rawCrowns.push({
+              pos: p,
+              dist: d,
+              isStaticallyReachable: isTileReachable,
+              isReachableWithoutBreak: tileNoBreakDist >= 0,
+              staticDist: tileNoBreakDist >= 0 ? tileNoBreakDist : (isTileReachable ? tileBfsDist : Infinity),
+            });
           }
           continue;
         }
@@ -693,7 +887,17 @@ export class MapSituationEvaluator {
     const sortByDist = <T extends { dist: number }>(arr: T[]): T[] =>
       arr.sort((a, b) => a.dist - b.dist);
 
-    sortByDist(rawCrowns);
+    // パッシブスキャン: 王冠候補は BFS を発火させず、岩破壊なし到達性 -> 静的到達性 -> 実距離 -> マンハッタン距離順で整列
+    rawCrowns.sort((a, b) => {
+      if (a.isReachableWithoutBreak !== b.isReachableWithoutBreak) {
+        return a.isReachableWithoutBreak ? -1 : 1;
+      }
+      if (a.isStaticallyReachable !== b.isStaticallyReachable) {
+        return a.isStaticallyReachable ? -1 : 1;
+      }
+      if (a.staticDist !== b.staticDist) return a.staticDist - b.staticDist;
+      return a.dist - b.dist;
+    });
     sortByDist(effectiveSwordsWithDist);
     sortByDist(keysWithDist);
     sortByDist(potionsWithDist);
@@ -703,11 +907,11 @@ export class MapSituationEvaluator {
     sortByDist(chestsWithDist);
     sortByDist(coinsForOpportunistic);
 
-    // 王冠候補の実経路評価（計算負荷を抑えるため到達性・王冠帰還可能性は遅延評価＆メモ化）
+    // 王冠候補の実経路評価（アクティブスキャン時のみ遅延評価＆メモ化で発火）
     const playerWithCrown = rawCrowns.length > 0 ? this.clonePlayerWithHold(player, 'CROWN') : player;
     const homeTarget = { ...map.realHomePos };
     const crownCandidates: CrownCandidate[] = rawCrowns.map(rc => {
-      let pathEvaluated = rc.dist === 0;
+      let pathEvaluated = rc.dist === 0 || !rc.isStaticallyReachable;
       let cachedFirstDir: Direction | null = null;
       let cachedIsReachable = rc.dist === 0;
 
@@ -755,6 +959,8 @@ export class MapSituationEvaluator {
       return {
         pos: rc.pos,
         dist: rc.dist,
+        isStaticallyReachable: rc.isStaticallyReachable,
+        isReachableWithoutBreak: rc.isReachableWithoutBreak,
         get isReachable(): boolean {
           ensurePathToCrown();
           return cachedIsReachable;
@@ -770,21 +976,6 @@ export class MapSituationEvaluator {
       };
     });
 
-    // 王冠非所持時のみ、到達可能性および帰還開通性で候補をソート
-    // （王冠所持中は dist 順のままで十分なため不要な BFS 発火を回避）
-    const canClearReturnPath = !player.hasDeath && player.magic >= 2;
-    if (player.holdItem !== 'CROWN' && crownCandidates.length > 1) {
-      crownCandidates.sort((a, b) => {
-        if (a.isReachable !== b.isReachable) return a.isReachable ? -1 : 1;
-        if (a.isReachable && b.isReachable && (!canClearReturnPath || Math.abs(a.dist - b.dist) <= 4)) {
-          if (a.canReturnHomeWithCrown !== b.canReturnHomeWithCrown) {
-            return a.canReturnHomeWithCrown ? -1 : 1;
-          }
-        }
-        return a.dist - b.dist;
-      });
-    }
-
     const nearestCrown = crownCandidates[0] ?? null;
     const crownGhost = ghosts.find(g => g.carriedItem === 'CROWN');
     const ghostCarryingCrownPos = crownGhost ? { ...crownGhost.pos } : null;
@@ -798,8 +989,12 @@ export class MapSituationEvaluator {
     const deaths = deathsWithDist.map(d => d.pos);
     const chests = chestsWithDist.map(c => c.pos);
 
-    const mapW = map.width;
-    const mapH = map.height;
+    const getNoBreakDist = (pos: Position): number => {
+      const wx = ((pos.x % mapW) + mapW) % mapW;
+      const wy = ((pos.y % mapH) + mapH) % mapH;
+      const d = bfsNoBreakDist[wy * mapW + wx];
+      return d >= 0 ? d : Infinity;
+    };
 
     const getReachableChestsInZone = (zoneBounds: { x1: number; y1: number; x2: number; y2: number }): Position[] => {
       const minX = Math.min(zoneBounds.x1, zoneBounds.x2);
@@ -969,6 +1164,7 @@ export class MapSituationEvaluator {
       shouldContinueChestChain,
       bestOpportunisticItem,
       getReachableChestsInZone,
+      getNoBreakDist,
       get isEarlySwordTrapped(): boolean {
         if (earlySwordTrappedEvaluated) return cachedEarlySwordTrapped;
         earlySwordTrappedEvaluated = true;
@@ -1058,7 +1254,7 @@ export class MapSituationEvaluator {
       },
     };
 
-    return { items: itemsSummary, exploration: explorationSummary };
+    return { items: itemsSummary, exploration: explorationSummary, homeNoBreakReachable };
   }
 
   /**

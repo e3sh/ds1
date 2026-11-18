@@ -50,6 +50,7 @@ export class MissionSelector {
     const harvestOnCooldown = cooldownMissions?.has('HARVEST_POWER_STONE') ?? false;
     const earlyBreakOnCooldown = cooldownMissions?.has('EARLY_BREAK_UNLOCK') ?? false;
     const prepOnCooldown = cooldownMissions?.has('PREPARE_DRAGON_ASSAULT') ?? false;
+    const cashInOnCooldown = cooldownMissions?.has('CASH_IN_GOLD') ?? false;
 
     // ① ドラゴン全首撃破済み -> 王冠脱出
     if (dragon && (dragon.isAllHeadsDefeated || dragon.heads.every(h => !h.isAlive))) {
@@ -112,7 +113,7 @@ export class MissionSelector {
           const isActivelyChaining =
             player.holdItem === 'KEY' &&
             (itemsAll.shouldContinueChestChain || itemsAll.hasChestWithin2To8);
-          if (!isActivelyChaining || player.gold >= mp.coinCashInChainGoldThreshold) {
+          if (!cashInOnCooldown && (!isActivelyChaining || player.gold >= mp.coinCashInChainGoldThreshold)) {
             return new CashInGoldMission(player.gold);
           }
         }
@@ -155,7 +156,7 @@ export class MissionSelector {
       // ④-D. 到達可能な宝箱・鍵・石が無く、EXP < 4000 (BREAK未習得) の場合はEXP獲得手段へ
       if (player.experience < 4000) {
         if (coinGrantsExp) {
-          if (player.gold > 0) {
+          if (!cashInOnCooldown && player.gold > 0) {
             return new CashInGoldMission(player.gold);
           }
           if (!prepOnCooldown && player.holdItem === 'NONE' && itemsAll.nearestCoin !== null) {
@@ -217,7 +218,7 @@ export class MissionSelector {
       // STR達成済みでEXP 12,000未満の時は、コインが1枚でもあれば早期決戦移行のため即座に換金
       const needExpForDragon = player.experience < 12000 && snapshot.milestones.hasTargetStr;
 
-      if (hitsMilestone || player.gold >= mp.coinCashInLateGoldThreshold || (needExpForDragon && player.gold >= 1)) {
+      if (!cashInOnCooldown && (hitsMilestone || player.gold >= mp.coinCashInLateGoldThreshold || (needExpForDragon && player.gold >= 1))) {
         return new CashInGoldMission(player.gold);
       }
     }
@@ -379,6 +380,7 @@ export class MissionSelector {
     const earlyBreakOnCooldown = cooldownMissions?.has('EARLY_BREAK_UNLOCK') ?? false;
     const prepOnCooldown = cooldownMissions?.has('PREPARE_DRAGON_ASSAULT') ?? false;
     const slayOnCooldown = cooldownMissions?.has('SLAY_DRAGON') ?? false;
+    const cashInOnCooldown = cooldownMissions?.has('CASH_IN_GOLD') ?? false;
 
     const itemsAll = MapSituationEvaluator.get(snapshot, engine).items;
     const assessment = options.precomputedAssessment ?? ReadinessEvaluator.evaluateDragonReadiness(snapshot, engine, prepTurns, options.waivers);
@@ -398,6 +400,7 @@ export class MissionSelector {
         const estimatedGainedExp = player.gold * 300 + Math.floor(player.experience * 0.02 * player.gold);
         const hitsBreak = player.experience < 4000 && player.experience + estimatedGainedExp >= 4000;
         if (
+          !cashInOnCooldown &&
           player.gold > 0 &&
           (player.experience + estimatedGainedExp >= 12000 || hitsBreak || player.gold >= mp.coinCashInPrepGoldThreshold)
         ) {
@@ -407,7 +410,7 @@ export class MissionSelector {
         if (!prepOnCooldown && itemsAll.nearestCoin !== null) {
           return new PrepareDragonAssaultMission();
         }
-        if (player.gold > 0) {
+        if (!cashInOnCooldown && player.gold > 0) {
           return new CashInGoldMission(player.gold);
         }
       } else {
@@ -454,7 +457,7 @@ export class MissionSelector {
     }
 
     // 3. コイン換金が必要
-    if (assessment.needsGoldCashIn || (coinGrantsExp && player.gold > 0)) {
+    if (!cashInOnCooldown && (assessment.needsGoldCashIn || (coinGrantsExp && player.gold > 0))) {
       return new CashInGoldMission(player.gold);
     }
 
