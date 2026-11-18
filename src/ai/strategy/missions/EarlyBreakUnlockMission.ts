@@ -26,6 +26,7 @@ export class EarlyBreakUnlockMission extends BaseStrategicMission {
   public override subMode: 'HUNTING_SAFE_ENEMY' | 'SEARCHING_ENEMY' = 'HUNTING_SAFE_ENEMY';
 
   private trackedEnemyTurns: number = 0;
+  private closeChaseTurns: number = 0;
   private cachedTurn: number = -1;
   private cachedPosX: number = -1;
   private cachedPosY: number = -1;
@@ -77,7 +78,6 @@ export class EarlyBreakUnlockMission extends BaseStrategicMission {
       isClassic &&
       details.attackThreat === 'ONE_SHOT' &&
       details.defenseThreat !== 'LETHAL' &&
-      !details.hasDrain &&
       details.damageToPlayer < player.hp * 0.75;
     const isDefenseSafe =
       details.defenseThreat === 'NO_DAMAGE' ||
@@ -110,7 +110,7 @@ export class EarlyBreakUnlockMission extends BaseStrategicMission {
           ? h.huntDistPostStr
           : h.huntDistDiag);
     const maxDist =
-      snapshot.params.coinGrantsExp === false && (snapshot.milestones?.hasTargetStr || player.hp < player.experience)
+      snapshot.params.coinGrantsExp === false
         ? Math.max(baseMaxDist, 64)
         : baseMaxDist;
 
@@ -147,19 +147,26 @@ export class EarlyBreakUnlockMission extends BaseStrategicMission {
         : map.getTorusDistance(player.pos, enemy.pos).manhattan;
       if (!Number.isFinite(reachableDist) || reachableDist > maxDist) continue;
 
-      const willFlee = !isInjured && enemy.typeId < 16 && hasSword && player.effectiveAttack > enemy.def;
+      const willFlee =
+        !isInjured &&
+        !enemy.isFrozen &&
+        enemy.typeId < 16 &&
+        hasSword &&
+        player.effectiveAttack > enemy.def;
 
       if (!EarlyBreakUnlockMission.isEnemySafeTarget(player, enemy, snapshot)) continue;
 
       const details = ThreatEvaluator.evaluateThreatDetails(player, enemy);
       let score = reachableDist;
-      if (enemy.frozenTimer > 0 && details.attackThreat === 'ONE_SHOT') {
-        // FLASH等で停止中のワンパン敵を最優先で回収
-        score -= 10;
+      if (enemy.frozenTimer > 0 && !enemy.isPermanentlyFrozen && details.attackThreat === 'ONE_SHOT') {
+        // FLASH等で一時停止中のワンパン敵は高EXPほど最優先で回収
+        score -= 20 + Math.min(20, Math.floor(enemy.expReward / 400));
+      } else if (enemy.isFrozen && details.attackThreat === 'ONE_SHOT') {
+        score -= 15;
       } else if (!isInjured) {
-        // HP >= EXP の初動時: FLEE する下位敵より逃げない敵(typeId>=16)や至近敵を優先
+        // HP >= EXP の初動時: FLEE する下位敵より逃げない敵(typeId>=16)を最優先
         if (!willFlee) {
-          score -= 6;
+          score -= 30;
         } else if (reachableDist > 5) {
           score += 6;
         }
@@ -179,30 +186,87 @@ export class EarlyBreakUnlockMission extends BaseStrategicMission {
   }
 
   /**
-   * CLASSICモード用: FLASH詠唱(MP>=2, EXP>=8000)で停止させてワンパン撃破できる近傍敵を検索する
+   * CLASSICモード用: FLASH詠唱(EXP>=8000)で全敵を一時停止させてワンパン撃破できる近傍敵を検索する
    */
   public static findFlashKillCandidate(
-    player: ThreatPlayerStats & { pos: Position },
+    player: ThreatPlayerStats & { pos: Position; canDiagonal?: boolean },
     snapshot: TacticalSnapshot
   ): { enemy: EnemyInstance; distance: number } | null {
     if (snapshot.params.coinGrantsExp !== false) return null;
-    if (player.experience < 8000 || player.magic < 2) return null;
+    const minMagic = player.experience < 12000 ? 2 : 4;
+    if (player.experience < 8000 || player.magic < minMagic) return null;
     if (player.holdItem === 'CROSS' || player.holdItem === 'CROWN') return null;
 
     const items = MapSituationEvaluator.get(snapshot).items;
-    let best: { enemy: EnemyInstance; distance: number } | null = null;
+    const canDiag = snapshot.milestones?.canDiagonal || Boolean(player.canDiagonal);
+    const maxFlashHuntDist = canDiag ? 12 : 9;
+
+    // すでにFLASH等で一時停止中の安全敵が射程内にいる場合は重ね掛けを控える
+    const hasActiveTempFrozen = snapshot.livingEnemies.some(e => {
+      if (!e.isAlive || e.isPermanentlyFrozen || e.frozenTimer <= 1) return false;
+      const d = items.getReachableDist
+        ? items.getReachableDist(e.pos)
+        : snapshot.map.getTorusDistance(player.pos, e.pos).manhattan;
+      return Number.isFinite(d) && d <= e.frozenTimer;
+    });
+    if (hasActiveTempFrozen) return null;
+
+    let best: { enemy: EnemyInstance; distance: number; score: number } | null = null;
     for (const enemy of snapshot.livingEnemies) {
       if (!enemy.isAlive || enemy.isFrozen) continue;
       if (snapshot.memory.isTargetUnreachable(enemy.pos, snapshot.totalTurns)) continue;
       const reachableDist = items.getReachableDist
         ? items.getReachableDist(enemy.pos)
         : snapshot.map.getTorusDistance(player.pos, enemy.pos).manhattan;
-      if (!Number.isFinite(reachableDist) || reachableDist > 6) continue;
+      if (!Number.isFinite(reachableDist) || reachableDist > maxFlashHuntDist) continue;
+
       const details = ThreatEvaluator.evaluateThreatDetails(player, enemy);
-      if (details.attackThreat === 'ONE_SHOT' || details.turnsToKill <= 2) {
-        if (!best || reachableDist < best.distance) {
-          best = { enemy, distance: reachableDist };
-        }
+      const killableInFlash =
+        details.attackThreat === 'ONE_SHOT' ||
+        (details.turnsToKill <= 2 && reachableDist <= 5);
+      if (!killableInFlash) continue;
+
+      // 通常は安全に倒せない敵(LETHAL/hasDrain)または高EXP逃走敵をFLASH対象にする
+      const isNormallyUnsafe =
+        details.defenseThreat === 'LETHAL' ||
+        details.hasDrain ||
+        (player.hp >= player.experience && enemy.typeId < 16);
+      if (!isNormallyUnsafe && reachableDist <= 4) continue;
+
+      const score = reachableDist - Math.min(20, Math.floor(enemy.expReward / 500));
+      if (!best || score < best.score || (score === best.score && reachableDist < best.distance)) {
+        best = { enemy, distance: reachableDist, score };
+      }
+    }
+    return best ? { enemy: best.enemy, distance: best.distance } : null;
+  }
+
+  /**
+   * CLASSICモード用: FREEZE詠唱(EXP>=6000)で隣接(Chebyshev<=1)のワンパン敵を永久凍結して安全に狩れる候補を返す
+   */
+  public static findFreezeKillCandidate(
+    player: ThreatPlayerStats & { pos: Position },
+    snapshot: TacticalSnapshot
+  ): EnemyInstance | null {
+    if (snapshot.params.coinGrantsExp !== false) return null;
+    const minMagic = player.experience < 12000 ? 2 : 4;
+    if (player.experience < 6000 || player.magic < minMagic) return null;
+    if (player.holdItem === 'CROSS' || player.holdItem === 'CROWN') return null;
+
+    let best: EnemyInstance | null = null;
+    for (const enemy of snapshot.livingEnemies) {
+      if (!enemy.isAlive || enemy.isFrozen) continue;
+      const cheb = snapshot.map.getTorusDistance(player.pos, enemy.pos).chebyshev;
+      if (cheb > 1) continue;
+      const details = ThreatEvaluator.evaluateThreatDetails(player, enemy);
+      if (details.attackThreat !== 'ONE_SHOT') continue;
+      const needsFreeze =
+        details.defenseThreat === 'LETHAL' ||
+        details.hasDrain ||
+        (player.hp >= player.experience && enemy.typeId < 16);
+      if (!needsFreeze) continue;
+      if (!best || enemy.expReward > best.expReward) {
+        best = enemy;
       }
     }
     return best;
@@ -232,7 +296,7 @@ export class EarlyBreakUnlockMission extends BaseStrategicMission {
         ? h.huntDistPostStr
         : h.huntDistDiag;
     const maxDist =
-      snapshot.params.coinGrantsExp === false && (snapshot.milestones?.hasTargetStr || player.hp < player.experience)
+      snapshot.params.coinGrantsExp === false
         ? Math.max(baseMaxDist, 64)
         : baseMaxDist;
 
@@ -243,10 +307,14 @@ export class EarlyBreakUnlockMission extends BaseStrategicMission {
       const lockedEnemy = snapshot.livingEnemies.find(
         e => e.id === this.lockedTarget!.entityId
       );
+      const allowPermFrozen =
+        snapshot.params.coinGrantsExp === false &&
+        lockedEnemy !== undefined &&
+        lockedEnemy.isPermanentlyFrozen;
       if (
         lockedEnemy &&
         lockedEnemy.isAlive &&
-        !lockedEnemy.isPermanentlyFrozen &&
+        (!lockedEnemy.isPermanentlyFrozen || allowPermFrozen) &&
         !snapshot.memory.isTargetUnreachable(lockedEnemy.pos, snapshot.totalTurns) &&
         EarlyBreakUnlockMission.isEnemySafeTarget(player, lockedEnemy, snapshot)
       ) {
@@ -254,12 +322,28 @@ export class EarlyBreakUnlockMission extends BaseStrategicMission {
         this.trackedEnemyTurns++;
         this.updateLockedEntityPos(lockedEnemy.pos, player.pos, map);
 
+        const isFleeingLocked =
+          snapshot.params.coinGrantsExp === false &&
+          player.experience >= 4000 &&
+          player.hp >= player.experience &&
+          !lockedEnemy.isFrozen &&
+          lockedEnemy.typeId < 16 &&
+          player.effectiveAttack > lockedEnemy.def;
+
+        if (isFleeingLocked && dist <= 4) {
+          this.closeChaseTurns++;
+        } else if (!isFleeingLocked || dist > 5) {
+          this.closeChaseTurns = 0;
+        }
+
         const effectiveTrackLimit =
           snapshot.params.coinGrantsExp === false && (dist <= 4 || this.lockedTarget.stalledTurns <= 2)
             ? Math.max(h.huntTrackMaxTurns, 24)
             : h.huntTrackMaxTurns;
         const exceededTrackLimit = this.trackedEnemyTurns >= effectiveTrackLimit;
-        const blockedOut = this.lockedTarget.blockedCount >= 2;
+        const blockedOut =
+          this.lockedTarget.blockedCount >= 2 ||
+          (isFleeingLocked && (this.lockedTarget.stalledTurns >= 8 || this.closeChaseTurns >= 12));
         const outOfRange = dist > maxDist + 3;
 
         if (exceededTrackLimit || blockedOut || outOfRange) {
@@ -272,12 +356,14 @@ export class EarlyBreakUnlockMission extends BaseStrategicMission {
           }
           this.clearTargetLock();
           this.trackedEnemyTurns = 0;
+          this.closeChaseTurns = 0;
         } else {
           resolved = { enemy: lockedEnemy, distance: dist };
         }
       } else {
         this.clearTargetLock();
         this.trackedEnemyTurns = 0;
+        this.closeChaseTurns = 0;
       }
     }
 
@@ -289,6 +375,7 @@ export class EarlyBreakUnlockMission extends BaseStrategicMission {
           entityId: found.enemy.id,
         });
         this.trackedEnemyTurns = 1;
+        this.closeChaseTurns = 0;
         resolved = found;
       }
     }
@@ -326,9 +413,19 @@ export class EarlyBreakUnlockMission extends BaseStrategicMission {
     const lastExpTurn = lastExpEvent ? lastExpEvent.turn : start;
     const turnsSinceExp = snapshot.totalTurns - lastExpTurn;
 
+    const isLockedWillFlee =
+      snapshot.params.coinGrantsExp === false &&
+      player.experience >= 4000 &&
+      resolved !== null &&
+      player.hp >= player.experience &&
+      !resolved.enemy.isFrozen &&
+      resolved.enemy.typeId < 16 &&
+      player.effectiveAttack > resolved.enemy.def &&
+      resolved.distance > 2;
+
     const effectiveNoExpAbortTurns =
-      snapshot.params.coinGrantsExp === false && resolved && resolved.distance <= 5
-        ? Math.max(h.huntNoExpAbortTurns + 10, 30)
+      snapshot.params.coinGrantsExp === false && resolved && !isLockedWillFlee
+        ? Math.max(h.huntNoExpAbortTurns + 10, Math.min(60, resolved.distance + 18))
         : h.huntNoExpAbortTurns;
     if (turnsSinceExp >= effectiveNoExpAbortTurns) {
       if (this.lockedTarget) {
@@ -338,7 +435,7 @@ export class EarlyBreakUnlockMission extends BaseStrategicMission {
       return 'ABORTED';
     }
     const effectiveGapCloseAbortTurns =
-      snapshot.params.coinGrantsExp === false && resolved && (resolved.distance <= 5 || player.hp >= player.experience)
+      snapshot.params.coinGrantsExp === false && resolved && !isLockedWillFlee && (resolved.distance <= 5 || player.hp >= player.experience)
         ? Math.max(h.huntNoGapCloseAbortTurns, 16)
         : h.huntNoGapCloseAbortTurns;
     if (this.lockedTarget && this.lockedTarget.stalledTurns >= effectiveGapCloseAbortTurns) {
@@ -346,17 +443,27 @@ export class EarlyBreakUnlockMission extends BaseStrategicMission {
       this.completionReason = gainedExp ? 'PARTIAL_PROGRESS' : 'NO_PROGRESS_BLOCKED';
       return 'ABORTED';
     }
+    const isClassicActivelyClosing =
+      snapshot.params.coinGrantsExp === false &&
+      resolved !== null &&
+      !isLockedWillFlee &&
+      (!this.lockedTarget || this.lockedTarget.stalledTurns < 6) &&
+      turnsSinceExp < effectiveNoExpAbortTurns;
     const isClassicInjuredRush =
       snapshot.params.coinGrantsExp === false &&
       player.hp < player.experience &&
       turnsSinceExp < effectiveNoExpAbortTurns;
-    if (!isClassicInjuredRush && this.turnsElapsed >= h.huntMissionMaxTurns) {
+    if (!isClassicInjuredRush && !isClassicActivelyClosing && this.turnsElapsed >= h.huntMissionMaxTurns) {
       this.completionReason = gainedExp ? 'PARTIAL_PROGRESS' : 'NO_PROGRESS_TIMEOUT';
       return 'ABORTED';
     }
 
     if (!resolved) {
-      if (isClassicInjuredRush || EarlyBreakUnlockMission.findFlashKillCandidate(player, snapshot) !== null) {
+      if (
+        isClassicInjuredRush ||
+        EarlyBreakUnlockMission.findFlashKillCandidate(player, snapshot) !== null ||
+        EarlyBreakUnlockMission.findFreezeKillCandidate(player, snapshot) !== null
+      ) {
         return 'ACTIVE';
       }
       this.completionReason = gainedExp ? 'PARTIAL_PROGRESS' : 'NO_PROGRESS_BLOCKED';
@@ -369,6 +476,44 @@ export class EarlyBreakUnlockMission extends BaseStrategicMission {
     const player = engine.getPlayer();
     const found = this.resolveAndVerifyTarget(player, snapshot);
     const surroundings = MapSituationEvaluator.get(snapshot, engine).surroundings;
+
+    // CLASSICでMPに余裕があり、隣接(Chebyshev<=1)にFREEZEで永久凍結→ワンパン撃破できる敵がいれば最優先でFREEZE詠唱
+    if (
+      snapshot.params.coinGrantsExp === false &&
+      MagicSystem.canCast(player, 'FREEZE').allowed
+    ) {
+      const freezeCand = EarlyBreakUnlockMission.findFreezeKillCandidate(player, snapshot);
+      if (freezeCand) {
+        return {
+          type: 'CAST_MAGIC',
+          magicToCast: 'FREEZE',
+          priority: 94,
+          reason: `❄️ FREEZEで隣接強敵/逃走敵を凍結し安全にEXP稼ぎ (${freezeCand.name})`,
+        };
+      }
+    }
+
+    // CLASSICでMPに余裕があり、FLASHで全敵を停止させて安全にワンパン撃破できる敵がいればFLASH詠唱
+    if (
+      snapshot.params.coinGrantsExp === false &&
+      MagicSystem.canCast(player, 'FLASH').allowed
+    ) {
+      const flashCand = EarlyBreakUnlockMission.findFlashKillCandidate(player, snapshot);
+      const shouldCastFlash =
+        flashCand !== null &&
+        (!found ||
+          (!found.enemy.isFrozen &&
+            (found.distance > 6 ||
+              (flashCand.enemy.expReward >= 1500 && flashCand.enemy.expReward > found.enemy.expReward))));
+      if (shouldCastFlash) {
+        return {
+          type: 'CAST_MAGIC',
+          magicToCast: 'FLASH',
+          priority: 92,
+          reason: `⚡ FLASHで周囲敵を停止し安全にEXP稼ぎ (${flashCand.enemy.name})`,
+        };
+      }
+    }
 
     // 強敵接近時の回避・迎撃判断（HP < EXP による全域 CHASE 中の強敵接触を防止）
     const isClassicInjured = snapshot.params.coinGrantsExp === false && player.hp < player.experience;
@@ -386,28 +531,6 @@ export class EarlyBreakUnlockMission extends BaseStrategicMission {
           type: 'EVADE_DANGER',
           priority: 90,
           reason: '接近する即死級強敵を回避して安全を確保',
-        };
-      }
-    }
-
-    // CLASSICでMPに余裕があり、近傍(<=6)にFLASHで安全にワンパン撃破できる敵がいればFLASH詠唱
-    if (
-      snapshot.params.coinGrantsExp === false &&
-      player.magic >= 2 &&
-      MagicSystem.canCast(player, 'FLASH').allowed
-    ) {
-      const flashCand = EarlyBreakUnlockMission.findFlashKillCandidate(player, snapshot);
-      const shouldCastFlash =
-        flashCand !== null &&
-        (!found ||
-          found.distance > 6 ||
-          (player.hp >= player.experience && flashCand.enemy.expReward >= 1500));
-      if (shouldCastFlash) {
-        return {
-          type: 'CAST_MAGIC',
-          magicToCast: 'FLASH',
-          priority: 92,
-          reason: `⚡ FLASHで周囲敵を停止し安全にEXP稼ぎ (${flashCand.enemy.name})`,
         };
       }
     }

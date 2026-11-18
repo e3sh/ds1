@@ -158,8 +158,18 @@ export class Player {
       message = `ドラゴンの灼熱の火炎弾（${dmg} ダメージ）に焼き尽くされた…`;
     } else if (cause === 'GIVE_UP') {
       message = '過酷な迷宮の前に自ら探索を断念した（GIVE UP）…';
+    } else if (cause === 'GIVE_UP_SWORD_TRAPPED') {
+      message = '💀 物理的詰み: 剣への到達経路が存在しないためギブアップ';
+    } else if (cause === 'GIVE_UP_CONFINED') {
+      message = '💀 物理的詰み: 四方閉塞・小閉域に拘束され脱出手段がないためギブアップ';
+    } else if (cause === 'GIVE_UP_STALL_CHURN') {
+      message = '💀 AI停滞ギブアップ (CHURN): ミッション往復が打開できず終了';
+    } else if (cause === 'GIVE_UP_STALL_LOOP') {
+      message = '💀 AI停滞ギブアップ (LOOP): 周回ループから脱出できず終了';
+    } else if (cause === 'GIVE_UP_STALL_FRUITLESS') {
+      message = '💀 AI停滞ギブアップ (FRUITLESS): 無戦果停滞により終了';
     } else if (cause === 'GIVE_UP_UNSOLVABLE') {
-      message = '💀 詰み検知: 剣への到達経路が存在しないためギブアップ';
+      message = '💀 詰み検知: 進行経路または打開手段が存在しないためギブアップ';
     }
 
     this.deathInfo = {
@@ -172,6 +182,12 @@ export class Player {
       enemyColor: source?.enemyColor,
       dragonPartType: source?.dragonPartType,
       turn: currentTurn,
+      giveUpCategory: source?.giveUpCategory,
+      stallKind: source?.stallKind,
+      finalMissionId: source?.finalMissionId,
+      finalMissionName: source?.finalMissionName,
+      commanderLevel: source?.commanderLevel,
+      commanderTransitions: source?.commanderTransitions,
     };
   }
 

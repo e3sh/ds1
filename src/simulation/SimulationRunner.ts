@@ -2,7 +2,13 @@ import { GameEngine } from '../core/GameEngine.js';
 import { SeedRandom } from '../core/SeedRandom.js';
 import { GameEventBus } from '../core/GameEventBus.js';
 import { AutoPlayBot, BotSkillProfile, BotStrategyTuning } from '../ai/AutoPlayBot.js';
-import { SimulationTelemetry, SimulationSummaryReport, RunDiagnosticDetail } from './SimulationTelemetry.js';
+import {
+  SimulationTelemetry,
+  SimulationSummaryReport,
+  RunDiagnosticDetail,
+  MilestoneTurnStat,
+  FailedRunSample,
+} from './SimulationTelemetry.js';
 import {
   DungeonTopology,
   MapDifficulty,
@@ -122,37 +128,41 @@ export class SimulationRunner {
         // スナップショット記録
         const player = afterPlayer;
         telemetry.recordTurnSnapshot(turns, player.experience, player.strength, player.hasSword);
-        if (config.includeRunDetails) {
-          if (player.hasSword && milestoneTurns.gotSword === undefined) milestoneTurns.gotSword = turns;
-          if (player.experience >= 4000 && milestoneTurns.unlockedBreak === undefined) milestoneTurns.unlockedBreak = turns;
-          if (player.experience >= 12000 && milestoneTurns.unlockedDiagonal === undefined) milestoneTurns.unlockedDiagonal = turns;
-          if (bot.params && player.strength >= bot.params.targetStr && milestoneTurns.reachedTargetStr === undefined) {
-            milestoneTurns.reachedTargetStr = turns;
+        if (player.hasSword && milestoneTurns.gotSword === undefined) milestoneTurns.gotSword = turns;
+        if (player.experience >= 4000 && milestoneTurns.unlockedBreak === undefined) milestoneTurns.unlockedBreak = turns;
+        if (player.experience >= 12000 && milestoneTurns.unlockedDiagonal === undefined) milestoneTurns.unlockedDiagonal = turns;
+        if (bot.params && player.strength >= bot.params.targetStr && milestoneTurns.reachedTargetStr === undefined) {
+          milestoneTurns.reachedTargetStr = turns;
+        }
+        const d = engine.getDragon();
+        if (d) {
+          if (d.defeatedHeadsCount >= 1 && milestoneTurns.killedHead1 === undefined) milestoneTurns.killedHead1 = turns;
+          if ((d.isAllHeadsDefeated || d.defeatedHeadsCount >= 3) && milestoneTurns.killedAllHeads === undefined) {
+            milestoneTurns.killedAllHeads = turns;
           }
-          const d = engine.getDragon();
-          if (d) {
-            if (d.defeatedHeadsCount >= 1 && milestoneTurns.killedHead1 === undefined) milestoneTurns.killedHead1 = turns;
-            if ((d.isAllHeadsDefeated || d.defeatedHeadsCount >= 3) && milestoneTurns.killedAllHeads === undefined) {
-              milestoneTurns.killedAllHeads = turns;
-            }
-          }
-          if (player.crowns >= 1 && milestoneTurns.deliveredFirstCrown === undefined) {
-            milestoneTurns.deliveredFirstCrown = turns;
-          }
+        }
+        if (player.crowns >= 1 && milestoneTurns.deliveredFirstCrown === undefined) {
+          milestoneTurns.deliveredFirstCrown = turns;
         }
         const curNoGain = bot.episodicMemory.buildProgressWindow(bot.totalTurns, engine.getMap()).turnsSinceSubstantiveGain;
         if (curNoGain > maxTurnsWithoutSubstantiveGain) {
           maxTurnsWithoutSubstantiveGain = curNoGain;
         }
 
-        // Botが物理的詰みを検知してGiveUPした場合は3,000ターンを待たずに即座に終了
+        // Botが物理的詰みまたは停滞限界を検知してGiveUPした場合は即座に終了
         if ('isGivenUp' in bot && bot.isGivenUp) {
           if (!player.deathInfo) {
+            const diag = bot.getDiagnosticSnapshot();
             player.deathInfo = {
               cause: 'GIVE_UP_UNSOLVABLE',
-              message: '💀 詰み検知: 剣への到達経路が存在しないためギブアップ',
+              message: '💀 詰み検知: 進行経路または打開手段が存在しないためギブアップ',
               damage: 0,
               turn: turns,
+              giveUpCategory: 'OTHER',
+              finalMissionId: diag.finalMissionId,
+              finalMissionName: diag.finalMissionName,
+              commanderLevel: diag.commanderLevel,
+              commanderTransitions: diag.commanderTransitions,
             };
           }
           break;
@@ -229,11 +239,19 @@ export class SimulationRunner {
           terminalZoneId,
           maxTurnsWithoutSubstantiveGain,
           commanderLevelCounts,
+          commanderFinalLevel: bot.commander.level,
+          recentVerdicts: bot.commander.verdicts.slice(-6).map(v => ({
+            turn: v.turn,
+            from: v.from,
+            to: v.to,
+            stallKind: v.stallKind,
+            reason: v.reason,
+          })),
           giveUpSource,
         };
       }
 
-      telemetry.finalizeCurrentRun(turns, won, player.deathInfo ?? undefined, pstMetrics);
+      telemetry.finalizeCurrentRun(turns, won, player.deathInfo ?? undefined, pstMetrics, milestoneTurns);
 
       if (config.includeRunDetails) {
         const deathCause = won
@@ -333,12 +351,87 @@ export class SimulationRunner {
     const estimatedPlayTimeMinutes = Math.round((avgClearTurns * 0.7) / 60 * 10) / 10;
 
     const deathCauses: Record<string, number> = {};
+    const giveUpBreakdown = {
+      swordTrapped: 0,
+      confined: 0,
+      churn: 0,
+      loop: 0,
+      fruitless: 0,
+      other: 0,
+    };
+    const giveUpTurns: number[] = [];
+    const failedRunSamples: FailedRunSample[] = [];
+
     for (const r of records) {
       if (!r.won) {
         const cause = r.deathInfo?.cause ?? (r.totalTurns >= config.maxTurnsLimit ? 'TIMEOUT_STALL' : 'UNKNOWN');
         deathCauses[cause] = (deathCauses[cause] || 0) + 1;
+
+        if (cause.startsWith('GIVE_UP')) {
+          giveUpTurns.push(r.totalTurns);
+          if (cause === 'GIVE_UP_SWORD_TRAPPED') giveUpBreakdown.swordTrapped++;
+          else if (cause === 'GIVE_UP_CONFINED') giveUpBreakdown.confined++;
+          else if (cause === 'GIVE_UP_STALL_CHURN') giveUpBreakdown.churn++;
+          else if (cause === 'GIVE_UP_STALL_LOOP') giveUpBreakdown.loop++;
+          else if (cause === 'GIVE_UP_STALL_FRUITLESS') giveUpBreakdown.fruitless++;
+          else giveUpBreakdown.other++;
+        }
+
+        if (failedRunSamples.length < 10) {
+          const verdicts =
+            r.deathInfo?.commanderTransitions ??
+            r.pstMetrics?.recentVerdicts ??
+            [];
+          failedRunSamples.push({
+            runIndex: r.runIndex,
+            seed: r.seed,
+            totalTurns: r.totalTurns,
+            cause,
+            giveUpCategory: r.deathInfo?.giveUpCategory,
+            stallKind: r.deathInfo?.stallKind,
+            finalMissionId: r.deathInfo?.finalMissionId ?? r.pstMetrics?.terminalMissionId,
+            commanderLevel: r.deathInfo?.commanderLevel ?? r.pstMetrics?.commanderFinalLevel,
+            recentVerdicts: verdicts.slice(-4).map(v => ({
+              turn: v.turn,
+              from: v.from,
+              to: v.to,
+              stallKind: v.stallKind,
+            })),
+          });
+        }
       }
     }
+
+    const earlyGiveUpStats = {
+      under1000TurnsCount: giveUpTurns.filter(t => t < 1000).length,
+      minGiveUpTurn: giveUpTurns.length > 0 ? Math.min(...giveUpTurns) : null,
+      avgGiveUpTurn: giveUpTurns.length > 0
+        ? Math.round(giveUpTurns.reduce((a, b) => a + b, 0) / giveUpTurns.length)
+        : null,
+    };
+
+    const calcMilestoneStat = (
+      selector: (r: (typeof records)[number]) => number | undefined
+    ): MilestoneTurnStat => {
+      const vals = records
+        .map(selector)
+        .filter((v): v is number => v !== undefined)
+        .sort((a, b) => a - b);
+      if (vals.length === 0) return { count: 0, avg: 0, median: 0 };
+      const avg = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+      const median = vals[Math.floor(vals.length / 2)];
+      return { count: vals.length, avg, median };
+    };
+
+    const milestoneTurnStats = {
+      gotSword: calcMilestoneStat(r => r.milestoneTurns?.gotSword),
+      unlockedBreak: calcMilestoneStat(r => r.milestoneTurns?.unlockedBreak),
+      unlockedDiagonal: calcMilestoneStat(r => r.milestoneTurns?.unlockedDiagonal),
+      reachedTargetStr: calcMilestoneStat(r => r.milestoneTurns?.reachedTargetStr),
+      killedHead1: calcMilestoneStat(r => r.milestoneTurns?.killedHead1),
+      killedAllHeads: calcMilestoneStat(r => r.milestoneTurns?.killedAllHeads),
+      deliveredFirstCrown: calcMilestoneStat(r => r.milestoneTurns?.deliveredFirstCrown),
+    };
 
     // マイルストーン達成率
     const milestoneReachRates = {
@@ -495,6 +588,10 @@ export class SimulationRunner {
         estimatedPlayTimeMinutes,
         milestoneReachRates,
         deathCauses,
+        giveUpBreakdown,
+        earlyGiveUpStats,
+        milestoneTurnStats,
+        failedRunSamples,
       },
       homeSpawnMetrics: {
         totalHomeSpawnAttempts,

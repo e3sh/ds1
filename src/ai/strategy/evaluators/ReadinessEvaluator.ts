@@ -82,12 +82,11 @@ export class ReadinessEvaluator {
     // 2-B. 王冠フェーズの魔法枯渇対策: 床ポーション不足でも未開封宝箱と鍵があれば開錠してMPを確保
     const needsTreasureMpFarm = hasChestSupplyForMp && prepTurns < r.prepTreasureMpFarmCutoffTurns;
 
-    // 3. 前線基地移転評価
+    // 3. 前線基地移転評価（距離・準備ターンに関わらず、RINGが存在し未移転なら安全な家を増やすため必ず実施）
     let needsRelocation = false;
     if (!waiveRelocation && snapshot.params.enableHomeRelocation && dragon && dragon.defeatedHeadsCount === 0) {
-      const distHomeToDragon = map.getTorusDistance(map.realHomePos, dragon.centerPos).chebyshev;
       const hasRing = player.holdItem === 'RING' || this.hasMapRing(map, snapshot);
-      if (distHomeToDragon >= snapshot.params.homeRelocateDistMin && hasRing && prepTurns < r.prepRelocationCutoffTurns) {
+      if (hasRing) {
         needsRelocation = true;
       }
     }

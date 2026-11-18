@@ -267,7 +267,8 @@ export class MissionSelector {
     const targetExp = snapshot.milestones?.hasTargetStr ? snapshot.params.targetDefenseExp : 4000;
     return (
       EarlyBreakUnlockMission.findNearestSafeEnemy(player, snapshot, targetExp, maxDistOverride) !== null ||
-      EarlyBreakUnlockMission.findFlashKillCandidate(player, snapshot) !== null
+      EarlyBreakUnlockMission.findFlashKillCandidate(player, snapshot) !== null ||
+      EarlyBreakUnlockMission.findFreezeKillCandidate(player, snapshot) !== null
     );
   }
 
@@ -425,20 +426,35 @@ export class MissionSelector {
         if (!cashInOnCooldown && player.gold > 0) {
           return new CashInGoldMission(player.gold);
         }
-      } else {
-        // 非指数・コインEXPなしモード: 敵討伐によるEXP稼ぎを最優先
+      }
+      const skipChestForClassicHunt = !coinGrantsExp && player.hp < player.experience && player.experience < 12000;
+      const hasKey = options.includeHeldKeyInChestCheck ? (player.holdItem === 'KEY' || this.hasReachableKey(map, snapshot)) : this.hasReachableKey(map, snapshot);
+      const canUnlockChests = hasKey && this.hasReachableChests(map, snapshot);
+      const holdingKeyWithChests = player.holdItem === 'KEY' && canUnlockChests && !clearZoneOnCooldown && !skipChestForClassicHunt;
+
+      if (!coinGrantsExp) {
+        // 非指数・コインEXPなしモード: 鍵保持＋開けられる宝箱がある場合は近場の狩り(<=5)またはFLASH/FREEZE候補のみ優先し、遠距離狩りとのCHURNを防ぐ
+        const huntDistCap = holdingKeyWithChests ? 5 : undefined;
+        const hasImmediateMagicKill =
+          EarlyBreakUnlockMission.findFreezeKillCandidate(player, snapshot) !== null ||
+          EarlyBreakUnlockMission.findFlashKillCandidate(player, snapshot) !== null;
+        const hasHuntTarget =
+          hasImmediateMagicKill ||
+          EarlyBreakUnlockMission.findNearestSafeEnemy(
+            player,
+            snapshot,
+            Math.max(12000, snapshot.params.targetDefenseExp),
+            huntDistCap
+          ) !== null;
         if (
           !earlyBreakOnCooldown &&
           EarlyBreakUnlockMission.isHpSafeForHunting(player, snapshot) &&
-          this.hasSafeEnemyNearby(player, snapshot)
+          hasHuntTarget
         ) {
           return new EarlyBreakUnlockMission(Math.max(12000, snapshot.params.targetDefenseExp));
         }
       }
 
-      const skipChestForClassicHunt = !coinGrantsExp && player.hp < player.experience && player.experience < 12000;
-      const hasKey = options.includeHeldKeyInChestCheck ? (player.holdItem === 'KEY' || this.hasReachableKey(map, snapshot)) : this.hasReachableKey(map, snapshot);
-      const canUnlockChests = hasKey && this.hasReachableChests(map, snapshot);
       if (!clearZoneOnCooldown && canUnlockChests && !skipChestForClassicHunt) {
         if (options.prioritizeImmediateSlay) {
           return null;
@@ -456,6 +472,14 @@ export class MissionSelector {
       }
       if (options.prioritizeImmediateSlay) {
         return null;
+      }
+    }
+
+    // 1-C. 前線移転条件合致時（安全な家を増やすため距離に関わらずMP備蓄等より先に実施）
+    if (assessment.needsRelocation && !options.relocateDone && (player.holdItem === 'RING' || ReadinessEvaluator.hasMapRing(map, snapshot))) {
+      const anchor = RelocateHomeMission.selectBestAnchor(snapshot, engine);
+      if (anchor) {
+        return new RelocateHomeMission(anchor);
       }
     }
 
@@ -480,12 +504,6 @@ export class MissionSelector {
     // 3. コイン換金が必要
     if (!cashInOnCooldown && (assessment.needsGoldCashIn || (coinGrantsExp && player.gold > 0))) {
       return new CashInGoldMission(player.gold);
-    }
-
-    // 4. 前線移転条件合致時
-    if (assessment.needsRelocation && !options.relocateDone && (player.holdItem === 'RING' || ReadinessEvaluator.hasMapRing(map, snapshot))) {
-      const anchor = snapshot.spatial.recommendedRelocateAnchors[0] ?? { x: 32, y: 25 };
-      return new RelocateHomeMission(anchor);
     }
 
     // 5. HP十分性チェック

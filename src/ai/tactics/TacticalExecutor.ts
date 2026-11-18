@@ -52,13 +52,69 @@ export class TacticalExecutor {
     engine: GameEngine
   ): TacticalExecutionResult {
     const result = this.executeInternal(directive, snapshot, engine);
-    if (result.skipMoveOrBreak) {
+    const resolvedAction = result.skipMoveOrBreak
+      ? result.action
+      : this.resolveMoveOrBreak(result.action, engine.getPlayer(), snapshot.map);
+    return this.guardIncomingFireball({ ...result, action: resolvedAction }, snapshot, engine);
+  }
+
+  /**
+   * 次ターンにドラゴンの火炎弾が想定位置へ着弾し大ダメージ/即死となる場合、
+   * SPACE待機やその場行動より先に安全な回避方向へ1歩退避する。
+   */
+  private guardIncomingFireball(
+    result: TacticalExecutionResult,
+    snapshot: TacticalSnapshot,
+    engine: GameEngine
+  ): TacticalExecutionResult {
+    const dragon = engine.getDragon();
+    if (!dragon || !dragon.fireballs || dragon.fireballs.length === 0) {
       return result;
     }
-    return {
-      ...result,
-      action: this.resolveMoveOrBreak(result.action, engine.getPlayer(), snapshot.map),
-    };
+
+    const player = engine.getPlayer();
+    const map = snapshot.map;
+    if (result.action.type === 'MAGIC' && (result.action.magic === 'RETURN' || result.action.magic === 'JUMP')) {
+      return result;
+    }
+
+    let postPos = player.pos;
+    if (result.action.type === 'MOVE') {
+      const nextPos = map.wrapPosition(MovementSystem.getNextPosition(player.pos, result.action.dir));
+      const blockedByTerrain =
+        map.getBaseTile(nextPos) === 'WALL_STATIC' ||
+        map.getObject(nextPos) === 'BLOCK' ||
+        map.getBaseTile(nextPos) === 'GRAVE' ||
+        Boolean(dragon.getPartAt(nextPos));
+      const blockedByEnemy = snapshot.livingEnemies.some(
+        e => e.isAlive && e.pos.x === nextPos.x && e.pos.y === nextPos.y
+      );
+      if (!blockedByTerrain && !blockedByEnemy) {
+        postPos = nextPos;
+      }
+    }
+
+    let incomingDmg = 0;
+    for (const fb of dragon.fireballs) {
+      if (!fb.isAlive) continue;
+      const nextFb = map.wrapPosition(MovementSystem.getNextPosition(fb.pos, fb.dir));
+      if (nextFb.x === postPos.x && nextFb.y === postPos.y) {
+        incomingDmg += fb.damage;
+      }
+    }
+
+    if (incomingDmg > 0 && (incomingDmg >= player.hp || incomingDmg >= player.hp * 0.35)) {
+      const evadeDir = this.nav.findEvadeDirection(player.pos, map, snapshot.livingEnemies, player, dragon);
+      if (evadeDir) {
+        return {
+          action: { type: 'MOVE', dir: evadeDir },
+          description: `🔥 火炎弾直撃回避のため緊急退避 (予想被ダメ:${incomingDmg})`,
+          status: 'STALLED',
+        };
+      }
+    }
+
+    return result;
   }
 
   private executeInternal(

@@ -60,6 +60,8 @@ function parseArgs(): SimulationConfig {
     } else if (key === '--seed' && val) {
       config.baseSeed = parseInt(val, 10);
       if (!raw.includes('=')) i++;
+    } else if (key === '--details' || key === '-d') {
+      config.includeRunDetails = true;
     } else if (['EASY', 'NORMAL', 'HARD'].includes(raw)) {
       config.difficulty = raw as MapDifficulty;
     } else if (['STANDARD', 'BLITZ', 'ENDURANCE'].includes(raw)) {
@@ -106,7 +108,34 @@ console.log(`    * Killed Head #1     : ${(report.overall.milestoneReachRates.ki
 console.log(`    * Killed All Heads   : ${(report.overall.milestoneReachRates.killedAllHeads * 100).toFixed(1)}%`);
 console.log(`- Death Causes Breakdown :`);
 for (const [cause, count] of Object.entries(report.overall.deathCauses)) {
-  console.log(`    * ${cause.padEnd(20)}: ${count}`);
+  console.log(`    * ${cause.padEnd(25)}: ${count}`);
+}
+if (report.overall.giveUpBreakdown) {
+  const g = report.overall.giveUpBreakdown;
+  console.log(
+    `- Give-Up Subtypes       : SWORD_TRAPPED=${g.swordTrapped}, CONFINED=${g.confined}, CHURN=${g.churn}, LOOP=${g.loop}, FRUITLESS=${g.fruitless}, OTHER=${g.other}`
+  );
+}
+if (report.overall.earlyGiveUpStats) {
+  const eg = report.overall.earlyGiveUpStats;
+  const minStr = eg.minGiveUpTurn !== null ? `${eg.minGiveUpTurn}T` : 'N/A';
+  const avgStr = eg.avgGiveUpTurn !== null ? `${eg.avgGiveUpTurn}T` : 'N/A';
+  console.log(
+    `- Early Give-Up (<1000T) : ${eg.under1000TurnsCount} runs (Min: ${minStr}, Avg: ${avgStr})`
+  );
+}
+if (report.overall.milestoneTurnStats) {
+  const m = report.overall.milestoneTurnStats;
+  const fmt = (label: string, s: { count: number; avg: number; median: number }) =>
+    s.count > 0 ? `${label.padEnd(18)}: avg ${String(s.avg).padStart(4)}T / med ${String(s.median).padStart(4)}T (n=${s.count})` : `${label.padEnd(18)}: N/A`;
+  console.log(`- Milestone Turns        :`);
+  console.log(`    * ${fmt('Got Sword', m.gotSword)}`);
+  console.log(`    * ${fmt('Unlocked BREAK', m.unlockedBreak)}`);
+  console.log(`    * ${fmt('Unlocked Diag', m.unlockedDiagonal)}`);
+  console.log(`    * ${fmt('Target STR', m.reachedTargetStr)}`);
+  console.log(`    * ${fmt('Killed Head #1', m.killedHead1)}`);
+  console.log(`    * ${fmt('Killed All Heads', m.killedAllHeads)}`);
+  console.log(`    * ${fmt('1st Crown', m.deliveredFirstCrown)}`);
 }
 
 console.log('\n----------------------------------------------------------------');
@@ -147,6 +176,53 @@ if (report.pstMetrics) {
   console.log('- Terminal Mission Breakdown :');
   for (const [mid, count] of Object.entries(report.pstMetrics.terminalMissionBreakdown)) {
     console.log(`    * ${mid.padEnd(24)}: ${count}`);
+  }
+}
+
+if (report.overall.failedRunSamples && report.overall.failedRunSamples.length > 0) {
+  console.log('\n----------------------------------------------------------------');
+  console.log(' 6. FAILED / GIVE-UP RUN SAMPLES');
+  console.log('----------------------------------------------------------------');
+  for (const s of report.overall.failedRunSamples) {
+    const trans =
+      s.recentVerdicts.length > 0
+        ? s.recentVerdicts
+            .map(v => `T${v.turn}:${v.from}->${v.to}${v.stallKind ? `[${v.stallKind}]` : ''}`)
+            .join(', ')
+        : 'none';
+    console.log(
+      `- Run#${s.runIndex} seed=${s.seed} | ${s.totalTurns}T | ${s.cause} | mission=${s.finalMissionId ?? 'NONE'} | cmd=${s.commanderLevel ?? 'N/A'}`
+    );
+    console.log(`    transitions: ${trans}`);
+  }
+}
+
+if (config.includeRunDetails && report.runDetails && report.runDetails.length > 0) {
+  console.log('\n----------------------------------------------------------------');
+  console.log(' 7. PER-RUN DIAGNOSTIC DETAILS (--details)');
+  console.log('----------------------------------------------------------------');
+  for (const d of report.runDetails) {
+    const status = d.won ? 'CLEAR' : (d.deathCause ?? 'FAIL');
+    const ms = d.milestoneTurns;
+    const msStr = [
+      ms.gotSword !== undefined ? `Sword:${ms.gotSword}T` : null,
+      ms.unlockedBreak !== undefined ? `Break:${ms.unlockedBreak}T` : null,
+      ms.reachedTargetStr !== undefined ? `Str:${ms.reachedTargetStr}T` : null,
+      ms.killedHead1 !== undefined ? `Head1:${ms.killedHead1}T` : null,
+      ms.killedAllHeads !== undefined ? `AllHeads:${ms.killedAllHeads}T` : null,
+      ms.deliveredFirstCrown !== undefined ? `Crown1:${ms.deliveredFirstCrown}T` : null,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const verdicts = d.verdictsSummary
+      .slice(-4)
+      .map(v => `T${v.turn}:${v.from}->${v.to}${v.stallKind ? `[${v.stallKind}]` : ''}`)
+      .join(', ');
+    console.log(
+      `- Run#${d.runIndex} seed=${d.seed} | ${status} @ ${d.totalTurns}T | mission=${d.terminalMissionId ?? 'NONE'} | cmd=${d.commanderFinalLevel} | maxNoGain=${d.maxTurnsWithoutSubstantiveGain}T`
+    );
+    if (msStr) console.log(`    milestones : ${msStr}`);
+    if (verdicts) console.log(`    verdicts   : ${verdicts}`);
   }
 }
 

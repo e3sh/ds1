@@ -117,13 +117,44 @@ export interface CombatResult {
 }
 
 export type DeathCauseType =
-  | 'MONSTER_ATTACK'     // 敵AI手番での攻撃
-  | 'MONSTER_COUNTER'    // プレイヤー体当たり時の敵反撃
-  | 'DRAGON_HEAD'        // ドラゴンの首への攻撃時の反撃
-  | 'FIREBALL'           // ドラゴンの火炎弾直撃
-  | 'GIVE_UP'            // 自発的リタイア
-  | 'GIVE_UP_UNSOLVABLE' // 物理的詰み検知によるボット早期ギブアップ
+  | 'MONSTER_ATTACK'          // 敵AI手番での攻撃
+  | 'MONSTER_COUNTER'         // プレイヤー体当たり時の敵反撃
+  | 'DRAGON_HEAD'             // ドラゴンの首への攻撃時の反撃
+  | 'FIREBALL'                // ドラゴンの火炎弾直撃
+  | 'GIVE_UP'                 // 自発的リタイア
+  | 'GIVE_UP_UNSOLVABLE'      // 汎用ボットギブアップ（後方互換・フォールバック）
+  | 'GIVE_UP_SWORD_TRAPPED'   // 物理的詰み：剣への到達経路が完全に遮断
+  | 'GIVE_UP_CONFINED'        // 物理的詰み：四方閉塞・小閉域で脱出手段なし
+  | 'GIVE_UP_STALL_CHURN'     // AI停滞ギブアップ：ミッション往復(CHURN)
+  | 'GIVE_UP_STALL_LOOP'      // AI停滞ギブアップ：周回ループ(LOOP)
+  | 'GIVE_UP_STALL_FRUITLESS' // AI停滞ギブアップ：無戦果停滞(FRUITLESS)
   | 'UNKNOWN';
+
+export type GiveUpCategory = 'PHYSICAL_TRAP' | 'AI_STALL' | 'MANUAL' | 'OTHER';
+
+export type DeathStallKind = 'LOOP' | 'CHURN' | 'FRUITLESS' | 'CONFINED' | 'SWORD_TRAPPED';
+
+export interface CommanderTransitionSummary {
+  turn: number;
+  from: string;
+  to: string;
+  stallKind: string | null;
+  reason?: string;
+}
+
+export interface GameResultContext {
+  seed?: number;
+  topology?: DungeonTopology;
+  difficulty?: MapDifficulty;
+  ruleMode?: RuleMode;
+  isAutoPlay?: boolean;
+  defeatedHeads?: number;
+  totalHeads?: number;
+  finalMissionId?: string;
+  finalMissionName?: string;
+  commanderLevel?: string;
+  commanderTransitions?: CommanderTransitionSummary[];
+}
 
 export interface DeathInfo {
   cause: DeathCauseType;
@@ -135,6 +166,13 @@ export interface DeathInfo {
   enemyColor?: string;
   dragonPartType?: DragonPartType;
   turn?: number;
+  // 診断・ギブアップメタデータ
+  giveUpCategory?: GiveUpCategory;
+  stallKind?: DeathStallKind;
+  finalMissionId?: string;
+  finalMissionName?: string;
+  commanderLevel?: string;
+  commanderTransitions?: CommanderTransitionSummary[];
 }
 
 export interface DamageSource {
@@ -145,6 +183,12 @@ export interface DamageSource {
   enemyTypeId?: number;
   enemyColor?: string;
   dragonPartType?: DragonPartType;
+  giveUpCategory?: GiveUpCategory;
+  stallKind?: DeathStallKind;
+  finalMissionId?: string;
+  finalMissionName?: string;
+  commanderLevel?: string;
+  commanderTransitions?: CommanderTransitionSummary[];
 }
 
 export type MapDifficulty = 'EASY' | 'NORMAL' | 'HARD';

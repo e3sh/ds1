@@ -2,6 +2,7 @@ import {
   GameEventBus,
 } from '../core/GameEventBus.js';
 import {
+  CommanderTransitionSummary,
   DeathInfo,
   DungeonTopology,
   MapDifficulty,
@@ -23,6 +24,15 @@ export interface SingleRunRecord {
     killedHead1: boolean;
     killedAllHeads: boolean;
     deliveredAtLeastOneCrown: boolean;
+  };
+  milestoneTurns?: {
+    gotSword?: number;
+    unlockedBreak?: number;
+    unlockedDiagonal?: number;
+    reachedTargetStr?: number;
+    killedHead1?: number;
+    killedAllHeads?: number;
+    deliveredFirstCrown?: number;
   };
   homeSpawnAttempts: number;
   homeSpawnSuccessCount: number;
@@ -58,8 +68,28 @@ export interface SingleRunRecord {
     terminalZoneId?: string;
     maxTurnsWithoutSubstantiveGain?: number;
     commanderLevelCounts?: Record<string, number>;
+    commanderFinalLevel?: string;
+    recentVerdicts?: CommanderTransitionSummary[];
     giveUpSource?: string;
   };
+}
+
+export interface MilestoneTurnStat {
+  count: number;
+  avg: number;
+  median: number;
+}
+
+export interface FailedRunSample {
+  runIndex: number;
+  seed: number;
+  totalTurns: number;
+  cause: string;
+  giveUpCategory?: string;
+  stallKind?: string;
+  finalMissionId?: string;
+  commanderLevel?: string;
+  recentVerdicts: Array<{ turn: number; from: string; to: string; stallKind: string | null }>;
 }
 
 export interface RunDiagnosticDetail {
@@ -134,6 +164,29 @@ export interface SimulationSummaryReport {
       deliveredAtLeastOneCrown: number;
     };
     deathCauses: Record<string, number>;
+    giveUpBreakdown?: {
+      swordTrapped: number;
+      confined: number;
+      churn: number;
+      loop: number;
+      fruitless: number;
+      other: number;
+    };
+    earlyGiveUpStats?: {
+      under1000TurnsCount: number;
+      minGiveUpTurn: number | null;
+      avgGiveUpTurn: number | null;
+    };
+    milestoneTurnStats?: {
+      gotSword: MilestoneTurnStat;
+      unlockedBreak: MilestoneTurnStat;
+      unlockedDiagonal: MilestoneTurnStat;
+      reachedTargetStr: MilestoneTurnStat;
+      killedHead1: MilestoneTurnStat;
+      killedAllHeads: MilestoneTurnStat;
+      deliveredFirstCrown: MilestoneTurnStat;
+    };
+    failedRunSamples?: FailedRunSample[];
   };
   homeSpawnMetrics: {
     totalHomeSpawnAttempts: number;
@@ -288,12 +341,14 @@ export class SimulationTelemetry {
     totalTurns: number,
     won: boolean,
     deathInfo?: DeathInfo,
-    pstMetrics?: SingleRunRecord['pstMetrics']
+    pstMetrics?: SingleRunRecord['pstMetrics'],
+    milestoneTurns?: SingleRunRecord['milestoneTurns']
   ): void {
     this.currentRecord.totalTurns = totalTurns;
     this.currentRecord.won = won;
     if (deathInfo) this.currentRecord.deathInfo = deathInfo;
     if (pstMetrics) this.currentRecord.pstMetrics = pstMetrics;
+    if (milestoneTurns) this.currentRecord.milestoneTurns = milestoneTurns;
     this.allRecords.push(this.currentRecord);
   }
 

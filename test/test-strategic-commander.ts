@@ -405,7 +405,15 @@ console.log('Testing 7: Integration - Unbreakable ring loop with MP=0 leads to T
     if (act.type === 'GIVE_UP' || bot.isGivenUp) {
       gaveUp = true;
       assert.strictEqual(bot.commander.level, 'TERMINAL', 'Commander が TERMINAL に到達して GIVE_UP すること');
-      console.log(`✓ 7. Unbreakable ring loop triggered TERMINAL GIVE_UP at turn ${t + 1}`);
+      assert.ok(player.deathInfo !== null, 'deathInfo が記録されていること');
+      assert.notStrictEqual(
+        player.deathInfo.cause,
+        'GIVE_UP_UNSOLVABLE',
+        `細分化された GIVE_UP 要因が記録されること (actual: ${player.deathInfo.cause})`
+      );
+      assert.strictEqual(player.deathInfo.commanderLevel, 'TERMINAL');
+      assert.ok((player.deathInfo.commanderTransitions?.length ?? 0) > 0, 'Commander 遷移履歴が記録されること');
+      console.log(`✓ 7. Unbreakable ring loop triggered TERMINAL GIVE_UP (${player.deathInfo.cause}) at turn ${t + 1}`);
       break;
     }
   }

@@ -325,16 +325,17 @@ export class DemoAndAutoPlayController {
 
     const domUI = this.engine.getDomUI();
 
-    // ゲームオーバーまたはステージクリア時は演出を少し見せてから終了
+    // ゲームオーバーまたはステージクリア時の終了処理
     if (this.engine.getState() !== 'PLAYING') {
+      if (this.isAutoPlayVerify) {
+        // 観戦モード時はリザルト画面（GAMEOVER / STAGECLEAR）を勝手に閉じず、ユーザー操作まで保持する
+        this.haltAutoPlayOnResult();
+        return;
+      }
       this.demoEndDelayFrames++;
-      // 約2秒（180ms * 12フレーム ≈ 2.16秒）ウェイト後に復帰
+      // 通常デモ時は約2秒（180ms * 12フレーム ≈ 2.16秒）ウェイト後にタイトルへ復帰
       if (this.demoEndDelayFrames >= 12) {
-        if (this.isAutoPlayVerify) {
-          this.stopAutoPlayVerifyMode(true);
-        } else {
-          this.stopDemoMode();
-        }
+        this.stopDemoMode();
       }
       return;
     }
@@ -392,6 +393,11 @@ export class DemoAndAutoPlayController {
     this.engine.stepUpdate(100);
     this.demoBot.step(this.engine);
 
+    if (this.isAutoPlayVerify && this.engine.getState() !== 'PLAYING') {
+      this.haltAutoPlayOnResult();
+      return;
+    }
+
     // チュートリアルTips & 検証ステータス字幕更新
     if (this.isAutoPlayVerify) {
       const map = this.engine.getMap ? this.engine.getMap() : (this.engine as any).getWorldMap();
@@ -401,6 +407,35 @@ export class DemoAndAutoPlayController {
       const tip = this.demoBot.getTutorialMessage();
       domUI?.setDemoMessage(tip);
     }
+  }
+
+  /**
+   * 観戦モード終了時の後処理（GAMEOVER / STAGECLEAR のリザルト表示を保持したままタイマーのみ停止）
+   */
+  private haltAutoPlayOnResult(): void {
+    this.isDemoMode = false;
+    this.isAutoPlayVerify = false;
+    this.isAutoPlayPaused = false;
+    this.autoPlaySpeed = 1;
+    this.demoEndDelayFrames = 0;
+    this.demoTurns = 0;
+    this.demoStuckFrames = 0;
+    this.lastDemoPos = null;
+    this.magicDelayTimerMs = 0;
+    this.magicSpecialNotice = null;
+
+    if (this.demoIntervalId !== null && typeof window !== 'undefined') {
+      window.clearInterval(this.demoIntervalId);
+      this.demoIntervalId = null;
+    }
+    this.demoBot = null;
+
+    const domUI = this.engine.getDomUI();
+    domUI?.hideDemoOverlay();
+    domUI?.hideAutoPlayOverlay();
+    domUI?.updateAutoPlayToggleStatus(false);
+
+    this.restoreSoundAfterDemo(false);
   }
 
   /**

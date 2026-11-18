@@ -51,10 +51,11 @@ export class OpportunisticEvaluator {
       if (mainDirective.type === 'PICKUP_ITEM' && mainDirective.targetItemType === floorItem) {
         return null;
       }
+      const priority = floorItem === 'POTION' && player.magic === 0 ? 98 : 92;
       return {
         type: 'PICKUP_ITEM',
         targetItemType: floorItem,
-        priority: 92,
+        priority,
         reason: `動線上の足元アイテム [${floorItem === 'POTION' ? '魔法の壺(MP回復)' : '金貨'}] をついで回収`,
       };
     }
@@ -63,7 +64,10 @@ export class OpportunisticEvaluator {
     const bestCandidate = MapSituationEvaluator.get(snapshot, engine).items.bestOpportunisticItem;
     if (bestCandidate) {
       const integerDist = Math.ceil(bestCandidate.dist);
-      const priority = 90 - integerDist;
+      const priority =
+        bestCandidate.type === 'POTION' && player.magic === 0 && integerDist <= 3
+          ? 99 - integerDist
+          : 90 - integerDist;
       return {
         type: 'NAVIGATE_TO_POSITION',
         targetPos: bestCandidate.pos,

@@ -1112,7 +1112,8 @@ export class MapSituationEvaluator {
         if (map.getBaseTile(pos) === 'WALL_STATIC' || map.getObject(pos) === 'BLOCK') return;
         const enemyOnSpot = enemies.some(e => e.isAlive && e.pos.x === pos.x && e.pos.y === pos.y);
         if (enemyOnSpot) return;
-        const score = dist - (type === 'POTION' ? 0.5 : 0);
+        const potionBonus = type === 'POTION' ? (player.magic === 0 ? 2.0 : 0.5) : 0;
+        const score = dist - potionBonus;
         if (score < bestScore) {
           bestScore = score;
           bestOpportunisticItem = { pos, type, dist };
@@ -1556,6 +1557,129 @@ export class MapSituationEvaluator {
       });
     }
     return cloned;
+  }
+
+  /**
+   * 前線基地移転用の安全なアンカー候補を認知層で抽出する。
+   * spawnHomePos（初期ホーム）から十分離れた安全な空き床をスコア順に返す。
+   */
+  public static findSafeRelocateAnchorCandidates(
+    snapshot: TacticalSnapshot,
+    dragon?: Dragon,
+    limit: number = 15
+  ): Position[] {
+    const map = snapshot.map;
+    const spawnHome = map.initialHomePos;
+    const realHome = map.realHomePos;
+    const idealPos: Position = {
+      x: (spawnHome.x + Math.floor(map.width / 2)) % map.width,
+      y: (spawnHome.y + Math.floor(map.height / 2)) % map.height,
+    };
+
+    const graves: Position[] = [];
+    for (let y = 0; y < map.height; y++) {
+      for (let x = 0; x < map.width; x++) {
+        if (map.baseTiles[y][x] === 'GRAVE') {
+          graves.push({ x, y });
+        }
+      }
+    }
+
+    const recommendedSet = new Set<string>(
+      snapshot.spatial.recommendedRelocateAnchors.map(p => `${p.x},${p.y}`)
+    );
+
+    const isFireLine = (p: Position): boolean => {
+      if (!dragon) return false;
+      for (const head of dragon.heads) {
+        if (!head.isAlive) continue;
+        if (dragon.canHeadSeePlayer(head, p, map)) return true;
+      }
+      return false;
+    };
+
+    const cardDirs = [
+      { dx: 0, dy: -1 },
+      { dx: 0, dy: 1 },
+      { dx: -1, dy: 0 },
+      { dx: 1, dy: 0 },
+    ];
+
+    const isSafeAnchorTile = (p: Position): { ok: boolean; emptyNeighbors: number } => {
+      if (map.getBaseTile(p) !== 'EMPTY') return { ok: false, emptyNeighbors: 0 };
+      if (map.getObject(p) !== 'NONE') return { ok: false, emptyNeighbors: 0 };
+      if (map.getItem(p) !== 'NONE') return { ok: false, emptyNeighbors: 0 };
+      if (dragon && (dragon.getPartAt(p) || isFireLine(p))) return { ok: false, emptyNeighbors: 0 };
+
+      for (const g of graves) {
+        if (map.getTorusDistance(p, g).chebyshev <= 2) {
+          return { ok: false, emptyNeighbors: 0 };
+        }
+      }
+
+      let passableDirs = 0;
+      let emptyNeighbors = 0;
+      for (const d of cardDirs) {
+        const np = map.wrapPosition({ x: p.x + d.dx, y: p.y + d.dy });
+        const b = map.getBaseTile(np);
+        const o = map.getObject(np);
+        if (b !== 'WALL_STATIC' && b !== 'GRAVE' && b !== 'WARP') {
+          passableDirs++;
+          if (o === 'NONE' && map.getItem(np) === 'NONE') {
+            emptyNeighbors++;
+          }
+        }
+      }
+      if (passableDirs < 2 || emptyNeighbors < 1) {
+        return { ok: false, emptyNeighbors };
+      }
+      return { ok: true, emptyNeighbors };
+    };
+
+    const minSpawnDistThresholds = [
+      Math.floor((map.width + map.height) * 0.25),
+      Math.floor((map.width + map.height) * 0.16),
+      10,
+    ];
+
+    for (const minDist of minSpawnDistThresholds) {
+      const candidates: { pos: Position; score: number }[] = [];
+
+      for (let y = 0; y < map.height; y++) {
+        for (let x = 0; x < map.width; x++) {
+          const p = { x, y };
+          const distFromSpawn = map.getTorusDistance(spawnHome, p).manhattan;
+          if (distFromSpawn < minDist) continue;
+
+          const check = isSafeAnchorTile(p);
+          if (!check.ok) continue;
+
+          const distToIdeal = map.getTorusDistance(idealPos, p).manhattan;
+          const distToRealHome = map.getTorusDistance(realHome, p).manhattan;
+          const recBonus = recommendedSet.has(`${x},${y}`) ? 6 : 0;
+          const dragonBonus = dragon
+            ? Math.min(16, map.getTorusDistance(dragon.centerPos, p).manhattan) * 0.25
+            : 0;
+
+          const score =
+            distFromSpawn * 1.5 -
+            distToIdeal * 1.2 +
+            check.emptyNeighbors * 4 -
+            distToRealHome * 0.2 +
+            recBonus +
+            dragonBonus;
+
+          candidates.push({ pos: p, score });
+        }
+      }
+
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => b.score - a.score);
+        return candidates.slice(0, limit).map(c => c.pos);
+      }
+    }
+
+    return [];
   }
 
   private static buildStateKey(

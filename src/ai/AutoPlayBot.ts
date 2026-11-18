@@ -1,6 +1,12 @@
 import { GameEngine } from '../core/GameEngine.js';
 import { Player } from '../models/Player.js';
 import { WorldMap } from '../models/WorldMap.js';
+import {
+  CommanderTransitionSummary,
+  DeathCauseType,
+  DeathStallKind,
+  GiveUpCategory,
+} from '../models/Types.js';
 import { Dragon } from '../models/Dragon.js';
 import { Ghost } from '../models/Ghost.js';
 import { MagicSystem } from '../systems/MagicSystem.js';
@@ -49,6 +55,11 @@ export class AutoPlayBot {
 
   private unlockedBreakNotified: boolean = false;
   public isGivenUp: boolean = false;
+  private lastGiveUpMeta: {
+    cause: DeathCauseType;
+    category: GiveUpCategory;
+    stallKind?: DeathStallKind;
+  } | null = null;
 
   // テレメトリ
   public currentTargetDesc: string = '初期化中';
@@ -108,15 +119,34 @@ export class AutoPlayBot {
       case 'WAIT':
         engine.executeTurn(null, true);
         break;
-      case 'GIVE_UP':
+      case 'GIVE_UP': {
         this.isGivenUp = true;
+        const diag = this.getDiagnosticSnapshot();
+        const cause = this.lastGiveUpMeta?.cause ?? 'GIVE_UP_UNSOLVABLE';
         engine.handleGameOver({
-          cause: 'GIVE_UP_UNSOLVABLE',
+          cause,
           message: `${this.currentTargetDesc || '💀 詰み検知: 進行経路が存在しないためギブアップ'} | ${this.buildBoardSummaryForGiveUp(engine)}`,
           damage: 0,
           turn: engine.getTotalTurns(),
+          giveUpCategory: this.lastGiveUpMeta?.category ?? 'OTHER',
+          stallKind: this.lastGiveUpMeta?.stallKind,
+          finalMissionId: diag.finalMissionId,
+          finalMissionName: diag.finalMissionName,
+          commanderLevel: diag.commanderLevel,
+          commanderTransitions: diag.commanderTransitions,
         });
         break;
+      }
+    }
+
+    // 戦闘死などで GAMEOVER になった場合も Bot 診断メタデータを補完
+    const afterPlayer = engine.getPlayer();
+    if (afterPlayer.deathInfo && !afterPlayer.deathInfo.finalMissionId) {
+      const diag = this.getDiagnosticSnapshot();
+      afterPlayer.deathInfo.finalMissionId = diag.finalMissionId;
+      afterPlayer.deathInfo.finalMissionName = diag.finalMissionName;
+      afterPlayer.deathInfo.commanderLevel = diag.commanderLevel;
+      afterPlayer.deathInfo.commanderTransitions = diag.commanderTransitions;
     }
 
     const newPos = engine.getPlayer().pos;
@@ -326,6 +356,7 @@ export class AutoPlayBot {
     if (directive.type === 'GIVE_UP') {
       this.isGivenUp = true;
       this.currentTargetDesc = directive.reason;
+      this.lastGiveUpMeta = this.resolveGiveUpMeta(directive.giveUpMeta);
       return { type: 'GIVE_UP' };
     }
 
@@ -338,6 +369,7 @@ export class AutoPlayBot {
 
     if (execResult.action.type === 'GIVE_UP') {
       this.isGivenUp = true;
+      this.lastGiveUpMeta = this.resolveGiveUpMeta(directive.giveUpMeta);
       return { type: 'GIVE_UP' };
     }
 
@@ -347,6 +379,61 @@ export class AutoPlayBot {
   public getTelemetryStatus(player: Player, _map?: WorldMap, turn?: number): string {
     const t = turn ?? this.totalTurns;
     return `T:${t} [${this.currentPhase}] HP:${player.hp}/${player.maxHp} STR:${player.strength} MP:${player.magic} | ${this.currentTargetDesc}`;
+  }
+
+  public getDiagnosticSnapshot(maxTransitions: number = 6): {
+    finalMissionId: string;
+    finalMissionName: string;
+    commanderLevel: string;
+    commanderTransitions: CommanderTransitionSummary[];
+  } {
+    const active = this.strategicPlanner.activeMission;
+    const lastHist = this.strategicPlanner.missionHistory.at(-1);
+    const finalMissionId = active?.id ?? lastHist?.missionId ?? 'NONE';
+    const finalMissionName = active?.name ?? finalMissionId;
+    const commanderTransitions: CommanderTransitionSummary[] = this.commander.verdicts
+      .slice(-maxTransitions)
+      .map(v => ({
+        turn: v.turn,
+        from: v.from,
+        to: v.to,
+        stallKind: v.stallKind,
+        reason: v.reason,
+      }));
+    return {
+      finalMissionId,
+      finalMissionName,
+      commanderLevel: this.commander.level,
+      commanderTransitions,
+    };
+  }
+
+  private resolveGiveUpMeta(meta?: {
+    category: 'PHYSICAL_TRAP' | 'AI_STALL';
+    stallKind: DeathStallKind;
+  }): { cause: DeathCauseType; category: GiveUpCategory; stallKind?: DeathStallKind } {
+    if (meta) {
+      let cause: DeathCauseType = 'GIVE_UP_UNSOLVABLE';
+      switch (meta.stallKind) {
+        case 'SWORD_TRAPPED':
+          cause = 'GIVE_UP_SWORD_TRAPPED';
+          break;
+        case 'CONFINED':
+          cause = 'GIVE_UP_CONFINED';
+          break;
+        case 'CHURN':
+          cause = 'GIVE_UP_STALL_CHURN';
+          break;
+        case 'LOOP':
+          cause = 'GIVE_UP_STALL_LOOP';
+          break;
+        case 'FRUITLESS':
+          cause = 'GIVE_UP_STALL_FRUITLESS';
+          break;
+      }
+      return { cause, category: meta.category, stallKind: meta.stallKind };
+    }
+    return { cause: 'GIVE_UP_UNSOLVABLE', category: 'OTHER' };
   }
 
   private buildBoardSummaryForGiveUp(engine: GameEngine): string {

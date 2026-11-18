@@ -1,5 +1,6 @@
 import { Player } from '../models/Player.js';
 import {
+  GameResultContext,
   GameState,
   MagicType,
   PaletteMode,
@@ -90,6 +91,7 @@ export class DOMUIManager {
   private titleModalEl: HTMLElement | null = null;
   private gameoverModalEl: HTMLElement | null = null;
   private gameoverStatsEl: HTMLElement | null = null;
+  private gameoverCauseLabelEl: HTMLElement | null = null;
   private gameoverCauseMsgEl: HTMLElement | null = null;
   private gameoverAvatarCanvasEl: HTMLCanvasElement | null = null;
   private clearModalEl: HTMLElement | null = null;
@@ -198,7 +200,7 @@ export class DOMUIManager {
       <div class="top-bar-controls">
         <div class="top-bar-btn-group">
           <button class="hud-action-btn autoplay-toggle-btn" id="dom-autoplay-toggle-btn" title="自動自走 ⇔ 手動操作のシームレス切替 [Tab] / [P]" style="background: #263238; color: #b0bec5; border: 1px solid #455a64;">🤖 AUTO: OFF</button>
-          <button class="hud-action-btn renderer-toggle-btn" id="dom-renderer-btn" title="レンダラー切替 (CLASSIC ⇔ SMOOTH) [V]" style="background: #1a2436; color: #90caf9; border: 1px solid #394b6b;">🎨 CLASSIC</button>
+          <button class="hud-action-btn renderer-toggle-btn" id="dom-renderer-btn" title="描画切替 (PIXEL ⇔ SMOOTH) [V]" style="background: #1a2436; color: #90caf9; border: 1px solid #394b6b;">🎨 PIXEL</button>
           <button class="hud-action-btn marker-toggle-btn active" id="dom-marker-btn" title="敵相対マーカー切替 [T]">🎯 TACTICAL</button>
           <button class="hud-action-btn inspect-btn" id="dom-inspect-btn" title="マップ構造＆成長パラメータインスペクタ [I]">📊 INSPECT</button>
           <button class="hud-action-btn help-btn" id="dom-help-btn" title="アイテム効果＆冒険ガイド [H]" style="background: #0c4a6e; color: #7dd3fc; border: 1px solid #0284c7;">📖 HELP</button>
@@ -368,7 +370,7 @@ export class DOMUIManager {
               <canvas id="dom-gameover-avatar-canvas" width="64" height="64" class="gameover-avatar-canvas"></canvas>
             </div>
             <div class="gameover-cause-details">
-              <div class="gameover-cause-label">💀 CAUSE OF DEATH (致命傷)</div>
+              <div class="gameover-cause-label" id="dom-gameover-cause-label">💀 CAUSE OF DEATH (致命傷)</div>
               <div class="gameover-cause-message" id="dom-gameover-cause-msg">力尽き、ダンジョンの闇に呑まれた…</div>
             </div>
           </div>
@@ -446,6 +448,7 @@ export class DOMUIManager {
     this.titleModalEl = this.container.querySelector('#dom-title-modal');
     this.gameoverModalEl = this.container.querySelector('#dom-gameover-modal');
     this.gameoverStatsEl = this.container.querySelector('#dom-gameover-stats');
+    this.gameoverCauseLabelEl = this.container.querySelector('#dom-gameover-cause-label');
     this.gameoverCauseMsgEl = this.container.querySelector('#dom-gameover-cause-msg');
     this.gameoverAvatarCanvasEl = this.container.querySelector('#dom-gameover-avatar-canvas');
     this.clearModalEl = this.container.querySelector('#dom-clear-modal');
@@ -731,19 +734,19 @@ export class DOMUIManager {
   }
 
   /**
-   * レンダラー表示モード（CLASSIC / SMOOTH）のUI反映
+   * レンダラー表示モード（PIXEL / SMOOTH）のUI反映
    */
   public updateRendererMode(mode: RendererMode): void {
     if (!this.rendererBtnEl) return;
     if (mode === 'smooth') {
       this.rendererBtnEl.textContent = '✨ SMOOTH';
-      this.rendererBtnEl.title = 'スムーズ補間＆ズーム俯瞰レンダラー (クリックまたは [V] でCLASSIC切替)';
+      this.rendererBtnEl.title = 'スムーズ補間＆ズーム俯瞰描画 (クリックまたは [V] でPIXEL切替)';
       this.rendererBtnEl.style.background = '#0d3b4c';
       this.rendererBtnEl.style.color = '#00e5ff';
       this.rendererBtnEl.style.borderColor = '#00acc1';
     } else {
-      this.rendererBtnEl.textContent = '🎨 CLASSIC';
-      this.rendererBtnEl.title = 'クラシック固定ドットレンダラー (クリックまたは [V] でSMOOTH切替)';
+      this.rendererBtnEl.textContent = '🎨 PIXEL';
+      this.rendererBtnEl.title = 'ドット固定スナップ描画 (クリックまたは [V] でSMOOTH切替)';
       this.rendererBtnEl.style.background = '#1a2436';
       this.rendererBtnEl.style.color = '#90caf9';
       this.rendererBtnEl.style.borderColor = '#394b6b';
@@ -793,7 +796,13 @@ export class DOMUIManager {
   /**
    * ゲーム状態（TITLE, PLAYING, GAMEOVER, STAGECLEAR）に応じた画面切り替え
    */
-  public setGameState(state: GameState, player?: Player, totalKills: number = 0, totalTurns: number = 0): void {
+  public setGameState(
+    state: GameState,
+    player?: Player,
+    totalKills: number = 0,
+    totalTurns: number = 0,
+    resultContext?: GameResultContext
+  ): void {
     if (!this.container) return;
 
     this.invalidateCache();
@@ -824,7 +833,7 @@ export class DOMUIManager {
       if (state === 'GAMEOVER') {
         this.gameoverModalEl.classList.remove('hidden');
         if (player) {
-          this.renderGameOverDetails(player, totalKills, totalTurns);
+          this.renderGameOverDetails(player, totalKills, totalTurns, resultContext);
         }
       } else {
         this.gameoverModalEl.classList.add('hidden');
@@ -835,7 +844,7 @@ export class DOMUIManager {
       if (state === 'STAGECLEAR') {
         this.clearModalEl.classList.remove('hidden');
         if (player) {
-          this.renderClearDetails(player, totalKills, totalTurns);
+          this.renderClearDetails(player, totalKills, totalTurns, resultContext);
         }
       } else {
         this.clearModalEl.classList.add('hidden');
@@ -844,13 +853,31 @@ export class DOMUIManager {
   }
 
   /**
-   * ステージクリアモーダルの詳細情報（クリアターン数、難関シード踏破バッジ等）を描画
+   * ステージクリアモーダルの詳細情報（クリアターン数、難関シード踏破バッジ、マイルストーン、シード情報等）を描画
    */
-  private renderClearDetails(player: Player, totalKills: number, totalTurns: number): void {
+  private renderClearDetails(
+    player: Player,
+    totalKills: number,
+    totalTurns: number,
+    resultContext?: GameResultContext
+  ): void {
     if (this.clearStatsEl) {
+      const milestonesHtml = this.buildMilestonesRowHtml(player, resultContext, true);
+      const seedHtml = this.buildSeedInfoHtml(resultContext);
+      const botHtml = resultContext?.isAutoPlay
+        ? this.buildBotDiagnosticsHtml({
+            finalMissionId: resultContext.finalMissionId,
+            finalMissionName: resultContext.finalMissionName,
+            commanderLevel: resultContext.commanderLevel,
+            commanderTransitions: resultContext.commanderTransitions,
+          })
+        : '';
       this.clearStatsEl.innerHTML = `
         <div>所要ターン数: <strong style="color: #81c784;">${totalTurns} ターン</strong> | 討伐数: <strong>${totalKills} 体</strong></div>
-        <div style="margin-top: 4px;">最終STR: <strong>${player.strength.toLocaleString()}</strong> | 獲得ゴールド: <strong>${player.gold} G</strong></div>
+        <div style="margin-top: 4px;">最終STR: <strong>${player.strength.toLocaleString()}</strong> | EXP: <strong>${player.experience.toLocaleString()}</strong> | ゴールド: <strong>${player.gold.toLocaleString()} G</strong></div>
+        ${milestonesHtml}
+        ${seedHtml}
+        ${botHtml}
       `;
     }
 
@@ -884,17 +911,47 @@ export class DOMUIManager {
   }
 
   /**
-   * ゲームオーバーモーダルの詳細情報（死因メッセージ、トドメ敵グラフィック、最終探索スタッツ）を描画
+   * ゲームオーバーモーダルの詳細情報（死因メッセージ、ギブアップ種別、トドメ敵グラフィック、最終探索スタッツ、診断メタデータ）を描画
    */
-  private renderGameOverDetails(player: Player, totalKills: number, totalTurns: number): void {
+  private renderGameOverDetails(
+    player: Player,
+    totalKills: number,
+    totalTurns: number,
+    resultContext?: GameResultContext
+  ): void {
     const death = player.deathInfo;
 
-    // 1. 死因メッセージの反映
+    // 1. 死因 / ギブアップ種別ラベルの反映（物理的詰み vs AI停滞 vs 戦闘死）
+    if (this.gameoverCauseLabelEl) {
+      const cause = death?.cause ?? 'UNKNOWN';
+      this.gameoverCauseLabelEl.className = 'gameover-cause-label';
+      if (cause === 'GIVE_UP_SWORD_TRAPPED' || cause === 'GIVE_UP_CONFINED' || death?.giveUpCategory === 'PHYSICAL_TRAP') {
+        this.gameoverCauseLabelEl.classList.add('cause-badge-trap');
+        this.gameoverCauseLabelEl.textContent = `🚧 物理的詰み (PHYSICAL TRAP) [${cause}]`;
+      } else if (
+        cause === 'GIVE_UP_STALL_CHURN' ||
+        cause === 'GIVE_UP_STALL_LOOP' ||
+        cause === 'GIVE_UP_STALL_FRUITLESS' ||
+        death?.giveUpCategory === 'AI_STALL'
+      ) {
+        this.gameoverCauseLabelEl.classList.add('cause-badge-stall');
+        this.gameoverCauseLabelEl.textContent = `🤖 AI停滞ギブアップ (${death?.stallKind ?? 'STALL'}) [${cause}]`;
+      } else if (cause === 'GIVE_UP_UNSOLVABLE') {
+        this.gameoverCauseLabelEl.classList.add('cause-badge-stall');
+        this.gameoverCauseLabelEl.textContent = `🤖 BOT GIVE UP [${cause}]`;
+      } else if (cause === 'GIVE_UP') {
+        this.gameoverCauseLabelEl.textContent = '🏳️ GIVE UP (探索断念)';
+      } else {
+        this.gameoverCauseLabelEl.textContent = `💀 CAUSE OF DEATH (${cause})`;
+      }
+    }
+
+    // 2. 死因メッセージの反映
     if (this.gameoverCauseMsgEl) {
       this.gameoverCauseMsgEl.textContent = death?.message ?? '力尽き、ダンジョンの闇に呑まれた…';
     }
 
-    // 2. トドメ敵 / 死因グラフィックの描画 (64x64 Canvas)
+    // 3. トドメ敵 / 死因グラフィックの描画 (64x64 Canvas)
     if (this.gameoverAvatarCanvasEl && typeof this.gameoverAvatarCanvasEl.getContext === 'function') {
       const ctx = this.gameoverAvatarCanvasEl.getContext('2d');
       if (ctx) {
@@ -937,11 +994,8 @@ export class DOMUIManager {
             0,
             0
           );
-        } else if (death?.cause === 'GIVE_UP') {
-          ctx.scale(2, 2);
-          TileGraphics.drawDeathFollower(ctx, 0, 0);
         } else {
-          // デフォルトドクロ
+          // デフォルトドクロ (GIVE_UP / GIVE_UP_* / UNKNOWN)
           ctx.scale(2, 2);
           TileGraphics.drawDeathFollower(ctx, 0, 0);
         }
@@ -949,22 +1003,112 @@ export class DOMUIManager {
       }
     }
 
-    // 3. 探索スタッツグリッドの反映
+    // 4. 探索スタッツグリッド・マイルストーン・シード・Bot診断メタデータの反映
     if (this.gameoverStatsEl) {
       const itemText = player.holdItem === 'NONE' ? 'なし' : player.holdItem;
       const swordText = player.hasSword ? '所持 (YES)' : '未所持 (NO)';
+      const milestonesHtml = this.buildMilestonesRowHtml(player, resultContext, false);
+      const seedHtml = this.buildSeedInfoHtml(resultContext);
+      const diagHtml = this.buildBotDiagnosticsHtml({
+        finalMissionId: death?.finalMissionId ?? resultContext?.finalMissionId,
+        finalMissionName: death?.finalMissionName ?? resultContext?.finalMissionName,
+        commanderLevel: death?.commanderLevel ?? resultContext?.commanderLevel,
+        commanderTransitions: death?.commanderTransitions ?? resultContext?.commanderTransitions,
+      });
+
       this.gameoverStatsEl.innerHTML = `
         <div class="gameover-stats-grid">
           <div class="stat-cell"><span class="stat-name">SURVIVED TURNS</span><span class="stat-val highlight">${totalTurns} ターン</span></div>
           <div class="stat-cell"><span class="stat-name">TOTAL KILLS</span><span class="stat-val">${totalKills} 体</span></div>
           <div class="stat-cell"><span class="stat-name">FINAL EXP</span><span class="stat-val highlight">${player.experience.toLocaleString()}</span></div>
+          <div class="stat-cell"><span class="stat-name">FINAL STR</span><span class="stat-val highlight">${player.strength.toLocaleString()}</span></div>
           <div class="stat-cell"><span class="stat-name">GOLD</span><span class="stat-val">${player.gold.toLocaleString()} G</span></div>
           <div class="stat-cell"><span class="stat-name">CROWNS</span><span class="stat-val highlight">${player.crowns} / 4</span></div>
-          <div class="stat-cell"><span class="stat-name">HOLD ITEM</span><span class="stat-val">${itemText}</span></div>
-          <div class="stat-cell span-2"><span class="stat-name">SWORD</span><span class="stat-val">${swordText}</span></div>
+          <div class="stat-cell"><span class="stat-name">HOLD ITEM</span><span class="stat-val">${this.escapeHtml(itemText)}</span></div>
+          <div class="stat-cell"><span class="stat-name">SWORD</span><span class="stat-val">${swordText}</span></div>
         </div>
+        ${milestonesHtml}
+        ${seedHtml}
+        ${diagHtml}
       `;
     }
+  }
+
+  private buildMilestonesRowHtml(
+    player: Player,
+    resultContext?: GameResultContext,
+    isClear: boolean = false
+  ): string {
+    const hasBreak = player.experience >= 4000;
+    const hasDiag = player.canDiagonal || player.experience >= 12000;
+    const defeatedHeads = isClear ? (resultContext?.totalHeads ?? 3) : (resultContext?.defeatedHeads ?? 0);
+    const totalHeads = resultContext?.totalHeads ?? 3;
+    const crowns = isClear ? 4 : player.crowns;
+
+    return `
+      <div class="result-milestones-row">
+        <span class="result-milestone-chip ${player.hasSword ? 'achieved' : ''}">⚔️ 剣:${player.hasSword ? '○' : '×'}</span>
+        <span class="result-milestone-chip ${hasBreak ? 'achieved' : ''}">💥 BREAK:${hasBreak ? '○' : '×'}</span>
+        <span class="result-milestone-chip ${hasDiag ? 'achieved' : ''}">↗️ 斜め:${hasDiag ? '○' : '×'}</span>
+        <span class="result-milestone-chip ${defeatedHeads > 0 ? 'achieved' : ''}">🐉 首:${defeatedHeads}/${totalHeads}</span>
+        <span class="result-milestone-chip ${crowns > 0 ? 'achieved' : ''}">👑 王冠:${crowns}/4</span>
+      </div>
+    `;
+  }
+
+  private buildSeedInfoHtml(resultContext?: GameResultContext): string {
+    if (!resultContext || (resultContext.seed === undefined && !resultContext.topology)) {
+      return '';
+    }
+    const parts: string[] = [];
+    if (resultContext.seed !== undefined) parts.push(`Seed: <strong>${resultContext.seed}</strong>`);
+    if (resultContext.topology) parts.push(`${this.escapeHtml(resultContext.topology)}`);
+    if (resultContext.difficulty) parts.push(`${this.escapeHtml(resultContext.difficulty)}`);
+    if (resultContext.ruleMode) parts.push(`${this.escapeHtml(resultContext.ruleMode)}`);
+    return `<div class="result-seed-bar">🗺️ ${parts.join(' | ')}</div>`;
+  }
+
+  private buildBotDiagnosticsHtml(diag: {
+    finalMissionId?: string;
+    finalMissionName?: string;
+    commanderLevel?: string;
+    commanderTransitions?: Array<{ turn: number; from: string; to: string; stallKind: string | null }>;
+  }): string {
+    if (!diag.finalMissionId && !diag.commanderLevel && (!diag.commanderTransitions || diag.commanderTransitions.length === 0)) {
+      return '';
+    }
+    const missionLabel = diag.finalMissionName || diag.finalMissionId || 'NONE';
+    const cmdLabel = diag.commanderLevel || 'NOMINAL';
+    const transitions = (diag.commanderTransitions ?? []).slice(-4);
+    const transitionsHtml =
+      transitions.length > 0
+        ? `<div class="result-diag-transitions">${transitions
+            .map(
+              t =>
+                `<div class="result-diag-tx">T${t.turn}: ${this.escapeHtml(t.from)} → ${this.escapeHtml(t.to)}${
+                  t.stallKind ? ` [${this.escapeHtml(t.stallKind)}]` : ''
+                }</div>`
+            )
+            .join('')}</div>`
+        : '';
+
+    return `
+      <div class="result-diag-box">
+        <div class="result-diag-header">
+          <span>🎯 最終作戦: <strong>${this.escapeHtml(missionLabel)}</strong></span>
+          <span>🧭 Cmd: <strong>${this.escapeHtml(cmdLabel)}</strong></span>
+        </div>
+        ${transitionsHtml}
+      </div>
+    `;
+  }
+
+  private escapeHtml(str: string): string {
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
   }
 
   /**

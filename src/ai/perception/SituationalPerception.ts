@@ -87,7 +87,10 @@ export class SituationalPerception {
     enemies: EnemyInstance[]
   ): ConfinementState {
     const curPos = player.pos;
-    const cardDirs: Direction[] = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
+    const canMoveDiag = player.canDiagonal || player.isFlying;
+    const moveDirs: Direction[] = canMoveDiag
+      ? ['UP', 'UP_RIGHT', 'RIGHT', 'DOWN_RIGHT', 'DOWN', 'DOWN_LEFT', 'LEFT', 'UP_LEFT']
+      : ['UP', 'RIGHT', 'DOWN', 'LEFT'];
     const effectiveDef = Math.floor(player.experience * 1.0);
     const canBreak = MagicSystem.canCast(player, 'BREAK').allowed;
 
@@ -112,7 +115,7 @@ export class SituationalPerception {
       return !isLethalTrap;
     };
 
-    const isSealedAdjacent = cardDirs.every(d => {
+    const isSealedAdjacent = moveDirs.every(d => {
       const adjPos = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
       return !isAdjacentPassable(adjPos);
     });
@@ -133,7 +136,7 @@ export class SituationalPerception {
         const curr = queue.shift()!;
         reachableSafeTiles++;
 
-        for (const d of cardDirs) {
+        for (const d of moveDirs) {
           const nextPos = map.wrapPosition(MovementSystem.getNextPosition(curr, d));
           const key = `${nextPos.x},${nextPos.y}`;
           if (visited.has(key)) continue;
@@ -152,10 +155,10 @@ export class SituationalPerception {
       return { kind: 'NONE', reachableSafeTiles, escapeMeans: [], isStaticallySealed: false };
     }
 
-    // 静的地形（壁・墓・BREAK不可岩）のみで四方が塞がれているか（敵の一時的な包囲と区別）
+    // 静的地形（壁・墓・BREAK不可岩）のみで全移動方向が塞がれているか（敵の一時的な包囲と区別）
     const isStaticallySealed =
       kind === 'SEALED_ADJACENT' &&
-      cardDirs.every(d => {
+      moveDirs.every(d => {
         const adjPos = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
         const base = map.getBaseTile(adjPos);
         const obj = map.getObject(adjPos);
@@ -174,7 +177,7 @@ export class SituationalPerception {
       escapeMeans.push('JUMP');
     }
     if (canBreak) {
-      const hasAdjBlock = cardDirs.some(d => {
+      const hasAdjBlock = moveDirs.some(d => {
         const adjPos = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
         return map.getObject(adjPos) === 'BLOCK';
       });
@@ -183,7 +186,7 @@ export class SituationalPerception {
       }
     }
 
-    const hasAdjActiveEnemy = cardDirs.some(d => {
+    const hasAdjActiveEnemy = moveDirs.some(d => {
       const adjPos = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
       return enemies.some(
         e => e.isAlive && !e.isPermanentlyFrozen && (e.frozenTimer ?? 0) <= 0 && e.pos.x === adjPos.x && e.pos.y === adjPos.y
@@ -202,7 +205,7 @@ export class SituationalPerception {
     }
 
     // 強行突破（短手数で撃破可能な隣接敵）
-    for (const d of cardDirs) {
+    for (const d of moveDirs) {
       const adjPos = map.wrapPosition(MovementSystem.getNextPosition(curPos, d));
       const enemy = enemies.find(e => e.isAlive && e.pos.x === adjPos.x && e.pos.y === adjPos.y);
       if (!enemy) continue;

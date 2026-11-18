@@ -32,7 +32,11 @@ export interface CommanderOrders {
   tabooZones: readonly { zoneId: string; untilTurn: number }[];
   forcedMission: ForcedMissionOrder | null;
   waivers: ReadonlySet<PhaseWaiver>;
-  giveUp: { reason: string } | null;
+  giveUp: {
+    reason: string;
+    category: 'PHYSICAL_TRAP' | 'AI_STALL';
+    stallKind: StallKind | 'SWORD_TRAPPED';
+  } | null;
 }
 
 export interface CommanderVerdict {

@@ -13,6 +13,7 @@ import {
   MissionReport,
   PhaseWaiver,
   ProgressAudit,
+  StallKind,
 } from './CommanderTypes.js';
 import { ProgressAuditor } from './ProgressAuditor.js';
 
@@ -56,6 +57,9 @@ export class StrategicCommander {
   private tabooZones: { zoneId: string; untilTurn: number }[] = [];
   private waivers: Set<PhaseWaiver> = new Set();
   private currentForcedMission: ForcedMissionOrder | null = null;
+  private forcedMissionStarted: boolean = false;
+  private terminalCategory: 'PHYSICAL_TRAP' | 'AI_STALL' = 'AI_STALL';
+  private terminalStallKind: StallKind | 'SWORD_TRAPPED' = 'FRUITLESS';
 
   public review(
     snapshot: TacticalSnapshot,
@@ -98,10 +102,12 @@ export class StrategicCommander {
 
     if (isConfirmedConfined || isEarlySwordTrapped) {
       if (this.level !== 'TERMINAL') {
+        this.terminalCategory = 'PHYSICAL_TRAP';
+        this.terminalStallKind = isEarlySwordTrapped ? 'SWORD_TRAPPED' : 'CONFINED';
         const reason = isEarlySwordTrapped
           ? '💀 剣への到達経路が完全に遮断されているため続行不能'
           : `💀 四方閉塞・小閉域に拘束され脱出手段なし (safeTiles=${snapshot.confinement.reachableSafeTiles})`;
-        this.transitionTo('TERMINAL', turn, audit.stallKind ?? 'CONFINED', reason);
+        this.transitionTo('TERMINAL', turn, isEarlySwordTrapped ? 'CONFINED' : (audit.stallKind ?? 'CONFINED'), reason);
         return this.buildOrders(audit, snapshot, reason);
       }
       return this.buildOrders(audit, snapshot, '💀 物理的詰みにより終了判定');
@@ -123,6 +129,7 @@ export class StrategicCommander {
         this.graceMultiplier = 1;
         this.waivers.clear();
         this.currentForcedMission = null;
+        this.forcedMissionStarted = false;
         this.transitionTo(
           'NOMINAL',
           turn,
@@ -152,11 +159,17 @@ export class StrategicCommander {
 
     // 3. L1〜L6 滞在中: 観察期間満了による次段階へのエスカレーション
     if (this.level !== 'TERMINAL') {
-      const curIdx = ESCALATION_ORDER.indexOf(this.level);
-      const probation = config.probationTurns[this.level] ?? DEFAULT_COMMANDER_CONFIG.probationTurns[this.level];
-      const forcedDone = this.isForcedMissionNoLongerActive(report);
-      if (turn - this.levelEnteredTurn >= probation || forcedDone) {
-        this.escalateFromIndex(curIdx + 1, snapshot, report, audit, config, engine);
+      const isProtectedMission =
+        report.activeMissionId === 'EMERGENCY_EVACUATE' ||
+        report.activeMissionId === 'CROWN_ESCAPE';
+
+      if (!isProtectedMission) {
+        const curIdx = ESCALATION_ORDER.indexOf(this.level);
+        const probation = config.probationTurns[this.level] ?? DEFAULT_COMMANDER_CONFIG.probationTurns[this.level];
+        const forcedDone = this.evaluateForcedMissionStatus(report);
+        if (turn - this.levelEnteredTurn >= probation || forcedDone) {
+          this.escalateFromIndex(curIdx + 1, snapshot, report, audit, config, engine);
+        }
       }
     }
 
@@ -167,6 +180,7 @@ export class StrategicCommander {
       this.tabooZones = [];
       this.waivers.clear();
       this.currentForcedMission = null;
+      this.forcedMissionStarted = false;
       this.graceMultiplier = Math.min(4, this.graceMultiplier * 2);
       this.transitionTo('RETARGET', turn, audit.stallKind, 'enableGiveUp=false のため猶予を倍増して再挑戦');
       this.tryApplyLevel('RETARGET', snapshot, report, audit, config, engine);
@@ -175,12 +189,30 @@ export class StrategicCommander {
     return this.buildOrders(audit, snapshot);
   }
 
-  private isForcedMissionNoLongerActive(report: MissionReport): boolean {
+  private evaluateForcedMissionStatus(report: MissionReport): boolean {
     if (!this.currentForcedMission) return false;
-    if (this.currentForcedMission.kind === 'EXPLORE_FRONTIER') {
-      return report.activeMissionId !== 'EXPLORE_FRONTIER';
+    const expectedId =
+      this.currentForcedMission.kind === 'EXPLORE_FRONTIER' ? 'EXPLORE_FRONTIER' : 'STRATEGIC_BREAK';
+
+    if (report.activeMissionId === expectedId) {
+      this.forcedMissionStarted = true;
+      return false;
     }
-    return report.activeMissionId !== 'STRATEGIC_BREAK';
+
+    const lastForcedEntry = [...report.recentHistory]
+      .reverse()
+      .find(h => h.missionId === expectedId && h.endTurn >= this.levelEnteredTurn);
+
+    if (!this.forcedMissionStarted && !lastForcedEntry) {
+      return false;
+    }
+
+    // 強制ミッションが終了して通常ミッションへ戻った場合:
+    // ABORTED（実行不能）なら即座に次段階へエスカレーションし、
+    // COMPLETED（特に BREACH / RELOCATE の転移・破壊成功）なら残り probationTurns の観察を継続する。
+    this.currentForcedMission = null;
+    this.forcedMissionStarted = false;
+    return lastForcedEntry?.status === 'ABORTED';
   }
 
   private escalateFromIndex(
@@ -211,11 +243,17 @@ export class StrategicCommander {
           return;
         }
         this.currentForcedMission = null;
+        const resolvedStall: StallKind =
+          audit.stallKind ??
+          [...this.verdicts].reverse().find(v => v.stallKind !== null)?.stallKind ??
+          'FRUITLESS';
+        this.terminalCategory = resolvedStall === 'CONFINED' ? 'PHYSICAL_TRAP' : 'AI_STALL';
+        this.terminalStallKind = resolvedStall;
         this.transitionTo(
           'TERMINAL',
           snapshot.totalTurns,
-          audit.stallKind,
-          `全打開段階が奏功せず終端判定 (${audit.stallKind ?? 'STALL'})`
+          resolvedStall,
+          `全打開段階が奏功せず終端判定 (${resolvedStall})`
         );
         return;
       }
@@ -241,6 +279,7 @@ export class StrategicCommander {
   ): boolean {
     const turn = snapshot.totalTurns;
     this.currentForcedMission = null;
+    this.forcedMissionStarted = false;
 
     switch (candidate) {
       case 'RETARGET': {
@@ -386,6 +425,7 @@ export class StrategicCommander {
     if (from === to) return;
     this.level = to;
     this.levelEnteredTurn = turn;
+    this.forcedMissionStarted = false;
     this.verdicts.push({ turn, from, to, stallKind, reason });
     if (this.verdicts.length > 64) {
       this.verdicts.shift();
@@ -402,7 +442,9 @@ export class StrategicCommander {
         ? {
             reason:
               terminalReason ??
-              `💀 停滞打開不能 (${audit.stallKind ?? 'STALL'}): 無戦果 ${audit.turnsSinceSubstantiveGain}T`,
+              `💀 停滞打開不能 (${this.terminalStallKind}): 無戦果 ${audit.turnsSinceSubstantiveGain}T`,
+            category: this.terminalCategory,
+            stallKind: this.terminalStallKind,
           }
         : null;
 

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   UIコンポーネント固有スタイルモジュールのインポート
+   UI繧ｳ繝ｳ繝昴�繝阪Φ繝亥崋譛峨せ繧ｿ繧､繝ｫ繝｢繧ｸ繝･繝ｼ繝ｫ縺ｮ繧､繝ｳ繝昴�繝�
    ========================================================================== */
 @import './view/InspectorModal.css';
 @import './view/CustomStageModal.css';
@@ -37,7 +37,7 @@ body {
   width: 100%;
 }
 
-/* 画面最上段: ゲームタイトル＆アクションボタントップバー */
+/* 逕ｻ髱｢譛荳頑ｮｵ: 繧ｲ繝ｼ繝�繧ｿ繧､繝医Ν��い繧ｯ繧ｷ繝ｧ繝ｳ繝懊ち繝ｳ繝医ャ繝励ヰ繝ｼ */
 .game-top-bar {
   display: flex;
   flex-direction: row;
@@ -111,7 +111,7 @@ body {
   white-space: nowrap;
 }
 
-/* メインコンテンツ領域 (左: メインゲームカラム, 右: DOM UI層) */
+/* 繝｡繧､繝ｳ繧ｳ繝ｳ繝�Φ繝��伜沺 (蟾ｦ: 繝｡繧､繝ｳ繧ｲ繝ｼ繝�繧ｫ繝ｩ繝�, 蜿ｳ: DOM UI螻､) */
 #game-main-content {
   display: flex;
   flex-direction: row;
@@ -121,7 +121,7 @@ body {
   width: 100%;
 }
 
-/* 左側: メインゲームカラム */
+/* 蟾ｦ蛛ｴ: 繝｡繧､繝ｳ繧ｲ繝ｼ繝�繧ｫ繝ｩ繝� */
 #main-column {
   display: flex;
   flex-direction: column;
@@ -171,7 +171,7 @@ body {
   color: #00ffaa;
 }
 
-/* 右側: DOM UI層 */
+/* 蜿ｳ蛛ｴ: DOM UI螻､ */
 #dom-ui-layer {
   flex: 1;
   min-width: 380px;
@@ -184,7 +184,7 @@ body {
   gap: 12px;
 }
 
-/* 共通パネルカード */
+/* 蜈ｱ騾壹ヱ繝阪Ν繧ｫ繝ｼ繝� */
 .hud-panel {
   background: #0e121a;
   border: 1px solid #1c2538;
@@ -214,7 +214,7 @@ body {
   color: #60738a;
 }
 
-/* 1. ステータスグリッド */
+/* 1. 繧ｹ繝��繧ｿ繧ｹ繧ｰ繝ｪ繝�ラ */
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -277,7 +277,7 @@ body {
   text-shadow: 0 0 8px #ffdd00;
 }
 
-/* ステータスタグ */
+/* 繧ｹ繝��繧ｿ繧ｹ繧ｿ繧ｰ */
 .status-tags-row {
   display: flex;
   flex-wrap: wrap;
@@ -285,7 +285,7 @@ body {
   gap: 8px;
 }
 
-/* マップ画面下の装備・所持アイテム＆足元ガイドストリップ */
+/* 繝槭ャ繝礼判髱｢荳九�陬�ｙ繝ｻ謇謖√い繧､繝�Β��ｶｳ蜈�ぎ繧､繝峨せ繝医Μ繝�� */
 #hero-equipment-strip {
   width: 100%;
   max-width: 618px;
@@ -329,7 +329,7 @@ body {
 .item-type-ring { color: #ffdd44; border-color: #ffdd44; }
 .item-type-key { color: #00ffdd; border-color: #00ffdd; }
 
-/* 2. インジケーターパネル */
+/* 2. 繧､繝ｳ繧ｸ繧ｱ繝ｼ繧ｿ繝ｼ繝代ロ繝ｫ */
 .indicator-panel {
   padding: 8px 12px;
 }
@@ -366,7 +366,7 @@ body {
   background: linear-gradient(90deg, #ff8800, #ff2244);
 }
 
-/* 3. 魔法パネル */
+/* 3. 鬲疲ｳ輔ヱ繝阪Ν */
 .magic-restriction-banner {
   border-radius: 4px;
   padding: 8px 10px;
@@ -376,7 +376,7 @@ body {
   box-sizing: border-box;
 }
 
-/* 呪い (DEATH CURSE) */
+/* 蜻ｪ縺� (DEATH CURSE) */
 .magic-restriction-banner.banner-curse {
   background: linear-gradient(135deg, rgba(136, 17, 34, 0.85) 0%, rgba(68, 8, 17, 0.95) 100%);
   border: 1px solid #ff3355;
@@ -386,7 +386,7 @@ body {
 }
 .magic-restriction-banner.banner-curse strong { color: #ff5577; }
 
-/* 王冠所持 (CROWN) */
+/* 邇句�謇謖� (CROWN) */
 .magic-restriction-banner.banner-crown {
   background: linear-gradient(135deg, rgba(120, 90, 10, 0.85) 0%, rgba(60, 45, 5, 0.95) 100%);
   border: 1px solid #ffcc00;
@@ -396,7 +396,7 @@ body {
 }
 .magic-restriction-banner.banner-crown strong { color: #ffdd44; }
 
-/* 十字架所持 (CROSS) */
+/* 蜊∝ｭ玲楔謇謖� (CROSS) */
 .magic-restriction-banner.banner-cross {
   background: linear-gradient(135deg, rgba(20, 60, 100, 0.85) 0%, rgba(10, 30, 50, 0.95) 100%);
   border: 1px solid #00d4ff;
@@ -493,7 +493,7 @@ body {
   white-space: nowrap;
 }
 
-/* 選択中魔法の説明文ボックス */
+/* 驕ｸ謚樔ｸｭ鬲疲ｳ輔�隱ｬ譏取枚繝懊ャ繧ｯ繧ｹ */
 .selected-magic-desc-box {
   background: #101622;
   border: 1px solid #1f2d42;
@@ -546,7 +546,7 @@ body {
   color: #889;
 }
 
-/* 4. アクションログフィード */
+/* 4. 繧｢繧ｯ繧ｷ繝ｧ繝ｳ繝ｭ繧ｰ繝輔ぅ繝ｼ繝� */
 .log-entries-feed {
   height: 120px;
   overflow-y: auto;
@@ -589,7 +589,7 @@ body {
   to { background-color: rgba(255, 34, 68, 0.35); }
 }
 
-/* パレットテーマ同期 */
+/* 繝代Ξ繝�ヨ繝��繝槫酔譛� */
 body.theme-normal {
   background-color: #08090d;
 }
@@ -624,7 +624,7 @@ body.theme-dark .hud-panel {
   border-color: #1a233a;
 }
 
-/* サウンド切り替えボタン */
+/* 繧ｵ繧ｦ繝ｳ繝牙�繧頑崛縺医�繧ｿ繝ｳ */
 .sound-toggle-btn {
   background: #151d2a;
   border: 1px solid #28374d;
@@ -650,7 +650,7 @@ body.theme-dark .hud-panel {
   background: #1a0f0f;
 }
 
-/* 5. モーダルオーバーレイ共通 */
+/* 5. 繝｢繝ｼ繝繝ｫ繧ｪ繝ｼ繝舌�繝ｬ繧､蜈ｱ騾� */
 .game-modal-overlay {
   position: fixed;
   inset: 0;
@@ -707,7 +707,7 @@ body.theme-dark .hud-panel {
   box-shadow: 0 4px 20px rgba(255, 34, 68, 0.6);
 }
 
-/* タイトルモーダル */
+/* 繧ｿ繧､繝医Ν繝｢繝ｼ繝繝ｫ */
 .title-modal-box {
   border: 3px solid #00ffaa;
   box-shadow: 0 0 50px rgba(0, 255, 170, 0.3);
@@ -740,12 +740,14 @@ body.theme-dark .hud-panel {
   margin-bottom: 16px;
 }
 
-/* ゲームオーバーモーダル */
+/* 繧ｲ繝ｼ繝�繧ｪ繝ｼ繝舌�繝｢繝ｼ繝繝ｫ */
 .gameover-modal-box {
   border: 3px solid #ff2244;
   box-shadow: 0 0 50px rgba(255, 34, 68, 0.4);
-  max-width: 480px;
-  width: 90%;
+  max-width: 520px;
+  width: 92%;
+  max-height: 90vh;
+  overflow-y: auto;
 }
 
 .gameover-title {
@@ -756,7 +758,7 @@ body.theme-dark .hud-panel {
   margin-bottom: 14px;
 }
 
-/* 死因カード (CAUSE OF DEATH) */
+/* 豁ｻ蝗�繧ｫ繝ｼ繝� (CAUSE OF DEATH) */
 .gameover-cause-card {
   display: flex;
   align-items: center;
@@ -798,9 +800,20 @@ body.theme-dark .hud-panel {
   font-size: 11px;
   font-weight: bold;
   color: #ff5577;
-  letter-spacing: 1px;
+  letter-spacing: 0.8px;
   margin-bottom: 4px;
   text-transform: uppercase;
+  word-break: break-word;
+}
+
+.gameover-cause-label.cause-badge-trap {
+  color: #ffb74d;
+  text-shadow: 0 0 6px rgba(255, 183, 77, 0.45);
+}
+
+.gameover-cause-label.cause-badge-stall {
+  color: #80deea;
+  text-shadow: 0 0 6px rgba(128, 222, 234, 0.45);
 }
 
 .gameover-cause-message {
@@ -811,7 +824,7 @@ body.theme-dark .hud-panel {
   text-shadow: 0 0 6px rgba(255, 100, 120, 0.5);
 }
 
-/* 探索スタッツグリッド */
+/* 謗｢邏｢繧ｹ繧ｿ繝�ヤ繧ｰ繝ｪ繝�ラ */
 .gameover-stats {
   font-size: 12px;
   color: #ffffff;
@@ -860,7 +873,7 @@ body.theme-dark .hud-panel {
   text-shadow: 0 0 6px rgba(255, 221, 68, 0.5);
 }
 
-/* 5. クリアモーダル */
+/* 5. 繧ｯ繝ｪ繧｢繝｢繝ｼ繝繝ｫ */
 .clear-modal-overlay {
   position: fixed;
   inset: 0;
@@ -880,10 +893,103 @@ body.theme-dark .hud-panel {
   background: #0f1624;
   border: 2px solid #ffcc00;
   border-radius: 10px;
-  padding: 32px 48px;
+  padding: 24px 32px;
+  max-width: 520px;
+  width: 92%;
+  max-height: 90vh;
+  overflow-y: auto;
   text-align: center;
   box-shadow: 0 0 40px rgba(255, 204, 0, 0.4);
   animation: zoom-in 0.4s ease-out;
+}
+
+/* リザルト画面共通：マイルストーン・シード・Bot診断情報 */
+.result-milestones-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.result-milestone-chip {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #90a4ae;
+}
+
+.result-milestone-chip.achieved {
+  background: rgba(102, 187, 106, 0.18);
+  border-color: rgba(129, 199, 132, 0.55);
+  color: #c8e6c9;
+  font-weight: bold;
+}
+
+.result-seed-bar {
+  margin-top: 8px;
+  padding: 5px 8px;
+  font-size: 11px;
+  color: #b0bec5;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  text-align: center;
+  word-break: break-word;
+}
+
+.result-diag-box {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: rgba(18, 28, 44, 0.8);
+  border: 1px solid rgba(128, 222, 234, 0.3);
+  border-radius: 5px;
+  text-align: left;
+  font-size: 11px;
+  color: #cfd8dc;
+}
+
+.result-diag-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 4px;
+  color: #80deea;
+}
+
+.result-diag-transitions {
+  border-top: 1px dashed rgba(255, 255, 255, 0.12);
+  padding-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.result-diag-tx {
+  font-family: monospace;
+  font-size: 10px;
+  color: #b0bec5;
+  word-break: break-all;
+}
+
+@media (max-width: 600px) {
+  .gameover-stats-grid {
+    grid-template-columns: 1fr;
+  }
+  .stat-cell.span-2 {
+    grid-column: span 1;
+  }
+  .gameover-cause-card {
+    flex-direction: column;
+    text-align: center;
+    gap: 10px;
+  }
+  .clear-modal-content {
+    padding: 18px 16px;
+  }
 }
 
 @keyframes zoom-in {
@@ -917,7 +1023,7 @@ body.theme-dark .hud-panel {
 }
 
 /* ========================================================
-   対峙モンスター (TARGET ENEMY) パネル
+   蟇ｾ蟲吶Δ繝ｳ繧ｹ繧ｿ繝ｼ (TARGET ENEMY) 繝代ロ繝ｫ
    ======================================================== */
 .target-enemy-panel {
   border-color: #2b3952;
@@ -1071,7 +1177,7 @@ body.theme-dark .hud-panel {
   letter-spacing: 0.5px;
 }
 
-/* 相対5段階脅威度バッジ (Tactical Threat Badges) */
+/* 逶ｸ蟇ｾ5谿ｵ髫手у螽∝ｺｦ繝舌ャ繧ｸ (Tactical Threat Badges) */
 .badge-threat {
   letter-spacing: 0.5px;
   text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
@@ -1154,7 +1260,7 @@ body.theme-dark .hud-panel {
   border: 1px solid #00ffff;
 }
 
-/* HP バー */
+/* HP 繝舌� */
 .target-hp-row {
   display: flex;
   flex-direction: column;
@@ -1237,7 +1343,7 @@ body.theme-dark .hud-panel {
 }
 
 /* ========================================================
-   Phase 5.5: QoL・途中中断セーブ＆ギブアップ UI スタイル
+   Phase 5.5: QoL繝ｻ騾比ｸｭ荳ｭ譁ｭ繧ｻ繝ｼ繝厄ｼ�ぐ繝悶い繝�� UI 繧ｹ繧ｿ繧､繝ｫ
    ======================================================== */
 
 .hud-action-btn {
@@ -1331,7 +1437,7 @@ body.theme-dark .hud-panel {
   font-weight: normal;
 }
 
-/* ギブアップ確認ダイアログ */
+/* 繧ｮ繝悶い繝��遒ｺ隱阪ム繧､繧｢繝ｭ繧ｰ */
 .giveup-modal-box {
   border-color: #ff3344 !important;
   box-shadow: 0 0 30px rgba(255, 51, 68, 0.3), inset 0 0 15px rgba(255, 0, 0, 0.15);
@@ -1433,7 +1539,7 @@ body.theme-dark .hud-panel {
   }
 }
 
-/* �^�C�g�����: ���E2�J���� */
+/* タイトル画面: 左右2カラム */
 .title-modal-box {
   max-width: 1000px;
   width: 94%;

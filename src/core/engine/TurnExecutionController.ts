@@ -1,4 +1,4 @@
-import { DeathInfo, Direction, TileType } from '../../models/Types.js';
+import { DeathInfo, Direction, GameResultContext, TileType } from '../../models/Types.js';
 import { MovementSystem } from '../../systems/MovementSystem.js';
 import { MagicSystem } from '../../systems/MagicSystem.js';
 import { CombatSystem } from '../../systems/CombatSystem.js';
@@ -567,15 +567,25 @@ export class TurnExecutionController {
       player.deathInfo.turn = totalTurns;
     }
 
+    const demoBot = this.engine.demoBot;
+    if (demoBot && player.deathInfo && !player.deathInfo.finalMissionId) {
+      const diag = demoBot.getDiagnosticSnapshot();
+      player.deathInfo.finalMissionId = diag.finalMissionId;
+      player.deathInfo.finalMissionName = diag.finalMissionName;
+      player.deathInfo.commanderLevel = diag.commanderLevel;
+      player.deathInfo.commanderTransitions = diag.commanderTransitions;
+    }
+
     const deathInfo = player.deathInfo;
     const domUI = this.engine.getDomUI();
+    const resultContext = this.buildResultContext();
 
     // 致命傷ログの強調表示
     if (deathInfo) {
       domUI?.addLog(`☠ 【致命傷】${deathInfo.message}`, 'fatal');
     }
     domUI?.addLog('☠ 勇者は力尽きた… GAME OVER', 'warn');
-    domUI?.setGameState('GAMEOVER', player, player.totalKills, totalTurns);
+    domUI?.setGameState('GAMEOVER', player, player.totalKills, totalTurns, resultContext);
   }
 
   public handleStageClear(): void {
@@ -603,7 +613,29 @@ export class TurnExecutionController {
       }
     }
 
-    domUI?.setGameState('STAGECLEAR', player, player.totalKills, totalTurns);
+    const resultContext = this.buildResultContext();
+    domUI?.setGameState('STAGECLEAR', player, player.totalKills, totalTurns, resultContext);
     domUI?.addLog(`★ STAGE CLEAR! 4つの王冠をすべて家に持ち帰った！（所要ターン: ${totalTurns}T） ★`, 'success');
+  }
+
+  private buildResultContext(): GameResultContext {
+    const proceduralOptions = this.engine.getProceduralOptions?.();
+    const dragon = this.engine.getDragon?.();
+    const demoBot = this.engine.demoBot;
+    const diag = demoBot ? demoBot.getDiagnosticSnapshot() : undefined;
+
+    return {
+      seed: proceduralOptions?.seed,
+      topology: proceduralOptions?.topology,
+      difficulty: proceduralOptions?.difficulty,
+      ruleMode: proceduralOptions?.ruleMode,
+      isAutoPlay: Boolean(demoBot),
+      defeatedHeads: dragon ? dragon.defeatedHeadsCount : undefined,
+      totalHeads: dragon ? dragon.heads.length : undefined,
+      finalMissionId: diag?.finalMissionId,
+      finalMissionName: diag?.finalMissionName,
+      commanderLevel: diag?.commanderLevel,
+      commanderTransitions: diag?.commanderTransitions,
+    };
   }
 }

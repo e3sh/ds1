@@ -30,8 +30,11 @@ export class CrownEscapeMission extends BaseStrategicMission {
   };
 
   private initialCrownsDelivered: number | null = null;
-  private lastFlashPos: Position | null = null;
   private lastFlashTurn: number = -999;
+  private pendingReturnHeal: boolean = false;
+  private lastReturnHealTurn: number = -999;
+  private lastDrop1CPos: Position | null = null;
+  private lastDrop1CTurn: number = -999;
 
   private ensureInitialized(engine: GameEngine): void {
     if (this.initialCrownsDelivered === null) {
@@ -39,20 +42,18 @@ export class CrownEscapeMission extends BaseStrategicMission {
     }
   }
 
-  private recordFlash(pos: Position, turn: number): void {
-    this.lastFlashPos = { ...pos };
+  private recordFlash(_pos: Position, turn: number): void {
     this.lastFlashTurn = turn;
   }
 
   /**
-   * 同一座標での連打抑制＆BREAK用MP=1リザーブを保護した FLASH 詠唱可否判定
-   * （BFSを追加発火させないため、静的開通フラグ canReachStaticallyWithCrown のみで軽量判定）
+   * グローバル8Tクールダウン＆RETURN/BREAK用MP=1リザーブを保護した FLASH 詠唱可否判定
    */
   private canCastFlashSafely(
     snapshot: TacticalSnapshot,
     player: Player,
-    curPos: Position,
-    homeReachability: HomeReachabilitySummary,
+    _curPos: Position,
+    _homeReachability: HomeReachabilitySummary,
     hasAdjacentLethal: boolean,
     hasEvadeRoute: boolean
   ): boolean {
@@ -60,25 +61,16 @@ export class CrownEscapeMission extends BaseStrategicMission {
       return false;
     }
 
-    // 同一座標で直近8ターン以内に既に FLASH を撃っていれば無駄打ち禁止
-    if (
-      this.lastFlashPos &&
-      this.lastFlashPos.x === curPos.x &&
-      this.lastFlashPos.y === curPos.y &&
-      snapshot.totalTurns - this.lastFlashTurn < 8
-    ) {
+    const isDesperate = hasAdjacentLethal && !hasEvadeRoute;
+
+    // 座標を問わず直近8ターン以内に既に FLASH を撃っていれば重ね掛け禁止（退避不能な隣接即死時を除く）
+    if (!isDesperate && snapshot.totalTurns - this.lastFlashTurn < 8) {
       return false;
     }
 
-    // 帰還路が岩等で静的閉塞している場合は BREAK 用の MP=1 リザーブを死守
-    // （ただし隣接即死敵から退避マスがない緊急事態のみ例外）
-    const needsBreakToReturn =
-      (this.subMode === 'CLEARING_RETURN_BLOCK' && this.lockedTarget?.kind === 'BLOCK') ||
-      !homeReachability.canReachStaticallyWithCrown;
-    if (needsBreakToReturn && snapshot.milestones.canBreak && player.magic <= 1) {
-      if (!(hasAdjacentLethal && !hasEvadeRoute)) {
-        return false;
-      }
+    // RETURN / BREAK 用の MP=1 リザーブを死守（退避不能な隣接即死時のみ MP=1 を許可）
+    if (player.magic <= 1 && !isDesperate) {
+      return false;
     }
 
     return true;
@@ -229,6 +221,10 @@ export class CrownEscapeMission extends BaseStrategicMission {
     // Step 1: 状態確認・ロック有効性検査・遷移
     this.verifyAndTransitionState(snapshot, player, homePos, canCastBreak, surroundings);
 
+    if (homeReachability.isAtHome || player.hp >= player.maxHp) {
+      this.pendingReturnHeal = false;
+    }
+
     // 0. 不要な手持ち品（KEY, RING, CROSS等）の手放し
     if (player.holdItem !== 'NONE' && player.holdItem !== 'CROWN') {
       this.clearTargetLock();
@@ -280,6 +276,27 @@ export class CrownEscapeMission extends BaseStrategicMission {
       };
     }
 
+    // 0-D. 王冠ドロップ後のRETURN緊急帰還回復（pendingReturnHeal時のみ発動し、王冠未取得時の不要な帰還を防止）
+    const hasCardLethalAdjacent = surroundings.adjacentActiveEnemies.some(info => info.defenseThreat === 'LETHAL');
+    if (
+      this.pendingReturnHeal &&
+      player.holdItem === 'NONE' &&
+      !homeReachability.isAtHome &&
+      !hasCardLethalAdjacent &&
+      MagicSystem.canCast(player, 'RETURN').allowed
+    ) {
+      this.pendingReturnHeal = false;
+      this.lastReturnHealTurn = snapshot.totalTurns;
+      this.clearTargetLock();
+      this.subMode = 'ACQUIRING_CROWN';
+      return {
+        type: 'CAST_MAGIC',
+        magicToCast: 'RETURN',
+        priority: 101,
+        reason: `🏠 HP低下 (${player.hp}/${player.maxHp}) のためRETURNで我が家へ緊急帰還回復`,
+      };
+    }
+
     // -------------------------------------------------------------
     // 1. CARRYING_TO_HOME (holdItem === 'CROWN') の自衛＆我が家帰還
     // -------------------------------------------------------------
@@ -316,13 +333,31 @@ export class CrownEscapeMission extends BaseStrategicMission {
         };
       }
 
+      // 1-B2. HP低下時の安全一時ドロップ → RETURN帰還回復（RETURN + 帰還後家周辺FREEZE用に MP >= 2 を要求）
+      if (
+        !homeReachability.isAtHome &&
+        surroundings.floorItem === 'NONE' &&
+        player.hp < player.maxHp * 0.35 &&
+        player.magic >= 2 &&
+        !player.hasDeath &&
+        player.experience >= 6000 &&
+        map.getTorusDistance(curPos, homePos).manhattan > 8 &&
+        snapshot.totalTurns - this.lastReturnHealTurn >= 20
+      ) {
+        this.pendingReturnHeal = true;
+        this.lastReturnHealTurn = snapshot.totalTurns;
+        this.clearTargetLock();
+        this.subMode = 'ACQUIRING_CROWN';
+        return {
+          type: 'DROP_HOLD_ITEM',
+          priority: 99,
+          reason: `👑 HP低下 (${player.hp}/${player.maxHp}) のため王冠を一時手放してRETURN回復準備`,
+        };
+      }
+
       // 1-C. 8方向隣接の危険敵に対する一時ドロップ＆FREEZE永久凍結準備
       const canCastWhenEmpty = player.magic > 0 && !player.hasDeath;
-      const flashBlockedHere =
-        this.lastFlashPos !== null &&
-        this.lastFlashPos.x === curPos.x &&
-        this.lastFlashPos.y === curPos.y &&
-        snapshot.totalTurns - this.lastFlashTurn < 8;
+      const flashOnCooldown1C = snapshot.totalTurns - this.lastFlashTurn < 8;
       const needsBreakReserve1C = !homeReachability.canReachStaticallyWithCrown;
       const canFreezeWhenEmpty1C =
         canCastWhenEmpty &&
@@ -330,10 +365,17 @@ export class CrownEscapeMission extends BaseStrategicMission {
         (!needsBreakReserve1C || player.magic >= 2);
       const canFlashWhenEmpty1C =
         canCastWhenEmpty &&
-        !flashBlockedHere &&
-        (!needsBreakReserve1C || player.magic >= 2);
+        player.magic >= 2 &&
+        !flashOnCooldown1C;
+      const drop1COnCooldown =
+        this.lastDrop1CPos !== null &&
+        this.lastDrop1CPos.x === curPos.x &&
+        this.lastDrop1CPos.y === curPos.y &&
+        snapshot.totalTurns - this.lastDrop1CTurn < 6;
 
       if (
+        !player.isFlying &&
+        !drop1COnCooldown &&
         (canFreezeWhenEmpty1C || canFlashWhenEmpty1C) &&
         (surroundings.chebyshev1ActiveDangerousEnemies.length > 0 ||
           surroundings.approachingLethalEnemies.length > 0)
@@ -359,6 +401,8 @@ export class CrownEscapeMission extends BaseStrategicMission {
             surroundings.approachingLethalEnemies.length > 0 ||
             totalDangerCount1C >= 2);
 
+        this.lastDrop1CPos = { ...curPos };
+        this.lastDrop1CTurn = snapshot.totalTurns;
         this.clearTargetLock();
         this.subMode = 'CLEARING_RETURN_ENEMY';
         return {
@@ -734,18 +778,13 @@ export class CrownEscapeMission extends BaseStrategicMission {
       };
     }
 
-    // 2-B. 手ぶら移動中の危険敵接近処理（パッシブ情報とロック遮断回数のみで軽量判定）
+    // 2-B. 手ぶら移動中の危険敵接近処理（FREEZE永久凍結を最優先、FLASHは退避不能または経路閉塞時のみ）
     const isCrownPathBlocked =
       (this.lockedTarget?.kind === 'CROWN' && this.lockedTarget.blockedCount > 0) ||
       (items.crowns.nearestCrown !== null && !items.crowns.nearestCrown.isStaticallyReachable);
     const hasCardAdjacentDanger = surroundings.adjacentActiveEnemies.some(
       e => e.defenseThreat === 'LETHAL' || e.damageToPlayer >= player.hp * 0.35
     );
-    const totalDangerousCount2B =
-      surroundings.chebyshev1ActiveDangerousEnemies.length +
-      surroundings.approachingLethalEnemies.length;
-    const preferFlashOverFreeze =
-      surroundings.approachingLethalEnemies.length > 0 || totalDangerousCount2B >= 2;
 
     const tryCastFreeze2B = (): StrategicDirective | null => {
       if (
@@ -778,10 +817,21 @@ export class CrownEscapeMission extends BaseStrategicMission {
         surroundings.approachingLethalEnemies.length > 0 ||
         surroundings.chebyshev1ActiveDangerousEnemies.length >= 2;
 
+      const needsFlashToEscapeOrUnblock =
+        surroundings.safeEvadeDir === null ||
+        (isCrownPathBlocked && hasCloseLethalChebyshev2);
+
       if (
         hasFlashTarget &&
-        (hasCloseLethalChebyshev2 || surroundings.safeEvadeDir === null || isCrownPathBlocked) &&
-        this.canCastFlashSafely(snapshot, player, curPos, homeReachability, false, surroundings.safeEvadeDir !== null)
+        needsFlashToEscapeOrUnblock &&
+        this.canCastFlashSafely(
+          snapshot,
+          player,
+          curPos,
+          homeReachability,
+          hasCardAdjacentDanger,
+          surroundings.safeEvadeDir !== null
+        )
       ) {
         const flashTargetName =
           surroundings.approachingLethalChebyshev3[0]?.name ??
@@ -800,9 +850,7 @@ export class CrownEscapeMission extends BaseStrategicMission {
       return null;
     };
 
-    const magicDirective2B = preferFlashOverFreeze
-      ? (tryCastFlash2B() ?? tryCastFreeze2B())
-      : (tryCastFreeze2B() ?? tryCastFlash2B());
+    const magicDirective2B = tryCastFreeze2B() ?? tryCastFlash2B();
     if (magicDirective2B) {
       return magicDirective2B;
     }

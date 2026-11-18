@@ -225,7 +225,10 @@ function evaluateCandidate(
       const medianClearTurns = report.overall.medianClearTurns ?? 0;
       const avgMaxNoGain = report.pstMetrics?.avgMaxTurnsWithoutSubstantiveGain ?? 0;
       const deathCauses = report.overall.deathCauses ?? {};
-      const giveUpCount = (deathCauses['GIVE_UP_UNSOLVABLE'] ?? 0) + (deathCauses['GIVE_UP'] ?? 0);
+      const giveUpCount = Object.entries(deathCauses).reduce(
+        (sum, [cause, count]) => sum + (cause.startsWith('GIVE_UP') ? count : 0),
+        0
+      );
       const giveUpRate = opts.runs > 0 ? giveUpCount / opts.runs : 0;
       const m = report.overall.milestoneReachRates;
       const milestoneProgress = (m.killedHead1 + m.killedAllHeads + m.deliveredAtLeastOneCrown) / 3;

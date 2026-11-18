@@ -201,6 +201,10 @@ export class StrategicPlanner {
         type: 'GIVE_UP',
         priority: 100,
         reason: orders.giveUp.reason,
+        giveUpMeta: {
+          category: orders.giveUp.category,
+          stallKind: orders.giveUp.stallKind,
+        },
       };
     }
     if (orders) {

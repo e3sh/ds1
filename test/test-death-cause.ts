@@ -205,4 +205,60 @@ function createMockCanvas(): HTMLCanvasElement {
   console.log('✓ 7. DOMUIManager fatal log & gameover rendering passed.');
 }
 
+// Test 8: 細分化されたギブアップ要因と構造化メタデータの記録
+{
+  console.log('Testing 8: Subdivided GIVE_UP causes & diagnostic metadata...');
+  const p = new Player({ hp: 100 });
+  p.recordDeath(
+    0,
+    {
+      cause: 'GIVE_UP_STALL_CHURN',
+      giveUpCategory: 'AI_STALL',
+      stallKind: 'CHURN',
+      finalMissionId: 'RESOURCE_FARM',
+      finalMissionName: '💎 パワーストーン回収＆奉納',
+      commanderLevel: 'TERMINAL',
+      commanderTransitions: [
+        { turn: 120, from: 'NOMINAL', to: 'RETARGET', stallKind: 'CHURN' },
+        { turn: 240, from: 'PHASE_WAIVER', to: 'TERMINAL', stallKind: 'CHURN' },
+      ],
+    },
+    240
+  );
+  assert.strictEqual(p.deathInfo?.cause, 'GIVE_UP_STALL_CHURN');
+  assert.strictEqual(p.deathInfo?.giveUpCategory, 'AI_STALL');
+  assert.strictEqual(p.deathInfo?.stallKind, 'CHURN');
+  assert.strictEqual(p.deathInfo?.finalMissionId, 'RESOURCE_FARM');
+  assert.strictEqual(p.deathInfo?.commanderLevel, 'TERMINAL');
+  assert.strictEqual(p.deathInfo?.commanderTransitions?.length, 2);
+
+  const pTrap = new Player({ hp: 100 });
+  pTrap.recordDeath(0, { cause: 'GIVE_UP_SWORD_TRAPPED', giveUpCategory: 'PHYSICAL_TRAP', stallKind: 'SWORD_TRAPPED' }, 1);
+  assert.strictEqual(pTrap.deathInfo?.cause, 'GIVE_UP_SWORD_TRAPPED');
+  assert.ok(pTrap.deathInfo?.message.includes('物理的詰み'));
+
+  const domUI = new DOMUIManager('test-container');
+  domUI.setGameState('GAMEOVER', p, 5, 240, {
+    seed: 1000,
+    topology: 'STANDARD_ROOMS',
+    difficulty: 'NORMAL',
+    ruleMode: 'CLASSIC',
+    isAutoPlay: true,
+    defeatedHeads: 1,
+    totalHeads: 3,
+  });
+  domUI.setGameState('STAGECLEAR', p, 20, 950, {
+    seed: 1000,
+    topology: 'STANDARD_ROOMS',
+    difficulty: 'NORMAL',
+    ruleMode: 'CLASSIC',
+    isAutoPlay: true,
+    defeatedHeads: 3,
+    totalHeads: 3,
+    finalMissionId: 'CROWN_ESCAPE',
+    commanderLevel: 'NOMINAL',
+  });
+  console.log('✓ 8. Subdivided GIVE_UP causes & DOMUIManager GameResultContext verified.');
+}
+
 console.log('--- ✓ All Phase 7 Cause of Death Tests Passed Successfully! ---');

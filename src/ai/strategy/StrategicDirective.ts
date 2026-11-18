@@ -1,4 +1,4 @@
-import { Position, MagicType } from '../../models/Types.js';
+import { Position, MagicType, DeathStallKind } from '../../models/Types.js';
 
 export type DirectiveType =
   | 'NAVIGATE_TO_POSITION'   // 指定座標へ移動 (最短経路 + 必要時BREAK開削)
@@ -39,4 +39,9 @@ export interface StrategicDirective {
   priority: number;
   /** デバッグ・テレメトリ用説明 */
   reason: string;
+  /** ギブアップ診断メタデータ (type === 'GIVE_UP' 時) */
+  giveUpMeta?: {
+    category: 'PHYSICAL_TRAP' | 'AI_STALL';
+    stallKind: DeathStallKind;
+  };
 }

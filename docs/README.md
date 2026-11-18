@@ -9,6 +9,7 @@
 ```text
 docs/
 ├── README.md                         # 本書（ドキュメント全体ガイド・目次・運用ルール）
+├── clear_strategy_guide.md           # 【クリア攻略ガイド・実践戦術まとめ】(デュアルホーム移転・MP温存・王冠脱出セオリー)
 ├── procedural_generation_spec.md     # 【プロシージャル生成＆攻略バランス仕様書】(全域9セクター動的配置・プレハブ・プリセット共有まで網羅した決定版仕様書)
 ├── autoplay_and_simulation_spec.md   # 【自律攻略ボット＆ヘッドレスシミュレーション仕様書】(AutoPlayBot・拠点引越し戦術・バッチ検証・インゲーム自走の決定版仕様書)
 │
@@ -43,6 +44,8 @@ docs/
   - ターン調停、ダメージ計算式、モンスター行動パラメータ、各アイテム仕様。
 
 ### 2.2 仕様・設計 (Specs & Architecture)
+- [クリア攻略ガイド・実践戦術まとめ (`clear_strategy_guide.md`)](./clear_strategy_guide.md)
+  - デュアルホーム（前線基地移転）のアンカー選定・迂回開拓セオリー、王冠脱出フェーズのMP温存・魔法優先順位など、クリア率を高めるための実践的攻略ノウハウ集。
 - [プロシージャルダンジョン生成・攻略バランス設計仕様書 (`procedural_generation_spec.md`)](./procedural_generation_spec.md)
   - 全域9セクター動的分割、我が家＆ドラゴン要塞の動的アンカー配置・コンパクトプレハブ（`COMPACT_5x5` / `COMPACT_3x3`）、アンチ・ブロック押し込みバリア、4大アーキタイプ、54通りチューニングプリセット、ソルバビリティ検証ロジック、おすすめプリセット＆1行共有コード（`DS1MAP:`）仕様を網羅。
 - [自律攻略ボット ＆ ヘッドレスシミュレーション仕様書 (`autoplay_and_simulation_spec.md`)](./autoplay_and_simulation_spec.md)

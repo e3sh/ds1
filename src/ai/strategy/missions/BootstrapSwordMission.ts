@@ -41,6 +41,10 @@ export class BootstrapSwordMission extends BaseStrategicMission {
         type: 'GIVE_UP',
         priority: 100,
         reason: '💀 詰み検知: 剣への到達経路が存在しないためギブアップ',
+        giveUpMeta: {
+          category: 'PHYSICAL_TRAP',
+          stallKind: 'SWORD_TRAPPED',
+        },
       };
     }
 

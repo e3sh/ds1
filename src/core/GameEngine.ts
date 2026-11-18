@@ -213,8 +213,8 @@ export class GameEngine {
     this.domUI?.updateRendererMode(mode);
     this.domUI?.addLog(
       mode === 'smooth'
-        ? '✨ レンダラーを SMOOTH（スムーズスクロール＆ズーム俯瞰）に切り替えました。'
-        : '🎨 レンダラーを CLASSIC（従来ドット固定描画）に切り替えました。',
+        ? '✨ 描画モードを SMOOTH（スムーズ補間＆ズーム俯瞰）に切り替えました。'
+        : '🎨 描画モードを PIXEL（ドット固定スナップ描画）に切り替えました。',
       'info'
     );
 

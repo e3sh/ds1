@@ -16,6 +16,7 @@ import { HarvestPowerStoneMission } from '../src/ai/strategy/missions/HarvestPow
 import { CrownEscapeMission } from '../src/ai/strategy/missions/CrownEscapeMission.js';
 import { CashInGoldMission } from '../src/ai/strategy/missions/CashInGoldMission.js';
 import { PrepareDragonAssaultMission } from '../src/ai/strategy/missions/PrepareDragonAssaultMission.js';
+import { RelocateHomeMission } from '../src/ai/strategy/missions/RelocateHomeMission.js';
 import { TacticalExecutor } from '../src/ai/tactics/TacticalExecutor.js';
 import { TacticalCombat } from '../src/ai/tactics/TacticalCombat.js';
 import { EightStepController } from '../src/ai/EightStepController.js';
@@ -2073,6 +2074,149 @@ console.log('Testing 14: Preventing long-range FREEZE whiffs and wasteful FLASH 
   }
 
   console.log('✓ 15. Passive scan 0-BFS, Crown target lock BFS suppression, and local enemyZocRadius verified.');
+}
+
+// -------------------------------------------------------------
+// Test 16: RelocateHomeMission 押出BFS・ルート開拓・進捗ベース中断・アンカー選定
+// -------------------------------------------------------------
+console.log('Testing 16: RelocateHomeMission detour BFS, path clearing, progress-based abort & anchor selection...');
+{
+  // 16-1. 押出BFSの迂回検証 (WALL_STATIC, GRAVE, WARP, CHEST 回避)
+  const m16 = createEmptyMap(20, 20);
+  m16.setBaseTile({ x: 5, y: 5 }, 'HOME');
+  m16.setRealHomePos({ x: 5, y: 5 });
+  m16.initialHomePos = { x: 5, y: 5 };
+  m16.setBaseTile({ x: 6, y: 5 }, 'WALL_STATIC');
+  m16.setBaseTile({ x: 7, y: 5 }, 'GRAVE');
+  m16.setBaseTile({ x: 8, y: 5 }, 'WARP');
+  m16.setObject({ x: 7, y: 6 }, 'CHEST');
+
+  const p16 = new Player({ x: 4, y: 5, hp: 5000, experience: 15000, strength: 2000, magic: 5 });
+  p16.holdItem = 'RING';
+
+  const detourPath = RelocateHomeMission.findHomePushPath(
+    { x: 5, y: 5 },
+    { x: 10, y: 5 },
+    m16,
+    p16,
+    undefined,
+    true
+  );
+  assert.ok(detourPath !== null && detourPath.length > 0, 'WALL/GRAVE/WARP/CHEST を迂回する押出経路が見つかること');
+  for (const step of detourPath!) {
+    const b = m16.getBaseTile(step.homeTo);
+    const o = m16.getObject(step.homeTo);
+    assert.ok(b !== 'WALL_STATIC' && b !== 'GRAVE' && b !== 'WARP', '迂回経路が禁止タイルを通らないこと');
+    assert.notStrictEqual(o, 'CHEST', '迂回経路が宝箱を通らないこと');
+  }
+
+  // 16-2. ルート開拓: BLOCK (BREAK) と 床アイテム (DROP -> PICKUP)
+  const engine16 = new GameEngine();
+  engine16.startGame();
+  const emap = engine16.getMap();
+  emap.clearWarpPairs();
+  for (let y = 0; y < emap.height; y++) {
+    for (let x = 0; x < emap.width; x++) {
+      emap.setBaseTile({ x, y }, 'EMPTY');
+      emap.setObject({ x, y }, 'NONE');
+      emap.setItem({ x, y }, 'NONE');
+    }
+  }
+  emap.setBaseTile({ x: 10, y: 10 }, 'HOME');
+  emap.setRealHomePos({ x: 10, y: 10 });
+  emap.initialHomePos = { x: 10, y: 10 };
+  // 上下と左奥を壁で挟み、右方向 (11, 10) -> (12, 10) の開拓が必須な通路を作る
+  emap.setBaseTile({ x: 8, y: 10 }, 'WALL_STATIC');
+  emap.setBaseTile({ x: 9, y: 9 }, 'WALL_STATIC');
+  emap.setBaseTile({ x: 9, y: 11 }, 'WALL_STATIC');
+  emap.setBaseTile({ x: 10, y: 9 }, 'WALL_STATIC');
+  emap.setBaseTile({ x: 10, y: 11 }, 'WALL_STATIC');
+  emap.setBaseTile({ x: 11, y: 9 }, 'WALL_STATIC');
+  emap.setBaseTile({ x: 11, y: 11 }, 'WALL_STATIC');
+  emap.setBaseTile({ x: 12, y: 9 }, 'WALL_STATIC');
+  emap.setBaseTile({ x: 12, y: 11 }, 'WALL_STATIC');
+  emap.setObject({ x: 11, y: 10 }, 'BLOCK');
+  emap.setItem({ x: 12, y: 10 }, 'COIN');
+  const ep = engine16.getPlayer();
+  ep.pos = { x: 9, y: 10 };
+  ep.experience = 15000;
+  ep.magic = 5;
+  ep.holdItem = 'RING';
+
+  const spatial16 = new SpatialKnowledge(emap);
+  const memory16 = new EpisodicMemory();
+  const makeSnap16 = (turn: number): TacticalSnapshot => ({
+    spatial: spatial16,
+    milestones: SituationalPerception.evaluateMilestones(ep, mockParams),
+    threats: SituationalPerception.evaluateThreats(ep, emap, [], undefined, mockParams),
+    confinement: { kind: 'NONE', reachableSafeTiles: 100, escapeMeans: [], isStaticallySealed: false },
+    progress: {
+      windowSize: 10,
+      uniqueTilesInWindow: 5,
+      turnsSinceNewTile: 0,
+      turnsSinceSubstantiveGain: 0,
+      cycle: null,
+    },
+    player: {
+      pos: { ...ep.pos },
+      hp: ep.hp,
+      maxHp: ep.maxHp,
+      strength: ep.strength,
+      experience: ep.experience,
+      magic: ep.magic,
+      gold: ep.gold,
+      holdItem: ep.holdItem,
+      hasSword: ep.hasSword,
+      isFlying: ep.isFlying,
+      canDiagonal: true,
+      hasDeath: false,
+      stepCountSinceStone: ep.stepCountSinceStone,
+    },
+    livingEnemies: [],
+    memory: memory16,
+    params: mockParams,
+    map: emap,
+    totalTurns: turn,
+  });
+
+  const snap16 = makeSnap16(10);
+
+  // 16-2a. BLOCK がある場合 CLEARING_PATH -> BREACH_SHORTCUT
+  const missionBlock = new RelocateHomeMission({ x: 14, y: 10 });
+  const dirBlock = missionBlock.generateDirective(snap16, engine16);
+  assert.strictEqual(missionBlock.subMode, 'CLEARING_PATH', '岩がある場合は CLEARING_PATH になること');
+  assert.strictEqual(dirBlock.type, 'BREACH_SHORTCUT', '岩破壊のために BREACH_SHORTCUT が発行されること');
+
+  // 岩破壊後の状態にして COIN 開拓を確認 (RING 一時退避)
+  emap.setObject({ x: 11, y: 10 }, 'NONE');
+  emap.setItem({ x: 11, y: 10 }, 'COIN');
+  const snap16b = makeSnap16(11);
+  const missionItem = new RelocateHomeMission({ x: 14, y: 10 });
+  const dirDrop = missionItem.generateDirective(snap16b, engine16);
+  assert.strictEqual(missionItem.subMode, 'CLEARING_PATH', '床アイテムがある場合は CLEARING_PATH になること');
+  assert.strictEqual(dirDrop.type, 'DROP_HOLD_ITEM', 'RING所持中は手ぶらになるため DROP_HOLD_ITEM が発行されること');
+
+  // 16-3. 進捗ベース中断判定: 45T 経過しても進捗があれば ACTIVE 維持、25T 無進展で ABORTED
+  const missionProg = new RelocateHomeMission({ x: 14, y: 10 });
+  emap.setItem({ x: 11, y: 10 }, 'NONE');
+  emap.setItem({ x: 12, y: 10 }, 'NONE');
+  missionProg.turnsElapsed = 46; // 旧45T制限超過
+  const statusAt46 = missionProg.evaluateStatus(snap16b, engine16);
+  assert.strictEqual(statusAt46, 'ACTIVE', '45T経過しても初回評価・進捗中は強制打ち切りされないこと');
+
+  for (let i = 0; i < 26; i++) {
+    missionProg.evaluateStatus(snap16b, engine16);
+  }
+  const statusStalled = missionProg.evaluateStatus(snap16b, engine16);
+  assert.strictEqual(statusStalled, 'ABORTED', '一定ターン連続で進展がない場合のみ ABORTED になること');
+
+  // 16-4. アンカー選定: initialHomePos から十分離れた安全かつ到達可能地点を選ぶこと
+  const bestAnchor = RelocateHomeMission.selectBestAnchor(snap16b, engine16);
+  assert.ok(bestAnchor !== null, '安全な到達可能アンカーが選定されること');
+  const anchorDistFromSpawn = emap.getTorusDistance(emap.initialHomePos, bestAnchor!).manhattan;
+  assert.ok(anchorDistFromSpawn >= 20, `アンカーは initialHomePos から十分離れていること (dist=${anchorDistFromSpawn})`);
+
+  console.log('✓ 16. RelocateHomeMission detour BFS, path clearing, progress-based abort & anchor selection verified.');
 }
 
 console.log('================================================================');
