@@ -23,11 +23,14 @@ export interface AllocationPlanOptions {
   homeTemplate?: ThemeBlockTemplate;
   landmarkMinDistanceTiles?: number; // デフォルト 20
   largeTemplates?: ThemeBlockTemplate[]; // 16x16, 12x12
+  largeMaxCount?: number; // 大型ブロックの最大配置個数
   mediumTemplates?: ThemeBlockTemplate[]; // 8x8
+  mediumMaxCount?: number; // ハイブリッドモード等で配置する8x8ブロックの最大個数
   smallTemplates?: ThemeBlockTemplate[]; // 4x4
   subSlotSmallTemplates?: ThemeBlockTemplate[]; // サブスロット用 4x4
   subSlotMediumTemplates?: ThemeBlockTemplate[]; // サブスロット用 8x8
   maxInstancesPerBlock?: Record<string, number>; // ブロックIDごとの最大配置数上限
+  fillRemaining?: boolean; // 残余セルをブロックで100%充填するか (デフォルト: true)
 }
 
 export class ThemeBlockAllocator {
@@ -139,11 +142,14 @@ export class ThemeBlockAllocator {
 
     // --- 2. 広域・準広域ブロック (16x16, 12x12) の配置 ---
     if (options.largeTemplates && options.largeTemplates.length > 0) {
-      const shuffledLarge = this.shuffle([...options.largeTemplates]);
-      for (const tpl of shuffledLarge) {
+      const maxLarge = options.largeMaxCount ?? options.largeTemplates.length;
+      let placedLarge = 0;
+      for (const tpl of options.largeTemplates) {
+        if (placedLarge >= maxLarge) break;
         const placed = this.tryPlaceAnywhere(tpl, occupied);
         if (placed) {
           recordPlaced(placed);
+          placedLarge++;
         }
       }
     }
@@ -205,10 +211,35 @@ export class ThemeBlockAllocator {
       }
     }
 
-    // --- 4. 中規模ブロック (8x8) の充填 ---
-    if (options.mediumTemplates && options.mediumTemplates.length > 0) {
+    // --- 4. 中規模ブロック (8x8) の充填 & 5. 100%完全充填 ---
+    if (options.fillRemaining !== false) {
+      if (options.mediumTemplates && options.mediumTemplates.length > 0) {
+        let attempts = 0;
+        while (attempts < 50) {
+          attempts++;
+          const freeCell = this.findFreeCellForSize(occupied, 2, 2);
+          if (!freeCell) break;
+
+          const tpl = this.selectWeightedTemplate(
+            options.mediumTemplates,
+            placedCounts,
+            options.maxInstancesPerBlock
+          ) ?? options.mediumTemplates[this.rng.nextInt(0, options.mediumTemplates.length - 1)];
+
+          const placed = this.placeAt(tpl, occupied, freeCell.x, freeCell.y);
+          if (placed) {
+            recordPlaced(placed);
+          }
+        }
+      }
+
+      // --- 5. 100%完全充填: 空きセルを 8x8 または 4x4 で埋め尽くす ---
+      this.fillRemainingCells(placedBlocks, occupied, options, placedCounts);
+    } else if (options.mediumMaxCount && options.mediumMaxCount > 0 && options.mediumTemplates && options.mediumTemplates.length > 0) {
+      // ハイブリッドモードでも指定個数（例: CLASSIC時の宝物庫補填）だけ8x8を配置
+      let placedMed = 0;
       let attempts = 0;
-      while (attempts < 50) {
+      while (placedMed < options.mediumMaxCount && attempts < 20) {
         attempts++;
         const freeCell = this.findFreeCellForSize(occupied, 2, 2);
         if (!freeCell) break;
@@ -222,12 +253,10 @@ export class ThemeBlockAllocator {
         const placed = this.placeAt(tpl, occupied, freeCell.x, freeCell.y);
         if (placed) {
           recordPlaced(placed);
+          placedMed++;
         }
       }
     }
-
-    // --- 5. 100%完全充填: 空きセルを 8x8 または 4x4 で埋め尽くす ---
-    this.fillRemainingCells(placedBlocks, occupied, options, placedCounts);
 
     return placedBlocks;
   }
@@ -457,14 +486,6 @@ export class ThemeBlockAllocator {
     if (dx > size / 2) dx = size - dx;
     if (dy > size / 2) dy = size - dy;
     return dx + dy;
-  }
-
-  private shuffle<T>(array: T[]): T[] {
-    for (let i = array.length - 1; i > 0; i--) {
-      const j = this.rng.nextInt(0, i);
-      [array[i], array[j]] = [array[j], array[i]];
-    }
-    return array;
   }
 
   // --- スタンプ展開 ＆ MapTacticalMetadata 組み立て ---

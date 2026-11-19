@@ -9,6 +9,7 @@ import { Dragon } from '../models/Dragon.js';
 import { MovementSystem } from './MovementSystem.js';
 import { CURRENT_SAVE_VERSION, FullSaveData, SaveManager, SystemSaveData } from '../services/SaveManager.js';
 import { SpawnSystem } from './SpawnSystem.js';
+import { SeedRandom } from '../core/SeedRandom.js';
 
 export interface CastResult {
   success: boolean;
@@ -24,6 +25,12 @@ export interface CastResult {
 }
 
 export class MagicSystem {
+  private static defaultRng: SeedRandom = new SeedRandom();
+
+  public static setDefaultRng(rng: SeedRandom): void {
+    this.defaultRng = rng;
+  }
+
   /**
    * プレイヤーが習得済みの魔法一覧を取得
    */
@@ -84,7 +91,8 @@ export class MagicSystem {
     enemies: EnemyInstance[] = [],
     ghosts: Ghost[] = [],
     dragon?: Dragon,
-    systemInfo?: SystemSaveData
+    systemInfo?: SystemSaveData,
+    rng: SeedRandom = this.defaultRng
   ): CastResult {
     const check = this.canCast(player, magicType);
     if (!check.allowed) {
@@ -108,7 +116,7 @@ export class MagicSystem {
         return this.castFly(player);
 
       case 'JUMP':
-        return this.castJump(player, map, ghosts);
+        return this.castJump(player, map, ghosts, rng);
 
       case 'RETURN':
         return this.castReturn(player, map, systemInfo);
@@ -316,12 +324,11 @@ export class MagicSystem {
   /**
    * JUMP: 徘徊中のゴーストの場所へランダムワープ（壁通過中の場合は安全な最寄り床へ着地）
    */
-  private static castJump(player: Player, map: WorldMap, ghosts: Ghost[]): CastResult {
+  private static castJump(player: Player, map: WorldMap, ghosts: Ghost[], rng: SeedRandom): CastResult {
     player.magic = Math.max(0, player.magic - 1);
 
     if (ghosts.length > 0) {
-      const idx = Math.floor(Math.random() * ghosts.length);
-      const targetGhost = ghosts[idx];
+      const targetGhost = rng.choice(ghosts);
 
       // ゴーストのマスが通過可能であれば直接ワープ
       if (map.isPassable(targetGhost.pos)) {
@@ -362,8 +369,8 @@ export class MagicSystem {
 
     // ゴーストがいない場合はランダムな空きマス
     for (let attempts = 0; attempts < 50; attempts++) {
-      const rx = Math.floor(Math.random() * (map.width - 2)) + 1;
-      const ry = Math.floor(Math.random() * (map.height - 2)) + 1;
+      const rx = rng.nextInt(1, Math.max(1, map.width - 2));
+      const ry = rng.nextInt(1, Math.max(1, map.height - 2));
       if (map.isPassable({ x: rx, y: ry })) {
         player.pos = { x: rx, y: ry };
         break;

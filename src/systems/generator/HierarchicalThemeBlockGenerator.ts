@@ -1,4 +1,4 @@
-import { Position, ResolvedDungeonTuningParams } from '../../models/Types.js';
+import { Position, DungeonTopology, ResolvedDungeonTuningParams } from '../../models/Types.js';
 import { WorldMap } from '../../models/WorldMap.js';
 import { Player } from '../../models/Player.js';
 import { SeedRandom } from '../../core/SeedRandom.js';
@@ -15,6 +15,7 @@ import {
   WORLD_SIZE_TILES,
 } from './ThemeBlockTypes.js';
 import { ThemeBlockAllocator } from './ThemeBlockAllocator.js';
+import { TopologyTerrainBuilder } from './TopologyTerrainBuilder.js';
 import {
   ALL_THEME_BLOCKS,
   DRAGON_8x8_MAZE_LAIR,
@@ -75,12 +76,14 @@ export class HierarchicalThemeBlockGenerator {
     this.clearMap(map);
 
     const isClassic = tuningParams.progressionConfig.ruleMode === 'CLASSIC';
+    const isHybridTopology = topology !== 'STANDARD_ROOMS' && topology !== 'CLASSIC_FIXED';
 
     // 2. テーマブロックの選定
     const {
       dragonTemplate,
       homeTemplate,
       largeTemplates,
+      largeMaxCount,
       mediumTemplates,
       smallTemplates,
       subSlotSmallTemplates,
@@ -89,6 +92,7 @@ export class HierarchicalThemeBlockGenerator {
     } = this.selectTemplatesForConfiguration(topology, options, rng, isClassic);
 
     // 3. 16×16 マクロセル階層アロケーションの実行
+    // ハイブリッド対象トポロジーではランドマーク・重要パズル拠点のみ配置し、残余空間を連続地形生成へ委ねる
     const allocator = new ThemeBlockAllocator(seed);
     const placedBlocks = allocator.allocate({
       seed,
@@ -96,11 +100,14 @@ export class HierarchicalThemeBlockGenerator {
       homeTemplate,
       landmarkMinDistanceTiles: 20,
       largeTemplates,
+      largeMaxCount,
       mediumTemplates,
+      mediumMaxCount: isHybridTopology ? 0 : undefined,
       smallTemplates,
       subSlotSmallTemplates,
       subSlotMediumTemplates,
       maxInstancesPerBlock,
+      fillRemaining: !isHybridTopology,
     });
 
     // 4. WorldMap へのスタンプ展開 & MapTacticalMetadata 集計
@@ -109,8 +116,20 @@ export class HierarchicalThemeBlockGenerator {
     // 5. ドラゴン中心座標と我が家座標の確定・同期（明示指定がある場合は指定座標を最優先）
     this.syncDragonAndHomePositions(map, placedBlocks, options, rng);
 
-    // 6. エッジポート接続（通路開通処理）
+    // 5.5. ハイブリッド生成: 未占有ベース空間へのトポロジー固有連続地形生成
+    if (isHybridTopology) {
+      TopologyTerrainBuilder.build(map, {
+        topology: topology as DungeonTopology,
+        placedBlocks,
+        dragonCenter: map.dragonCenter,
+        homePos: map.homePos,
+        rng,
+      });
+    }
+
+    // 6. エッジポート接続 ＆ 境界シーム溶接 ＆ 連結グラフ扉開通 ＆ 袋小路抑制
     this.connectEdgePorts(map, placedBlocks, rng);
+    this.weldAndConnectBlocks(map, placedBlocks, topology, rng);
 
     // 7. スロット予算アクティベーション（目標宝箱数・墓数調整）
     this.activateBudgets(map, targetChests, targetGraves, placedBlocks, rng);
@@ -159,7 +178,7 @@ export class HierarchicalThemeBlockGenerator {
     let dragonTemplate: ThemeBlockTemplate;
     if (options?.dragonPrefab === 'FORTRESS_7x7' || topology === 'FORTRESS_ARENA' || topology === 'GRAND_HALL') {
       dragonTemplate = DRAGON_16x16_GRAND_HALL;
-    } else if (topology === 'NARROW_MAZE') {
+    } else if (topology === 'NARROW_MAZE' || topology === 'PILLAR_GRID' || topology === 'SPIRAL_LABYRINTH' || topology === 'MULTI_SECTOR') {
       dragonTemplate = rng.chance(0.5) ? DRAGON_8x8_MAZE_LAIR : DRAGON_12x12_MAZE_LAIR;
     } else {
       const candidates = [DRAGON_16x16_GRAND_HALL, DRAGON_12x12_MAZE_LAIR, DRAGON_8x8_MAZE_LAIR];
@@ -173,42 +192,59 @@ export class HierarchicalThemeBlockGenerator {
 
     // 3. 広域・準広域ブロック (16x16, 12x12)
     let largePool: ThemeBlockTemplate[] = [
-      GRAVE_16x16_NECROPOLIS,
       TREASURE_16x16_GRAND_VAULT,
       TREASURE_12x12_COMPLEX,
       TREASURE_12x12_TREASURY,
+      GRAVE_16x16_NECROPOLIS,
       MAZE_12x12_SPIRAL,
     ];
-    // トポロジー・ルールモードによる重み付け・優先順序付け
-    if (isClassic) {
-      largePool = [TREASURE_12x12_TREASURY, TREASURE_16x16_GRAND_VAULT, TREASURE_12x12_COMPLEX, GRAVE_16x16_NECROPOLIS, MAZE_12x12_SPIRAL];
-    } else if (topology === 'SPIRAL_LABYRINTH') {
-      largePool = [MAZE_12x12_SPIRAL, TREASURE_12x12_COMPLEX, TREASURE_12x12_TREASURY, GRAVE_16x16_NECROPOLIS, TREASURE_16x16_GRAND_VAULT];
+    let largeMaxCount = 3;
+    let preserveLargeOrder = false;
+
+    // トポロジー・ルールモードによる明確なプール・配置数差別化
+    // ハイブリッド対象トポロジーではパズル墓(GRAVE_16x16_NECROPOLIS)と宝物庫(TREASURE_12x12_*)を
+    // 厳選配置し、残余の広大なベース空間(約75〜80%)を連続地形生成へ委ねる
+    if (topology === 'NARROW_MAZE' || topology === 'PILLAR_GRID' || topology === 'SPIRAL_LABYRINTH') {
+      largePool = [GRAVE_16x16_NECROPOLIS, TREASURE_12x12_COMPLEX];
+      largeMaxCount = 2;
+      preserveLargeOrder = true;
+    } else if (topology === 'FORTRESS_ARENA' || topology === 'MULTI_SECTOR') {
+      largePool = [GRAVE_16x16_NECROPOLIS, TREASURE_12x12_COMPLEX];
+      largeMaxCount = 2;
+      preserveLargeOrder = true;
     } else if (topology === 'STANDARD_ROOMS') {
-      largePool = [TREASURE_16x16_GRAND_VAULT, TREASURE_12x12_COMPLEX, TREASURE_12x12_TREASURY, GRAVE_16x16_NECROPOLIS, MAZE_12x12_SPIRAL];
-    } else if (topology === 'FORTRESS_ARENA') {
-      largePool = [TREASURE_16x16_GRAND_VAULT, TREASURE_12x12_TREASURY, GRAVE_16x16_NECROPOLIS, TREASURE_12x12_COMPLEX, MAZE_12x12_SPIRAL];
-    } else if (topology === 'NARROW_MAZE') {
-      largePool = [MAZE_12x12_SPIRAL, TREASURE_12x12_COMPLEX, GRAVE_16x16_NECROPOLIS, TREASURE_16x16_GRAND_VAULT];
+      largePool = isClassic
+        ? [TREASURE_12x12_TREASURY, TREASURE_16x16_GRAND_VAULT, TREASURE_12x12_COMPLEX, GRAVE_16x16_NECROPOLIS]
+        : [TREASURE_16x16_GRAND_VAULT, TREASURE_12x12_COMPLEX, TREASURE_12x12_TREASURY, GRAVE_16x16_NECROPOLIS, MAZE_12x12_SPIRAL];
+      largeMaxCount = 3;
+    } else if (isClassic) {
+      largePool = [TREASURE_12x12_TREASURY, TREASURE_16x16_GRAND_VAULT, TREASURE_12x12_COMPLEX, GRAVE_16x16_NECROPOLIS, MAZE_12x12_SPIRAL];
+      largeMaxCount = 4;
     }
-    const largeTemplates = isClassic ? largePool : rng.shuffle([...largePool]);
+    const largeTemplates = (isClassic || preserveLargeOrder) ? largePool : rng.shuffle([...largePool]);
 
     // トポロジーに応じた特定ブロックの配置上限（導線遮断・窒息の徹底防止および空間過多の防止）
     const maxInstancesPerBlock: Record<string, number> = {
-      open_8x8_courtyard: 1,
-      open_8x8_pillars: topology === 'PILLAR_GRID' ? 3 : 2,
-      open_4x4_plains: 2,
-      open_4x4_meadow_coin: 2,
+      open_8x8_courtyard: topology === 'FORTRESS_ARENA' ? 2 : 0,
+      open_8x8_pillars: topology === 'PILLAR_GRID' ? 3 : (topology === 'FORTRESS_ARENA' ? 2 : 1),
+      open_4x4_plains: topology === 'NARROW_MAZE' ? 0 : 1,
+      open_4x4_meadow_coin: topology === 'NARROW_MAZE' ? 0 : 1,
       supply_4x4_pantry: 3,
       supply_4x4_cache: 3,
       supply_4x4_crossroad: 3,
-      enclosed_4x4_solid: 2,
-      enclosed_4x4_box: 3,
+      enclosed_4x4_solid: topology === 'PILLAR_GRID' ? 1 : 2,
+      enclosed_4x4_box: topology === 'PILLAR_GRID' ? 1 : 2,
       enclosed_8x8_vault: 1,
+      arena_8x8_pillbox: topology === 'FORTRESS_ARENA' ? 5 : 1,
+      pillar_8x8_grid: topology === 'PILLAR_GRID' ? 6 : 1,
+      pillar_8x8_l_pillars: topology === 'PILLAR_GRID' ? 6 : 1,
+      pillar_4x4_quad: topology === 'PILLAR_GRID' ? 8 : 1,
     };
-    if (topology === 'STANDARD_ROOMS' || topology === 'PILLAR_GRID') {
-      maxInstancesPerBlock.enclosed_4x4_solid = 1;
-      maxInstancesPerBlock.enclosed_4x4_box = 2;
+    if (topology === 'NARROW_MAZE') {
+      maxInstancesPerBlock.open_8x8_pillars = 0;
+      maxInstancesPerBlock.pillar_8x8_grid = 0;
+      maxInstancesPerBlock.pillar_8x8_l_pillars = 0;
+      maxInstancesPerBlock.pillar_4x4_quad = 0;
     }
 
     // 4. 中規模ブロック (8x8)
@@ -216,9 +252,32 @@ export class HierarchicalThemeBlockGenerator {
       .filter(b => b.size === '8x8' && b.category !== 'DRAGON' && b.category !== 'HOME')
       .map(b => {
         let weight = b.weight ?? 1;
-        // 構造性のあるブロック（宝物庫・迷路・墓）を優先して部屋構造を形成
-        if (b.category === 'TREASURE' || b.category === 'MAZE') weight = 3;
-        else if (b.category === 'GRAVE') weight = 2;
+        if (topology === 'PILLAR_GRID') {
+          if (b.id === 'pillar_8x8_grid') weight = 10;
+          else if (b.id === 'pillar_8x8_l_pillars') weight = 8;
+          else if (b.id === 'open_8x8_pillars') weight = 4;
+          else if (b.category === 'TREASURE') weight = 2;
+          else weight = 1;
+        } else if (topology === 'NARROW_MAZE') {
+          if (b.id === 'maze_8x8_grid_labyrinth') weight = 10;
+          else if (b.id === 'maze_8x8_winding') weight = 8;
+          else if (b.category === 'GRAVE') weight = 2;
+          else if (b.category === 'TREASURE') weight = 2;
+          else weight = 1;
+        } else if (topology === 'FORTRESS_ARENA') {
+          if (b.id === 'arena_8x8_pillbox') weight = 8;
+          else if (b.id === 'open_8x8_courtyard' || b.id === 'open_8x8_pillars') weight = 3;
+          else if (b.category === 'TREASURE') weight = 3;
+          else if (b.category === 'GRAVE') weight = 2;
+          else weight = 1;
+        } else {
+          // STANDARD_ROOMS / SPIRAL_LABYRINTH / MULTI_SECTOR
+          if (b.category === 'TREASURE' || b.category === 'MAZE') weight = 4;
+          else if (b.category === 'GRAVE') weight = 3;
+          if (topology === 'SPIRAL_LABYRINTH' && (b.id === 'maze_8x8_winding' || b.id === 'maze_8x8_grid_labyrinth')) {
+            weight = 6;
+          }
+        }
         if (isClassic) {
           if (
             b.id === 'treasure_8x8_solid_vault' ||
@@ -227,11 +286,9 @@ export class HierarchicalThemeBlockGenerator {
             b.id === 'cluster_8x8_grand_depot' ||
             b.id === 'cluster_8x8_sanctuary_depot'
           ) {
-            weight = 5;
+            weight += 3;
           }
         }
-        if (topology === 'PILLAR_GRID' && b.id === 'open_8x8_pillars') weight = 3;
-        if (topology === 'SPIRAL_LABYRINTH' && b.id === 'maze_8x8_winding') weight = 4;
         return { ...b, weight };
       });
     const mediumTemplates = rng.shuffle([...mediumPool]);
@@ -241,11 +298,22 @@ export class HierarchicalThemeBlockGenerator {
       .filter(b => b.size === '4x4' && b.category !== 'HOME')
       .map(b => {
         let weight = b.weight ?? 1;
-        // 通路・回廊・部屋を形成するブロックのウェイトを強化し、構造美を高める
-        if (b.category === 'CORRIDOR' || b.id.startsWith('maze_')) weight = 4;
-        else if (b.category === 'TREASURE') weight = 3;
-        else if (b.category === 'GRAVE') weight = 2;
-        else if (b.id.startsWith('enclosed_')) weight = 3;
+        if (topology === 'PILLAR_GRID') {
+          if (b.id === 'pillar_4x4_quad') weight = 10;
+          else if (b.category === 'CORRIDOR') weight = 3;
+          else if (b.category === 'TREASURE') weight = 2;
+          else weight = 1;
+        } else if (topology === 'NARROW_MAZE') {
+          if (b.category === 'CORRIDOR' || b.id.startsWith('maze_')) weight = 8;
+          else if (b.id.startsWith('enclosed_')) weight = 3;
+          else if (b.category === 'GRAVE') weight = 2;
+          else weight = 1;
+        } else {
+          if (b.category === 'CORRIDOR' || b.id.startsWith('maze_')) weight = 4;
+          else if (b.category === 'TREASURE') weight = 3;
+          else if (b.category === 'GRAVE') weight = 2;
+          else if (b.id.startsWith('enclosed_')) weight = 2;
+        }
         if (isClassic) {
           if (
             b.id === 'treasure_4x4_dense_pack' ||
@@ -254,10 +322,9 @@ export class HierarchicalThemeBlockGenerator {
             b.id === 'cluster_4x4_gold_pile' ||
             b.id === 'cluster_4x4_potion_cellar'
           ) {
-            weight = 5;
+            weight += 3;
           }
         }
-        if (topology === 'NARROW_MAZE' && b.id.startsWith('maze_')) weight = 5;
         return { ...b, weight };
       });
     const smallTemplates = rng.shuffle([...smallPool]);
@@ -270,6 +337,7 @@ export class HierarchicalThemeBlockGenerator {
       dragonTemplate,
       homeTemplate,
       largeTemplates,
+      largeMaxCount,
       mediumTemplates,
       smallTemplates,
       subSlotSmallTemplates,
@@ -404,6 +472,274 @@ export class HierarchicalThemeBlockGenerator {
   }
 
   /**
+   * 境界シーム溶接・連結グラフ扉開通・危険袋小路抑制
+   */
+  private static weldAndConnectBlocks(
+    map: WorldMap,
+    placedBlocks: PlacedThemeBlock[],
+    topology: string,
+    rng: SeedRandom
+  ): void {
+    const W = WORLD_SIZE_TILES;
+    const toIdx = (x: number, y: number): number => (((y % W) + W) % W) * W + (((x % W) + W) % W);
+
+    // 1. 保護対象BLOCK座標と意図的密閉区画(enclosed_*)座標を収集
+    const protectedCoords = new Set<number>();
+    const enclosedCoords = new Set<number>();
+
+    const dc = map.dragonCenter;
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dx = -3; dx <= 3; dx++) {
+        protectedCoords.add(toIdx(dc.x + dx, dc.y + dy));
+      }
+    }
+    const hp = map.homePos;
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        protectedCoords.add(toIdx(hp.x + dx, hp.y + dy));
+      }
+    }
+
+    for (const hint of map.tacticalMetadata?.gravePuzzleHints ?? []) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          protectedCoords.add(toIdx(hint.gravePos.x + dx, hint.gravePos.y + dy));
+        }
+      }
+      for (const sp of hint.sealTargetPositions) {
+        protectedCoords.add(toIdx(sp.x, sp.y));
+      }
+      for (const push of hint.recommendedPushes) {
+        protectedCoords.add(toIdx(push.blockPos.x, push.blockPos.y));
+        protectedCoords.add(toIdx(push.destinationPos.x, push.destinationPos.y));
+        const backX = push.blockPos.x - (push.destinationPos.x - push.blockPos.x);
+        const backY = push.blockPos.y - (push.destinationPos.y - push.blockPos.y);
+        protectedCoords.add(toIdx(backX, backY));
+      }
+    }
+
+    for (const pb of placedBlocks) {
+      if (pb.template.id.startsWith('enclosed_')) {
+        const sizeTiles = pb.template.layout.length;
+        const ox = pb.cellX * CELL_SIZE_TILES;
+        const oy = pb.cellY * CELL_SIZE_TILES;
+        for (let ly = 0; ly < sizeTiles; ly++) {
+          for (let lx = 0; lx < sizeTiles; lx++) {
+            const idx = toIdx(ox + lx, oy + ly);
+            enclosedCoords.add(idx);
+            protectedCoords.add(idx);
+          }
+        }
+      }
+    }
+
+    // 2. 境界シーム溶接: 二重壁(##)の片側を削って1マス共有壁へ整形
+    const weldLine = (getPair: (t: number) => [Position, Position]) => {
+      let runStart = -1;
+      const flushRun = (start: number, end: number) => {
+        if (end - start + 1 < 2) return;
+        const preferFirst = rng.chance(0.5);
+        for (let t = start; t <= end; t++) {
+          const [p1, p2] = getPair(t);
+          const idx1 = toIdx(p1.x, p1.y);
+          const idx2 = toIdx(p2.x, p2.y);
+          const p1Prot = protectedCoords.has(idx1);
+          const p2Prot = protectedCoords.has(idx2);
+          if (p1Prot && p2Prot) continue;
+          const removePos = p1Prot ? p2 : p2Prot ? p1 : (preferFirst ? p1 : p2);
+          if (map.getObject(removePos) === 'BLOCK') {
+            map.setObject(removePos, 'NONE');
+          }
+        }
+      };
+
+      for (let t = 0; t < W; t++) {
+        const [p1, p2] = getPair(t);
+        const bothBlock = map.getObject(p1) === 'BLOCK' && map.getObject(p2) === 'BLOCK';
+        if (bothBlock) {
+          if (runStart < 0) runStart = t;
+        } else if (runStart >= 0) {
+          flushRun(runStart, t - 1);
+          runStart = -1;
+        }
+      }
+      if (runStart >= 0) flushRun(runStart, W - 1);
+    };
+
+    for (let cx = 0; cx < 16; cx++) {
+      const x1 = cx * 4 + 3;
+      const x2 = ((cx + 1) % 16) * 4;
+      weldLine(y => [{ x: x1, y }, { x: x2, y }]);
+    }
+    for (let cy = 0; cy < 16; cy++) {
+      const y1 = cy * 4 + 3;
+      const y2 = ((cy + 1) % 16) * 4;
+      weldLine(x => [{ x, y: y1 }, { x, y: y2 }]);
+    }
+
+    // 3. 連結グラフ扉開通 (MST連結保証 + トポロジー別ループ扉)
+    const isWalkable = (x: number, y: number): boolean => {
+      const p = map.wrapPosition({ x, y });
+      const b = map.getBaseTile(p);
+      const o = map.getObject(p);
+      if (b === 'WALL_STATIC') return false;
+      if (b === 'GRAVE' && o === 'NONE') return false;
+      if (o === 'BLOCK') return false;
+      return true;
+    };
+
+    const comp = new Int32Array(W * W).fill(-1);
+    const compHasEnclosedOnly: boolean[] = [];
+    let numComps = 0;
+    const cardDirs = [
+      { dx: 1, dy: 0 },
+      { dx: -1, dy: 0 },
+      { dx: 0, dy: 1 },
+      { dx: 0, dy: -1 },
+    ];
+
+    for (let y = 0; y < W; y++) {
+      for (let x = 0; x < W; x++) {
+        const sIdx = y * W + x;
+        if (comp[sIdx] >= 0 || !isWalkable(x, y)) continue;
+        const cid = numComps++;
+        comp[sIdx] = cid;
+        const q: number[] = [sIdx];
+        let allEnclosed = true;
+        let head = 0;
+        while (head < q.length) {
+          const cur = q[head++];
+          if (!enclosedCoords.has(cur)) allEnclosed = false;
+          const cx = cur % W;
+          const cy = (cur - cx) / W;
+          for (const d of cardDirs) {
+            const nx = (cx + d.dx + W) % W;
+            const ny = (cy + d.dy + W) % W;
+            const nIdx = ny * W + nx;
+            if (comp[nIdx] < 0 && isWalkable(nx, ny)) {
+              comp[nIdx] = cid;
+              q.push(nIdx);
+            }
+          }
+        }
+        compHasEnclosedOnly.push(allEnclosed);
+      }
+    }
+
+    if (numComps > 1) {
+      const parent = Array.from({ length: numComps }, (_, i) => i);
+      const find = (a: number): number => (parent[a] === a ? a : (parent[a] = find(parent[a])));
+      const unite = (a: number, b: number): boolean => {
+        const ra = find(a);
+        const rb = find(b);
+        if (ra === rb) return false;
+        parent[rb] = ra;
+        return true;
+      };
+
+      const bridgeCandidates: { x: number; y: number; c1: number; c2: number; tier: number }[] = [];
+      for (let y = 0; y < W; y++) {
+        for (let x = 0; x < W; x++) {
+          const idx = y * W + x;
+          if (map.getObject({ x, y }) !== 'BLOCK') continue;
+          const pairs: [number, number][] = [
+            [comp[toIdx(x - 1, y)], comp[toIdx(x + 1, y)]],
+            [comp[toIdx(x, y - 1)], comp[toIdx(x, y + 1)]],
+          ];
+          for (const [c1, c2] of pairs) {
+            if (c1 >= 0 && c2 >= 0 && c1 !== c2) {
+              if (compHasEnclosedOnly[c1] || compHasEnclosedOnly[c2]) continue;
+              const tier = !protectedCoords.has(idx) ? 0 : !enclosedCoords.has(idx) ? 1 : 2;
+              bridgeCandidates.push({ x, y, c1, c2, tier });
+            }
+          }
+        }
+      }
+
+      bridgeCandidates.sort((a, b) => a.tier - b.tier);
+      for (const bc of bridgeCandidates) {
+        if (unite(bc.c1, bc.c2)) {
+          map.setObject({ x: bc.x, y: bc.y }, 'NONE');
+        }
+      }
+    }
+
+    // ループ扉開通（1マス厚の仕切り壁に一定割合で扉を開け、回遊性を確保）
+    const doorCandidates: Position[] = [];
+    for (let y = 0; y < W; y++) {
+      for (let x = 0; x < W; x++) {
+        const idx = y * W + x;
+        if (protectedCoords.has(idx) || enclosedCoords.has(idx)) continue;
+        if (map.getObject({ x, y }) !== 'BLOCK') continue;
+        if (map.getTorusDistance({ x, y }, dc).chebyshev <= 4) continue;
+
+        const lrWalk = isWalkable(x - 1, y) && isWalkable(x + 1, y);
+        const udBlock = !isWalkable(x, y - 1) && !isWalkable(x, y + 1);
+        const udWalk = isWalkable(x, y - 1) && isWalkable(x, y + 1);
+        const lrBlock = !isWalkable(x - 1, y) && !isWalkable(x + 1, y);
+        if ((lrWalk && udBlock) || (udWalk && lrBlock)) {
+          doorCandidates.push({ x, y });
+        }
+      }
+    }
+
+    const loopRatio =
+      topology === 'PILLAR_GRID' ? 0.0 :
+      topology === 'NARROW_MAZE' ? 0.02 :
+      topology === 'SPIRAL_LABYRINTH' ? 0.05 :
+      topology === 'MULTI_SECTOR' ? 0.05 :
+      topology === 'FORTRESS_ARENA' ? 0.15 : 0.22;
+    const shuffledDoors = rng.shuffle(doorCandidates);
+    const targetLoops = Math.floor(shuffledDoors.length * loopRatio);
+    const openedDoors: Position[] = [];
+    for (const cand of shuffledDoors) {
+      if (openedDoors.length >= targetLoops) break;
+      const tooClose = openedDoors.some(d => map.getTorusDistance(cand, d).manhattan <= 2);
+      if (tooClose) continue;
+      map.setObject(cand, 'NONE');
+      openedDoors.push(cand);
+    }
+
+    // 4. 危険袋小路の抑制（3方向閉塞の1マス幅ポケット奥を穿孔）
+    const pruneProb =
+      topology === 'PILLAR_GRID' ? 0.25 :
+      topology === 'NARROW_MAZE' ? 0.20 :
+      topology === 'SPIRAL_LABYRINTH' ? 0.15 :
+      topology === 'MULTI_SECTOR' ? 0.20 :
+      topology === 'FORTRESS_ARENA' ? 0.50 : 0.35;
+    for (let y = 0; y < W; y++) {
+      for (let x = 0; x < W; x++) {
+        if (!isWalkable(x, y)) continue;
+        if (map.getTorusDistance({ x, y }, dc).chebyshev <= 4) continue;
+        let openDir: { dx: number; dy: number } | null = null;
+        let openCount = 0;
+        for (const d of cardDirs) {
+          if (isWalkable(x + d.dx, y + d.dy)) {
+            openCount++;
+            openDir = d;
+          }
+        }
+        if (openCount === 1 && openDir) {
+          const backX = (x - openDir.dx + W) % W;
+          const backY = (y - openDir.dy + W) % W;
+          const beyondX = (backX - openDir.dx + W) % W;
+          const beyondY = (backY - openDir.dy + W) % W;
+          const backIdx = toIdx(backX, backY);
+          if (
+            !protectedCoords.has(backIdx) &&
+            !enclosedCoords.has(backIdx) &&
+            map.getObject({ x: backX, y: backY }) === 'BLOCK' &&
+            isWalkable(beyondX, beyondY) &&
+            rng.chance(pruneProb)
+          ) {
+            map.setObject({ x: backX, y: backY }, 'NONE');
+          }
+        }
+      }
+    }
+  }
+
+  /**
    * スロット予算アクティベーション（目標宝箱数・墓数調整）
    * 1. テンプレート本来の宝箱スロット('c')を優先的にアクティブ化
    * 2. 不足分は「空き地の真ん中」ではなく「部屋の隅・壁沿い」を優先して配置
@@ -416,26 +752,35 @@ export class HierarchicalThemeBlockGenerator {
     placedBlocks: PlacedThemeBlock[],
     rng: SeedRandom
   ): void {
-    // 1. テンプレート内の意図された宝箱スロット ('c') のワールド座標を収集
-    const designedChestSlots: Position[] = [];
+    // 1. テンプレート内の意図された宝箱スロット ('c') をブロック（部屋）単位で収集
+    const designedSlotGroups: { isOptimal: boolean; slots: Position[] }[] = [];
+    const seenCoords = new Set<number>();
+
     for (const placed of placedBlocks) {
       const tpl = placed.template;
       const sizeTiles = tpl.layout.length;
       const originX = placed.cellX * CELL_SIZE_TILES;
       const originY = placed.cellY * CELL_SIZE_TILES;
+      const groupSlots: Position[] = [];
 
       for (let ly = 0; ly < sizeTiles; ly++) {
         for (let lx = 0; lx < sizeTiles; lx++) {
           if (tpl.layout[ly][lx] === 'c') {
             const wx = ((originX + lx) % WORLD_SIZE_TILES + WORLD_SIZE_TILES) % WORLD_SIZE_TILES;
             const wy = ((originY + ly) % WORLD_SIZE_TILES + WORLD_SIZE_TILES) % WORLD_SIZE_TILES;
+            const key = wy * WORLD_SIZE_TILES + wx;
+            if (seenCoords.has(key)) continue;
             const pos = { x: wx, y: wy };
-            // 現在床かつアイテムなしであることを確認
-            if (map.getBaseTile(pos) === 'EMPTY' && map.getObject(pos) === 'NONE') {
-              designedChestSlots.push(pos);
+            if (map.getBaseTile(pos) === 'EMPTY' && map.getObject(pos) === 'NONE' && map.getItem(pos) === 'NONE') {
+              seenCoords.add(key);
+              groupSlots.push(pos);
             }
           }
         }
+      }
+      if (groupSlots.length > 0) {
+        const isOptimal = tpl.localTreasureHints?.some(h => h.isEightStepOptimal) ?? false;
+        designedSlotGroups.push({ isOptimal, slots: groupSlots });
       }
     }
 
@@ -450,16 +795,23 @@ export class HierarchicalThemeBlockGenerator {
       }
     }
 
-    // 3. まず意図された宝箱スロット ('c') を優先的にアクティベート
+    // 3. ブロック（部屋）単位で宝箱スロット ('c') をアクティベート（8歩最適部屋をやや優先）
     let neededChests = Math.max(0, targetChests - currentChests);
-    if (neededChests > 0 && designedChestSlots.length > 0) {
-      const shuffledSlots = rng.shuffle([...designedChestSlots]);
-      const toActivate = Math.min(neededChests, shuffledSlots.length);
-      for (let i = 0; i < toActivate; i++) {
-        map.setObject(shuffledSlots[i], 'CHEST');
-        currentChests++;
+    if (neededChests > 0 && designedSlotGroups.length > 0) {
+      const optimalGroups = rng.shuffle(designedSlotGroups.filter(g => g.isOptimal));
+      const otherGroups = rng.shuffle(designedSlotGroups.filter(g => !g.isOptimal));
+      const orderedGroups = [...optimalGroups, ...otherGroups];
+
+      for (const group of orderedGroups) {
+        if (neededChests <= 0) break;
+        const slots = rng.shuffle([...group.slots]);
+        const toActivate = Math.min(neededChests, slots.length);
+        for (let i = 0; i < toActivate; i++) {
+          map.setObject(slots[i], 'CHEST');
+          currentChests++;
+          neededChests--;
+        }
       }
-      neededChests = Math.max(0, targetChests - currentChests);
     }
 
     // 4. それでも不足する場合、空き床から「壁際（部屋の隅）」を優先して配置
@@ -495,13 +847,59 @@ export class HierarchicalThemeBlockGenerator {
         }
       }
 
-      // 壁際（スコア1以上）を優先し、同スコア内ではランダムにシャッフル
+      // 壁際（スコア1以上）を優先し、8歩チェーンが繋がりやすいよう近傍クラスタ単位で配置
       const shuffledFloors = rng.shuffle(freeFloorsWithWallScore);
       shuffledFloors.sort((a, b) => b.score - a.score);
 
-      const toPlace = Math.min(neededChests, shuffledFloors.length);
-      for (let i = 0; i < toPlace; i++) {
-        map.setObject(shuffledFloors[i].pos, 'CHEST');
+      const usedKeys = new Set<number>();
+      let placedExtra = 0;
+      let dynamicZoneIdx = 0;
+
+      for (const seedCand of shuffledFloors) {
+        if (placedExtra >= neededChests) break;
+        const sKey = seedCand.pos.y * WORLD_SIZE_TILES + seedCand.pos.x;
+        if (usedKeys.has(sKey)) continue;
+
+        // クラスタ中心として採用し、近傍(マンハッタン距離<=4)の空き床を最大8個まとめて配置
+        const clusterMembers = shuffledFloors
+          .filter(c => {
+            const k = c.pos.y * WORLD_SIZE_TILES + c.pos.x;
+            if (usedKeys.has(k)) return false;
+            return map.getTorusDistance(seedCand.pos, c.pos).manhattan <= 4;
+          })
+          .sort((a, b) =>
+            map.getTorusDistance(seedCand.pos, a.pos).manhattan -
+            map.getTorusDistance(seedCand.pos, b.pos).manhattan
+          );
+
+        const clusterLimit = Math.min(8, neededChests - placedExtra, clusterMembers.length);
+        let minX = seedCand.pos.x;
+        let maxX = seedCand.pos.x;
+        let minY = seedCand.pos.y;
+        let maxY = seedCand.pos.y;
+        for (let i = 0; i < clusterLimit; i++) {
+          const pos = clusterMembers[i].pos;
+          map.setObject(pos, 'CHEST');
+          usedKeys.add(pos.y * WORLD_SIZE_TILES + pos.x);
+          placedExtra++;
+          if (Math.abs(pos.x - seedCand.pos.x) <= 8) {
+            minX = Math.min(minX, pos.x);
+            maxX = Math.max(maxX, pos.x);
+          }
+          if (Math.abs(pos.y - seedCand.pos.y) <= 8) {
+            minY = Math.min(minY, pos.y);
+            maxY = Math.max(maxY, pos.y);
+          }
+        }
+        if (clusterLimit >= 4 && map.tacticalMetadata && maxX - minX <= 10 && maxY - minY <= 10) {
+          map.tacticalMetadata.treasureZoneHints.push({
+            id: `dynamic_cluster_${dynamicZoneIdx++}`,
+            bounds: { x1: minX, y1: minY, x2: maxX, y2: maxY },
+            entryPorts: [{ ...seedCand.pos }],
+            chestCount: clusterLimit,
+            isEightStepOptimal: true,
+          });
+        }
       }
     }
 
@@ -527,6 +925,7 @@ export class HierarchicalThemeBlockGenerator {
             const hDist = map.getTorusDistance(pos, map.homePos).chebyshev;
             if (dDist > 4 && hDist > 3) {
               let wallScore = 0;
+              let openNeighbors = 0;
               const dirs = [
                 { dx: -1, dy: 0 }, { dx: 1, dy: 0 }, { dx: 0, dy: -1 }, { dx: 0, dy: 1 },
               ];
@@ -534,9 +933,14 @@ export class HierarchicalThemeBlockGenerator {
                 const np = map.wrapPosition({ x: x + d.dx, y: y + d.dy });
                 if (map.getObject(np) === 'BLOCK' || map.getBaseTile(np) === 'WALL_STATIC') {
                   wallScore++;
+                } else if (map.getBaseTile(np) !== 'GRAVE') {
+                  openNeighbors++;
                 }
               }
-              freeGraveCandidates.push({ pos, score: wallScore });
+              // 幅1マス通路（openNeighbors <= 2）を塞がないよう、周囲3方向以上が開いている場所のみ許可
+              if (openNeighbors >= 3) {
+                freeGraveCandidates.push({ pos, score: wallScore });
+              }
             }
           }
         }
@@ -595,17 +999,27 @@ export class HierarchicalThemeBlockGenerator {
         const key = `${next.x},${next.y}`;
         if (reachableFromHome.has(key)) continue;
         if (map.getBaseTile(next) === 'WALL_STATIC') continue;
+        if (map.getBaseTile(next) === 'GRAVE' && map.getObject(next) === 'NONE') continue;
         if (map.getObject(next) === 'BLOCK') continue;
-        if (map.getObject(next) === 'CHEST') continue;
-        if (map.getObject(next) === 'CHEST_DRAGON') continue;
         reachableFromHome.add(key);
         queue.push(next);
       }
     }
 
+    const ghostSpawnPositions: Position[] = [
+      { x: 20, y: 20 },
+      { x: 44, y: 44 },
+      { x: 20, y: 44 },
+      { x: 44, y: 20 },
+    ];
+    const isFarFromGhostSpawn = (pos: Position): boolean =>
+      ghostSpawnPositions.every(gp => map.getTorusDistance(pos, gp).chebyshev >= 8);
+
     const placeItemAtDistance = (itemType: any, minD: number, maxD: number) => {
       const candidates: Position[] = [];
+      const safeFallback: Position[] = [];
       const reachableFallback: Position[] = [];
+      const avoidGhost = itemType === 'SWORD' || itemType === 'KEY' || itemType === 'RING';
 
       for (let y = 0; y < map.height; y++) {
         for (let x = 0; x < map.width; x++) {
@@ -618,8 +1032,12 @@ export class HierarchicalThemeBlockGenerator {
 
           if (isReachable) {
             reachableFallback.push(pos);
-            if (dist >= minD && dist <= maxD) {
-              candidates.push(pos);
+            const ghostOk = !avoidGhost || isFarFromGhostSpawn(pos);
+            if (ghostOk) {
+              safeFallback.push(pos);
+              if (dist >= minD && dist <= maxD) {
+                candidates.push(pos);
+              }
             }
           }
         }
@@ -628,6 +1046,13 @@ export class HierarchicalThemeBlockGenerator {
       if (candidates.length > 0) {
         const chosen = candidates[rng.nextInt(0, candidates.length - 1)];
         map.setItem(chosen, itemType);
+      } else if (safeFallback.length > 0) {
+        safeFallback.sort((a, b) => {
+          const da = Math.abs(map.getTorusDistance(a, map.homePos).manhattan - minD);
+          const db = Math.abs(map.getTorusDistance(b, map.homePos).manhattan - minD);
+          return da - db;
+        });
+        map.setItem(safeFallback[0], itemType);
       } else if (reachableFallback.length > 0) {
         // 到達可能マスの中で、目標距離 minD に最も近いものを選択
         reachableFallback.sort((a, b) => {

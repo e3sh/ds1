@@ -28,8 +28,8 @@ export const TREASURE_4x4_ALCOVE: ThemeBlockTemplate = {
   category: 'TREASURE',
   layout: [
     '####',
-    '#CC#',
-    '#C$.',
+    '#cc#',
+    '#c$.',
     '##.#',
   ],
   allowRotation: true,
@@ -49,34 +49,19 @@ export const TREASURE_4x4_ALCOVE: ThemeBlockTemplate = {
   ],
 };
 
-/**
- * 8x8 2列ギャラリー中宝物室 (8歩周期チェーン最適)
- * 中央に通路(1マス)を挟み、両側に宝箱が並ぶ構造（計10個）。
- * 移動しながら連続して8歩周期で開錠するのに最も適した形状。
- *
- *   0 1 2 3 4 5 6 7
- * 0 . . # # # # . .
- * 1 . # C C C C # .
- * 2 # # . . . . # #
- * 3 . . . . . . . .
- * 4 # # . . . . # #
- * 5 . # C C C C # .
- * 6 . . # # # # . .
- * 7 . . . . . . . .
- */
 export const TREASURE_8x8_GALLERY: ThemeBlockTemplate = {
   id: 'treasure_8x8_gallery',
   size: '8x8',
   category: 'TREASURE',
   layout: [
-    '..####..',
-    '.#CCCC#.',
-    '##....##',
+    '#.######',
+    '#.cccc.#',
     '........',
-    '##....##',
-    '.#CCCC#.',
-    '..####..',
-    '........',
+    '#.cccc.#',
+    '#......#',
+    '#.cccc.#',
+    '#......#',
+    '#.######',
   ],
   allowRotation: true,
   allowFlip: true,
@@ -90,30 +75,26 @@ export const TREASURE_8x8_GALLERY: ThemeBlockTemplate = {
     {
       id: 'gallery_8x8',
       bounds: { x1: 2, y1: 1, x2: 5, y2: 5 },
-      entryPorts: [{ x: 0, y: 3 }, { x: 7, y: 3 }],
-      chestCount: 8,
+      entryPorts: [{ x: 0, y: 2 }, { x: 7, y: 2 }],
+      chestCount: 12,
       isEightStepOptimal: true,
     },
   ],
 };
 
-/**
- * 8x8 市松模様宝箱部屋 (8歩周期チェーン最適)
- * 通路と宝箱が格子状に交互に並び、敵を撒きながら連続開錠できる。
- */
 export const TREASURE_8x8_CHECKER: ThemeBlockTemplate = {
   id: 'treasure_8x8_checker',
   size: '8x8',
   category: 'TREASURE',
   layout: [
-    '..#.##..',
-    '.#C.C.#.',
-    '..#.C.C.',
-    '..C.C.C.',
-    '.C.C.C..',
-    '.#C.C.#.',
-    '..#.##..',
-    '........',
+    '##.#####',
+    '#c.c.c.#',
+    '..c.c.c#',
+    '#c.c.c.#',
+    '#......#',
+    '#.c.c.c.',
+    '#......#',
+    '##.#####',
   ],
   allowRotation: true,
   allowFlip: true,
@@ -127,8 +108,8 @@ export const TREASURE_8x8_CHECKER: ThemeBlockTemplate = {
     {
       id: 'checker_8x8',
       bounds: { x1: 1, y1: 1, x2: 6, y2: 5 },
-      entryPorts: [{ x: 0, y: 3 }, { x: 7, y: 4 }],
-      chestCount: 14,
+      entryPorts: [{ x: 0, y: 2 }, { x: 7, y: 5 }],
+      chestCount: 12,
       isEightStepOptimal: true,
     },
   ],
@@ -144,18 +125,18 @@ export const TREASURE_12x12_COMPLEX: ThemeBlockTemplate = {
   size: '12x12',
   category: 'TREASURE',
   layout: [
-    '..#.........',
-    '.###.######.',
-    '.#...#CCCC#.',
-    '.#.###CCCC#.',
-    '.#.#..#...#.',
-    '.#.#.##...#.',
-    '.#.#.##...#.',
-    '.#.#.##...#.',
-    '.#.###....#.',
-    '.#...#....#.',
-    '.###.######.',
-    '..#.........',
+    '##.#########',
+    '#..#..#cccc#',
+    '#..#..#cccc#',
+    '#..#..#....#',
+    '#.##.......#',
+    '............',
+    '#..........#',
+    '#..........#',
+    '#.##.###.#.#',
+    '#..#.....#.#',
+    '#.########.#',
+    '##.#########',
   ],
   allowRotation: true,
   allowFlip: true,
@@ -176,40 +157,35 @@ export const TREASURE_12x12_COMPLEX: ThemeBlockTemplate = {
   localTreasureHints: [
     {
       id: 'complex_12x12_hall',
-      bounds: { x1: 6, y1: 2, x2: 9, y2: 4 },
-      entryPorts: [{ x: 5, y: 4 }],
+      bounds: { x1: 7, y1: 1, x2: 10, y2: 2 },
+      entryPorts: [{ x: 7, y: 3 }],
       chestCount: 8,
       isEightStepOptimal: true,
     },
   ],
 };
 
-/**
- * 16x16 大宝物庫 ＆ 外周迷路 (広域テーマ)
- * 中央にパワーストーン S を擁する大宝物庫があり、二重の外周迷路で囲まれている。
- * 4x4 サブスロットを2つ内蔵。
- */
 export const TREASURE_16x16_GRAND_VAULT: ThemeBlockTemplate = {
   id: 'treasure_16x16_grand_vault',
   size: '16x16',
   category: 'TREASURE',
   layout: [
-    '..#.......#.....',
-    '.###.###.###.##.',
-    '.#...#.#...#..#.',
-    '.#.###.###.#..#.',
-    '.#.#.....#.#..#.',
-    '.#.#.###.#.#..#.',
-    '.#.#.#S#.#.#..#.',
-    '.#.#.CCC.#.#..#.',
-    '.#.#.CCC.#.#..#.',
-    '.#.#.....#.#..#.',
-    '.#.#.###.#.#..#.',
-    '.#.#...#.#.#..#.',
-    '.#.###.#.###..#.',
-    '.#...#.#......#.',
-    '.###.###.######.',
-    '..#.......#.....',
+    '....##.#####.###',
+    '....#..#...#...#',
+    '....#.###.###..#',
+    '....#.#.....#..#',
+    '#####.#.###.#.##',
+    '#...#.#.#S#.#..#',
+    '....#.#.ccc.#...',
+    '#.###.#.ccc.#..#',
+    '#.#...#.....#..#',
+    '#.#.###.###.#..#',
+    '#.#.#...#...#..#',
+    '#.###.###.###.##',
+    '#...#.#.#.......',
+    '#.#.#.#.#.......',
+    '#.#...#.#.......',
+    '######.#########',
   ],
   allowRotation: true,
   allowFlip: true,
@@ -236,27 +212,24 @@ export const TREASURE_16x16_GRAND_VAULT: ThemeBlockTemplate = {
   localTreasureHints: [
     {
       id: 'grand_vault_center',
-      bounds: { x1: 5, y1: 6, x2: 8, y2: 8 },
-      entryPorts: [{ x: 6, y: 9 }],
+      bounds: { x1: 8, y1: 6, x2: 10, y2: 7 },
+      entryPorts: [{ x: 9, y: 8 }],
       chestCount: 6,
       isEightStepOptimal: false,
     },
   ],
 };
 
-/**
- * 4x4 隙間なし高密度宝箱パック (12個)
- */
 export const TREASURE_4x4_DENSE_PACK: ThemeBlockTemplate = {
   id: 'treasure_4x4_dense_pack',
   size: '4x4',
   category: 'TREASURE',
   weight: 2,
   layout: [
-    '.CC.',
-    'CCCC',
-    'CCCC',
-    '.CC.',
+    '#.c#',
+    'cccc',
+    'cccc',
+    '#c.#',
   ],
   allowRotation: true,
   allowFlip: true,
@@ -271,29 +244,26 @@ export const TREASURE_4x4_DENSE_PACK: ThemeBlockTemplate = {
       id: 'dense_pack_4x4',
       bounds: { x1: 0, y1: 0, x2: 3, y2: 3 },
       entryPorts: [{ x: 1, y: 0 }, { x: 2, y: 3 }],
-      chestCount: 12,
+      chestCount: 10,
       isEightStepOptimal: true,
     },
   ],
 };
 
-/**
- * 8x8 隙間なし高密度宝物庫 (24個)
- */
 export const TREASURE_8x8_SOLID_VAULT: ThemeBlockTemplate = {
   id: 'treasure_8x8_solid_vault',
   size: '8x8',
   category: 'TREASURE',
   weight: 2,
   layout: [
-    '..####..',
-    '.#CCCC#.',
-    '.#CCCC#.',
-    '..CCCC..',
-    '..CCCC..',
-    '.#CCCC#.',
-    '.#CCCC#.',
-    '..####..',
+    '#.######',
+    '#......#',
+    '..cccc..',
+    '#.cccc.#',
+    '#.cccc.#',
+    '#.cccc.#',
+    '#......#',
+    '#.######',
   ],
   allowRotation: true,
   allowFlip: true,
@@ -306,31 +276,28 @@ export const TREASURE_8x8_SOLID_VAULT: ThemeBlockTemplate = {
   localTreasureHints: [
     {
       id: 'solid_vault_8x8',
-      bounds: { x1: 2, y1: 1, x2: 5, y2: 6 },
-      entryPorts: [{ x: 1, y: 3 }, { x: 6, y: 4 }],
-      chestCount: 24,
+      bounds: { x1: 2, y1: 2, x2: 5, y2: 5 },
+      entryPorts: [{ x: 1, y: 2 }, { x: 6, y: 2 }],
+      chestCount: 16,
       isEightStepOptimal: true,
     },
   ],
 };
 
-/**
- * 8x8 二室連立高密度宝物庫 (20個)
- */
 export const TREASURE_8x8_DOUBLE_CHAMBER: ThemeBlockTemplate = {
   id: 'treasure_8x8_double_chamber',
   size: '8x8',
   category: 'TREASURE',
   weight: 2,
   layout: [
-    '..#..#..',
-    '.#CC#CC#',
-    '.#CC.CC#',
-    '..CC.CC.',
-    '.#CC.CC#',
-    '.#CC#CC#',
-    '..#..#..',
-    '........',
+    '#.######',
+    '#.cc#cc#',
+    '..cc.cc.',
+    '#.cc.cc#',
+    '#...#..#',
+    '#.cc#cc#',
+    '#......#',
+    '#.######',
   ],
   allowRotation: true,
   allowFlip: true,
@@ -344,34 +311,31 @@ export const TREASURE_8x8_DOUBLE_CHAMBER: ThemeBlockTemplate = {
     {
       id: 'double_chamber_8x8',
       bounds: { x1: 2, y1: 1, x2: 6, y2: 5 },
-      entryPorts: [{ x: 1, y: 3 }, { x: 4, y: 2 }],
-      chestCount: 20,
+      entryPorts: [{ x: 1, y: 2 }, { x: 4, y: 2 }],
+      chestCount: 16,
       isEightStepOptimal: true,
     },
   ],
 };
 
-/**
- * 12x12 大宝物殿 (56個 + 金貨・パワーストーン)
- */
 export const TREASURE_12x12_TREASURY: ThemeBlockTemplate = {
   id: 'treasure_12x12_treasury',
   size: '12x12',
   category: 'TREASURE',
   weight: 1,
   layout: [
-    '..#......#..',
-    '.###.##.###.',
-    '.#CCCCCCCC#.',
-    '.#CCCCCCCC#.',
-    '..CCCCCCCC..',
-    '.#CC$SS$CC#.',
-    '.#CC$SS$CC#.',
-    '..CCCCCCCC..',
-    '.#CCCCCCCC#.',
-    '.#CCCCCCCC#.',
-    '.###.##.###.',
-    '..#......#..',
+    '#####.######',
+    '#..........#',
+    '#.cccccccc.#',
+    '#.cccccccc.#',
+    '#..........#',
+    '...cc$SS$cc.',
+    '#.cc$SS$cc.#',
+    '#..........#',
+    '#.cccccccc.#',
+    '#.cccccccc.#',
+    '#..........#',
+    '#####.######',
   ],
   allowRotation: true,
   allowFlip: true,
@@ -385,8 +349,8 @@ export const TREASURE_12x12_TREASURY: ThemeBlockTemplate = {
     {
       id: 'treasury_12x12',
       bounds: { x1: 2, y1: 2, x2: 9, y2: 9 },
-      entryPorts: [{ x: 1, y: 4 }, { x: 10, y: 7 }],
-      chestCount: 56,
+      entryPorts: [{ x: 1, y: 5 }, { x: 10, y: 5 }],
+      chestCount: 40,
       isEightStepOptimal: true,
     },
   ],
@@ -451,14 +415,14 @@ export const MAZE_8x8_WINDING: ThemeBlockTemplate = {
   size: '8x8',
   category: 'MAZE',
   layout: [
-    '..####..',
-    '.#....#.',
-    '.#.##.#.',
-    '.#.#..#.',
-    '.#..#.#.',
-    '.#.##.#.',
-    '.#....#.',
-    '..####..',
+    '#.######',
+    '#.#....#',
+    '..#.##.#',
+    '#.#.#..#',
+    '#.#..#.#',
+    '#.#.##.#',
+    '#......#',
+    '#.######',
   ],
   allowRotation: true,
   allowFlip: true,
@@ -471,26 +435,151 @@ export const MAZE_8x8_WINDING: ThemeBlockTemplate = {
 };
 
 /**
- * 12x12 渦巻き型迷路
- * 外周から中心へと渦を巻きながら進む迷路。中央にアイテム・宝箱スロットを配置可能。
+ * 4x4 直線・壁厚回廊ピース (CORRIDOR)
  */
+export const MAZE_4x4_CORRIDOR_I: ThemeBlockTemplate = {
+  id: 'maze_4x4_corridor_i',
+  size: '4x4',
+  category: 'CORRIDOR',
+  layout: [
+    '#.##',
+    '#.##',
+    '#.##',
+    '#.##',
+  ],
+  allowRotation: true,
+  allowFlip: true,
+  edgePorts: [
+    { direction: 'NORTH', cellIndex: 0, offsetInCell: 1 },
+    { direction: 'SOUTH', cellIndex: 0, offsetInCell: 1 },
+  ],
+};
+
+/**
+ * 4x4 T字路回廊ピース (CORRIDOR)
+ */
+export const MAZE_4x4_T_JUNCTION: ThemeBlockTemplate = {
+  id: 'maze_4x4_t_junction',
+  size: '4x4',
+  category: 'CORRIDOR',
+  layout: [
+    '#.##',
+    '#...',
+    '#.##',
+    '#.##',
+  ],
+  allowRotation: true,
+  allowFlip: true,
+  edgePorts: [
+    { direction: 'NORTH', cellIndex: 0, offsetInCell: 1 },
+    { direction: 'SOUTH', cellIndex: 0, offsetInCell: 1 },
+    { direction: 'EAST', cellIndex: 0, offsetInCell: 1 },
+  ],
+};
+
+/**
+ * 8x8 高密度格子迷路 (NARROW_MAZE向け)
+ */
+export const MAZE_8x8_GRID_LABYRINTH: ThemeBlockTemplate = {
+  id: 'maze_8x8_grid_labyrinth',
+  size: '8x8',
+  category: 'MAZE',
+  layout: [
+    '#.######',
+    '#...#..#',
+    '.##.#.##',
+    '#.#....#',
+    '#.#.##.#',
+    '#....#..',
+    '###.##.#',
+    '#.######',
+  ],
+  allowRotation: true,
+  allowFlip: true,
+  edgePorts: [
+    { direction: 'NORTH', cellIndex: 0, offsetInCell: 1 },
+    { direction: 'SOUTH', cellIndex: 0, offsetInCell: 1 },
+    { direction: 'WEST', cellIndex: 0, offsetInCell: 2 },
+    { direction: 'EAST', cellIndex: 1, offsetInCell: 1 },
+  ],
+};
+
+/**
+ * 8x8 要塞アリーナ・トーチカ部屋 (FORTRESS_ARENA向け)
+ */
+export const ARENA_8x8_PILLBOX: ThemeBlockTemplate = {
+  id: 'arena_8x8_pillbox',
+  size: '8x8',
+  category: 'MISC',
+  layout: [
+    '##.##.##',
+    '#......#',
+    '........',
+    '#..##..#',
+    '#..##..#',
+    '........',
+    '#......#',
+    '##.##.##',
+  ],
+  allowRotation: true,
+  allowFlip: true,
+  edgePorts: [
+    { direction: 'NORTH', cellIndex: 0, offsetInCell: 2 },
+    { direction: 'SOUTH', cellIndex: 0, offsetInCell: 2 },
+    { direction: 'WEST', cellIndex: 0, offsetInCell: 2 },
+    { direction: 'EAST', cellIndex: 1, offsetInCell: 1 },
+  ],
+};
+
+/**
+ * 12x12 コロッセオ大闘技場 (FORTRESS_ARENA向け)
+ * 外周を厚壁で囲み、内部に広大な開放空間と4基の十字トーチカを配する。
+ */
+export const ARENA_12x12_COLOSSEUM: ThemeBlockTemplate = {
+  id: 'arena_12x12_colosseum',
+  size: '12x12',
+  category: 'MISC',
+  layout: [
+    '#####..#####',
+    '#..........#',
+    '#..#....#..#',
+    '#.##....##.#',
+    '#..........#',
+    '............',
+    '............',
+    '#..........#',
+    '#.##....##.#',
+    '#..#....#..#',
+    '#..........#',
+    '#####..#####',
+  ],
+  allowRotation: true,
+  allowFlip: true,
+  edgePorts: [
+    { direction: 'NORTH', cellIndex: 1, offsetInCell: 1 },
+    { direction: 'SOUTH', cellIndex: 1, offsetInCell: 1 },
+    { direction: 'WEST', cellIndex: 1, offsetInCell: 1 },
+    { direction: 'EAST', cellIndex: 1, offsetInCell: 1 },
+  ],
+};
+
 export const MAZE_12x12_SPIRAL: ThemeBlockTemplate = {
   id: 'maze_12x12_spiral',
   size: '12x12',
   category: 'MAZE',
   layout: [
-    '..##########',
-    '.#..........',
-    '.#.########.',
-    '.#.#......#.',
-    '.#.#.####.#.',
-    '.#.#.#..#.#.',
-    '.#.#.#C.#.#.',
-    '.#.#.##.#.#.',
-    '.#.#....#.#.',
-    '.#.######.#.',
-    '.#........#.',
-    '###########.',
+    '#.##########',
+    '#..........#',
+    '#.########.#',
+    '#.#......#.#',
+    '#.#.####.#.#',
+    '#.#.#..#.#.#',
+    '#.#.#c.#.#.#',
+    '#.#.##.#.#.#',
+    '#.#....#.#.#',
+    '#.######.#.#',
+    '#..........#',
+    '##########.#',
   ],
   allowRotation: true,
   allowFlip: true,
@@ -521,6 +610,11 @@ export const ALL_TREASURE_AND_MAZE_BLOCKS: ThemeBlockTemplate[] = [
   TREASURE_16x16_GRAND_VAULT,
   MAZE_4x4_CRANK,
   MAZE_4x4_CROSS,
+  MAZE_4x4_CORRIDOR_I,
+  MAZE_4x4_T_JUNCTION,
   MAZE_8x8_WINDING,
+  MAZE_8x8_GRID_LABYRINTH,
   MAZE_12x12_SPIRAL,
+  ARENA_8x8_PILLBOX,
+  ARENA_12x12_COLOSSEUM,
 ];

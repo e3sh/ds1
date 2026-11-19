@@ -98,6 +98,7 @@ export class GameEngine {
     EnemyAISystem.setDefaultRng(this.rng);
     GhostAISystem.setDefaultRng(this.rng);
     ChestSystem.setDefaultRng(this.rng);
+    MagicSystem.setDefaultRng(this.rng);
 
     this.audio = PSGAudio.getInstance();
     this.canvas = resolvedCanvas;

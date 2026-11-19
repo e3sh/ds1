@@ -67,7 +67,8 @@ export class TurnExecutionController {
       this.engine.getEnemies(),
       this.engine.getGhosts(),
       this.engine.getDragon(),
-      systemInfo
+      systemInfo,
+      this.engine.getRng()
     );
 
     this.engine.getEventBus().emit('magic:cast', {

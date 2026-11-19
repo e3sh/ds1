@@ -253,7 +253,7 @@ export const SUPPLY_4x4_PANTRY: ThemeBlockTemplate = {
   maxInstances: 3,
   layout: [
     '#..#',
-    '.C$.',
+    '.c$.',
     '.P..',
     '#..#',
   ],
@@ -328,7 +328,7 @@ export const SUPPLY_4x4_CROSSROAD: ThemeBlockTemplate = {
   maxInstances: 3,
   layout: [
     '.#..',
-    '#CP.',
+    '#cP.',
     '.$#.',
     '..#.',
   ],
@@ -352,6 +352,87 @@ export const SUPPLY_4x4_CROSSROAD: ThemeBlockTemplate = {
 };
 
 /**
+ * ============================================================================
+ * ピラーグリッド専用ブロック (PILLAR_GRID向け)
+ * ============================================================================
+ */
+
+export const PILLAR_4x4_QUAD: ThemeBlockTemplate = {
+  id: 'pillar_4x4_quad',
+  size: '4x4',
+  category: 'MISC',
+  weight: 2,
+  layout: [
+    '#.#.',
+    '....',
+    '#.#.',
+    '....',
+  ],
+  allowRotation: true,
+  allowFlip: true,
+  edgePorts: [
+    { direction: 'NORTH', cellIndex: 0, offsetInCell: 1 },
+    { direction: 'SOUTH', cellIndex: 0, offsetInCell: 1 },
+    { direction: 'WEST', cellIndex: 0, offsetInCell: 1 },
+    { direction: 'EAST', cellIndex: 0, offsetInCell: 1 },
+  ],
+};
+
+export const PILLAR_8x8_GRID: ThemeBlockTemplate = {
+  id: 'pillar_8x8_grid',
+  size: '8x8',
+  category: 'MISC',
+  weight: 2,
+  layout: [
+    '.#.#.#.#',
+    '........',
+    '.#.#.#.#',
+    '........',
+    '.#.#.#.#',
+    '........',
+    '.#.#.#.#',
+    '........',
+  ],
+  allowRotation: true,
+  allowFlip: true,
+  edgePorts: [
+    { direction: 'NORTH', cellIndex: 0, offsetInCell: 2 },
+    { direction: 'NORTH', cellIndex: 1, offsetInCell: 2 },
+    { direction: 'SOUTH', cellIndex: 0, offsetInCell: 2 },
+    { direction: 'SOUTH', cellIndex: 1, offsetInCell: 2 },
+    { direction: 'WEST', cellIndex: 0, offsetInCell: 1 },
+    { direction: 'WEST', cellIndex: 1, offsetInCell: 1 },
+    { direction: 'EAST', cellIndex: 0, offsetInCell: 1 },
+    { direction: 'EAST', cellIndex: 1, offsetInCell: 1 },
+  ],
+};
+
+export const PILLAR_8x8_L_PILLARS: ThemeBlockTemplate = {
+  id: 'pillar_8x8_l_pillars',
+  size: '8x8',
+  category: 'MISC',
+  weight: 2,
+  layout: [
+    '.#...#..',
+    '.##..##.',
+    '........',
+    '.#...#..',
+    '.#...#..',
+    '.##..##.',
+    '........',
+    '..#...#.',
+  ],
+  allowRotation: true,
+  allowFlip: true,
+  edgePorts: [
+    { direction: 'NORTH', cellIndex: 0, offsetInCell: 2 },
+    { direction: 'SOUTH', cellIndex: 0, offsetInCell: 1 },
+    { direction: 'WEST', cellIndex: 0, offsetInCell: 2 },
+    { direction: 'EAST', cellIndex: 1, offsetInCell: 2 },
+  ],
+};
+
+/**
  * 新規追加された空き地・密閉・補給ブロック一覧
  */
 export const ALL_OPEN_AND_ENCLOSED_BLOCKS: ThemeBlockTemplate[] = [
@@ -365,4 +446,10 @@ export const ALL_OPEN_AND_ENCLOSED_BLOCKS: ThemeBlockTemplate[] = [
   SUPPLY_4x4_PANTRY,
   SUPPLY_4x4_CACHE,
   SUPPLY_4x4_CROSSROAD,
+];
+
+export const ALL_PILLAR_BLOCKS: ThemeBlockTemplate[] = [
+  PILLAR_4x4_QUAD,
+  PILLAR_8x8_GRID,
+  PILLAR_8x8_L_PILLARS,
 ];

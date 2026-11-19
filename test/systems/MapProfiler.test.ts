@@ -23,7 +23,7 @@ console.log('Testing 1: Geometric metrics calculation (openness, mazeIndex, swor
   map.setBaseTile({ x: 10, y: 10 }, 'HOME');
   map.dragonCenter = { x: 32, y: 32 };
 
-  // 我が家から距離5の位置にSWORDを配置
+  // 我が家から距離5の位置にSWORDを配置 (途中(10,12)の未封鎖GRAVEを迂回するため実徒歩距離は7歩)
   map.setItem({ x: 10, y: 15 }, 'SWORD');
 
   // 我が家周囲（距離2〜4）に未封鎖の墓を3基配置
@@ -44,7 +44,7 @@ console.log('Testing 1: Geometric metrics calculation (openness, mazeIndex, swor
   assert.ok(typeof metrics.mazeIndex === 'number', 'mazeIndex should be a number');
   assert.ok(metrics.opennessScore >= 0 && metrics.opennessScore <= 1, 'opennessScore in [0, 1]');
   assert.ok(metrics.mazeIndex >= 0 && metrics.mazeIndex <= 1, 'mazeIndex in [0, 1]');
-  assert.strictEqual(metrics.swordWalkDistance, 5, 'swordWalkDistance should be 5 steps');
+  assert.strictEqual(metrics.swordWalkDistance, 7, 'swordWalkDistance should be 7 steps (detouring around unsealed GRAVE)');
   assert.strictEqual(metrics.nearHomeGraves, 3, 'nearHomeGraves should count only unblocked graves (3)');
   assert.ok(metrics.lairAccessibility.entranceCount > 0, 'lair entrance count should be > 0');
 
