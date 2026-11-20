@@ -656,12 +656,12 @@ export class MapProfiler {
     // 1. 基本チャレンジ指数の算出 (1 〜 100)
     let score = 50;
 
-    // 剣までの距離 (-12 〜 +20)
+    // 剣までの距離 (-12 〜 +18)
     if (metrics.swordWalkDistance >= 26) {
-      score += 20;
+      score += 18;
       tags.push('DISTANT_SWORD');
     } else if (metrics.swordWalkDistance >= 18) {
-      score += 10;
+      score += 8;
     } else if (metrics.swordWalkDistance <= 12) {
       score -= 12;
       tags.push('EARLY_SWORD');
@@ -678,31 +678,31 @@ export class MapProfiler {
       tags.push('PEACEFUL_HOME');
     }
 
-    // 迷路度 (-6 〜 +12)
-    if (metrics.mazeIndex >= 0.17) {
-      score += 12;
+    // 迷路度 (-8 〜 +10): ハイブリッド生成後の実測分布 (0.09〜0.67) に準拠
+    if (metrics.mazeIndex >= 0.50) {
+      score += 10;
       tags.push('LABYRINTH');
-    } else if (metrics.mazeIndex <= 0.12) {
-      score -= 6;
+    } else if (metrics.mazeIndex <= 0.15) {
+      score -= 8;
     }
 
-    // 開放度 (-8)
-    if (metrics.opennessScore >= 0.14) {
+    // 開放度 (-8): estimateTopology の FORTRESS_ARENA 閾値 (0.25) と整合
+    if (metrics.opennessScore >= 0.25) {
       score -= 8;
       tags.push('OPEN_ARENA');
     }
 
-    // セクター分断度 (+10)
-    if (metrics.sectorPartitionScore >= 0.33) {
-      score += 10;
+    // セクター分断度 (+8): estimateTopology の MULTI_SECTOR 閾値 (0.65) と整合
+    if (metrics.sectorPartitionScore >= 0.65) {
+      score += 8;
       tags.push('DIVIDED_SECTOR');
     }
 
-    // ドラゴン要塞アクセス度 (-8 〜 +12)
-    if (metrics.lairAccessibility.score <= 0.35) {
-      score += 12;
+    // ドラゴン要塞アクセス度 (-8 〜 +6): 実測分布 (0.71〜1.00) に準拠
+    if (metrics.lairAccessibility.score <= 0.72) {
+      score += 6;
       tags.push('FORTIFIED_LAIR');
-    } else if (metrics.lairAccessibility.score >= 0.60) {
+    } else if (metrics.lairAccessibility.score >= 0.90) {
       score -= 8;
     }
 

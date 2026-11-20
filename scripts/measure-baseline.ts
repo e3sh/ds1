@@ -4,18 +4,7 @@ import { GameEventBus } from '../src/core/GameEventBus.js';
 import { AutoPlayBot } from '../src/ai/AutoPlayBot.js';
 import { DungeonTopology, MapDifficulty, PlayPacingMode } from '../src/models/Types.js';
 import { ThemeBlockAllocator } from '../src/systems/generator/ThemeBlockAllocator.js';
-import {
-  ALL_THEME_BLOCKS,
-  DRAGON_8x8_MAZE_LAIR,
-  DRAGON_12x12_MAZE_LAIR,
-  DRAGON_16x16_GRAND_HALL,
-  HOME_4x4_COZY,
-  HOME_8x8_ESTATE,
-  GRAVE_16x16_NECROPOLIS,
-  TREASURE_16x16_GRAND_VAULT,
-  TREASURE_12x12_COMPLEX,
-  MAZE_12x12_SPIRAL,
-} from '../src/systems/generator/blocks/index.js';
+import { HierarchicalThemeBlockGenerator } from '../src/systems/generator/HierarchicalThemeBlockGenerator.js';
 
 interface RunResult {
   runIndex: number;
@@ -51,40 +40,25 @@ interface RunResult {
 
 function getPlacedBlockCounts(seed: number, topology: DungeonTopology) {
   const rng = new SeedRandom(seed);
-  let dragonTemplate;
-  if (topology === 'FORTRESS_ARENA' || topology === 'GRAND_HALL' as any) {
-    dragonTemplate = DRAGON_16x16_GRAND_HALL;
-  } else if (topology === 'NARROW_MAZE') {
-    dragonTemplate = rng.chance(0.5) ? DRAGON_8x8_MAZE_LAIR : DRAGON_12x12_MAZE_LAIR;
-  } else {
-    const candidates = [DRAGON_16x16_GRAND_HALL, DRAGON_12x12_MAZE_LAIR, DRAGON_8x8_MAZE_LAIR];
-    dragonTemplate = candidates[rng.nextInt(0, candidates.length - 1)];
-  }
-
-  const homeTemplate = rng.chance(0.5) ? HOME_8x8_ESTATE : HOME_4x4_COZY;
-  const largePool = [
-    GRAVE_16x16_NECROPOLIS,
-    TREASURE_16x16_GRAND_VAULT,
-    TREASURE_12x12_COMPLEX,
-    MAZE_12x12_SPIRAL,
-  ];
-  const largeTemplates = rng.shuffle([...largePool]);
-  const mediumPool = ALL_THEME_BLOCKS.filter(b => b.size === '8x8' && b.category !== 'DRAGON' && b.category !== 'HOME');
-  const mediumTemplates = rng.shuffle([...mediumPool]);
-  const smallPool = ALL_THEME_BLOCKS.filter(b => b.size === '4x4' && b.category !== 'HOME');
-  const smallTemplates = rng.shuffle([...smallPool]);
+  const isHybridTopology = topology !== 'STANDARD_ROOMS' && topology !== 'CLASSIC_FIXED';
+  const anyGen = HierarchicalThemeBlockGenerator as any;
+  const config = anyGen.selectTemplatesForConfiguration(topology, undefined, rng, false);
 
   const allocator = new ThemeBlockAllocator(seed);
   const placed = allocator.allocate({
     seed,
-    dragonTemplate,
-    homeTemplate,
+    dragonTemplate: config.dragonTemplate,
+    homeTemplate: config.homeTemplate,
     landmarkMinDistanceTiles: 20,
-    largeTemplates,
-    mediumTemplates,
-    smallTemplates,
-    subSlotSmallTemplates: smallTemplates,
-    subSlotMediumTemplates: mediumTemplates,
+    largeTemplates: config.largeTemplates,
+    largeMaxCount: config.largeMaxCount,
+    mediumTemplates: config.mediumTemplates,
+    mediumMaxCount: isHybridTopology ? 0 : undefined,
+    smallTemplates: config.smallTemplates,
+    subSlotSmallTemplates: config.subSlotSmallTemplates,
+    subSlotMediumTemplates: config.subSlotMediumTemplates,
+    maxInstancesPerBlock: config.maxInstancesPerBlock,
+    fillRemaining: !isHybridTopology,
   });
 
   const counts = {

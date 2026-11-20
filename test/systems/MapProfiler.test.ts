@@ -121,6 +121,32 @@ console.log('Testing 3: Difficulty grading and challenge rating integration...')
   assert.ok(report.summary.length > 0, 'Summary string should not be empty');
 
   console.log(`Profile summary: ${report.summary}`);
+  assert.ok(!report.tags.includes('LABYRINTH'), 'MULTI_SECTOR (avg mazeIndex ~0.34) should not trigger LABYRINTH under calibrated >=0.50 threshold');
+
+  // NARROW_MAZE は迷路度 >= 0.50 を満たし LABYRINTH タグが付与されること
+  const mazeMap = new WorldMap(64, 64);
+  HierarchicalThemeBlockGenerator.generate(mazeMap, {
+    seed: 12345,
+    topology: 'NARROW_MAZE',
+    difficulty: 'NORMAL',
+    pacing: 'STANDARD',
+  });
+  const mazeReport = MapProfiler.profile(mazeMap, { seed: 12345 });
+  assert.ok(mazeReport.metrics.mazeIndex >= 0.50, 'NARROW_MAZE should have mazeIndex >= 0.50');
+  assert.ok(mazeReport.tags.includes('LABYRINTH'), 'NARROW_MAZE should trigger LABYRINTH tag');
+
+  // FORTRESS_ARENA は開放度 >= 0.25 を満たし OPEN_ARENA タグが付与されること
+  const arenaMap = new WorldMap(64, 64);
+  HierarchicalThemeBlockGenerator.generate(arenaMap, {
+    seed: 12345,
+    topology: 'FORTRESS_ARENA',
+    difficulty: 'NORMAL',
+    pacing: 'STANDARD',
+  });
+  const arenaReport = MapProfiler.profile(arenaMap, { seed: 12345 });
+  assert.ok(arenaReport.metrics.opennessScore >= 0.25, 'FORTRESS_ARENA should have opennessScore >= 0.25');
+  assert.ok(arenaReport.tags.includes('OPEN_ARENA'), 'FORTRESS_ARENA should trigger OPEN_ARENA tag');
+
   console.log('✓ 3. Difficulty grading and challenge rating verified.');
 }
 

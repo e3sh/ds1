@@ -6,6 +6,7 @@
   - `src/systems/generator/MapProfiler.ts`
   - `scripts/harvest-seeds.ts`
   - `src/systems/generator/HierarchicalThemeBlockGenerator.ts`
+  - `src/systems/generator/TopologyTerrainBuilder.ts`
   - `src/systems/generator/ThemeBlockAllocator.ts`
   - `src/systems/generator/ThemeBlockTransformer.ts`
   - `src/systems/generator/blocks/index.ts`
@@ -61,69 +62,53 @@
 flowchart TD
     Start(["開始: generateDungeon"]) --> Step1["1. 全レイヤー初期化 (clearMap)"]
     Step1 --> Step2["2. トポロジー別テーマブロック選定 (selectTemplatesForConfiguration)"]
-    Step2 --> Step3["3. 16×16階層アロケーション (ThemeBlockAllocator.allocate)"]
+    Step2 --> Step3["3. 16×16階層アロケーション (ThemeBlockAllocator.allocate)<br/>※ハイブリッド時はランドマークのみ配置 (fillRemaining=false)"]
     Step3 --> Step4["4. WorldMapへのスタンプ展開 & MapTacticalMetadata集計"]
     Step4 --> Step5["5. ドラゴン中心座標・我が家座標の同期 (syncDragonAndHomePositions)"]
-    Step5 --> Step6["6. エッジポート接続 通路開通 (connectEdgePorts)"]
+    Step5 --> Step55["5.5. ハイブリッド連続地形生成 (TopologyTerrainBuilder.build)<br/>※STANDARD_ROOMS/CLASSIC_FIXED以外の5トポロジー"]
+    Step55 --> Step6["6. エッジポート接続 & 境界シーム溶接・連結扉開通<br/>(connectEdgePorts / weldAndConnectBlocks)"]
     Step6 --> Step7["7. スロット予算アクティベーション (activateBudgets: 目標宝箱/墓数)"]
     Step7 --> Step8["8. 難易度別ブートストラップ導線保証 & BFS到達性 (ensureBootstrapRequirements)"]
-    Step8 --> Step9["9. ワープゾーンネットワーク配置 (setupWarpNetwork)"]
-    Step9 --> Step10["10. 最終セーフティクリーンアップ (enforceCriticalClearance)"]
+    Step8 --> Step85["8.5. 複数HOME配置バリエーション (placeAdditionalHomes)"]
+    Step85 --> Step9["9. ワープゾーンネットワーク配置 (setupWarpNetwork)"]
+    Step9 --> Step10["10. 最終セーフティクリーンアップ (enforceCriticalClearance / ensureDragonFireballClearance)"]
     Step10 --> SolvCheck{"11. 解法性診断 (validateSolvability)"}
     SolvCheck --> End(["完了: レポート返却 (MapSolvabilityReport)"])
 ```
 
 ---
 
-### 2.2 全域9セクター不規則分割 & 動的アンカー選定 (`generateDynamicSectors`)
-均等な格子分割（グリッド感）や「いつも左上が家、中央がドラゴン」という固定感を排除するため、64×64空間を3×3の **9つの動的セクター** に分割し、境界に乱数シード依存のジッター（±2マスの揺らぎ）を適用します。
+### 2.2 ハイブリッド生成アーキテクチャと全50テーマブロック構成
+64×64トーラス空間（16×16マクロセル）に対し、**「厳選されたランドマーク／パズル拠点ブロック」** と **「`TopologyTerrainBuilder` による連続地形生成」** を組み合わせたハイブリッド構成を採用しています。
 
-#### 9つの動的セクター構成 (`NORTH_WEST` 〜 `SOUTH_EAST`)
-- `NORTH_WEST`, `NORTH_CENTER`, `NORTH_EAST`
-- `WEST_CENTER`, `CENTER`, `EAST_CENTER`
-- `SOUTH_WEST`, `SOUTH_CENTER`, `SOUTH_EAST`
+#### 全50テーマブロック (`ALL_THEME_BLOCKS`) と離隔配置
+- **テーマブロック総数**: 全50種（`DragonAndHomeBlocks`, `GraveThemeBlocks`, `TreasureAndMazeBlocks`, `OpenAndEnclosedBlocks`, `ItemClusterBlocks`）
+- **ランドマーク離隔保証**: `ThemeBlockAllocator.allocate` により、ドラゴン要塞と我が家ブロックのトーラス・マンハッタン距離が十分離れること（`landmarkMinDistanceTiles: 20`）を保証。
+- **ドラゴン要塞 (`DRAGON_16x16_GRAND_HALL` / `DRAGON_12x12_MAZE_LAIR` / `DRAGON_8x8_MAZE_LAIR`)** と **我が家 (`HOME_8x8_ESTATE` / `HOME_4x4_COZY`)** を基点とし、周囲の連結性と火炎弾射線クリアランスを確保。
 
-#### 我が家（Home）とドラゴン要塞（Dragon Lair）の動的セクター配置
-1. **離隔保証アンカー選定**:
-   - 9セクターの中から「我が家セクター」と「ドラゴンセクター」を動的に選定し、両者のトーラス・マンハッタン距離が十分離れること（$D_{\text{torus}} \ge 20$）を保証します。
-2. **プレハブ（スタンプ）構造 (`FORTRESS_7x7` / `COMPACT_5x5` / `COMPACT_3x3`)**:
-   - ドラゴン要塞は広間向けの `FORTRESS_7x7` と、回廊や迷路セクター内にも自然に埋め込める省スペース型 `COMPACT_5x5`（王冠出現箱4基＋3首正面の宝箱/ポーションバリア＋南側進入路）に対応。
-   - 我が家は `STANDARD_ROOM` と省スペース型 `COMPACT_3x3`（初期ポーション・金貨・遮蔽ブロック同梱）に対応。
-   - ドラゴン首の正面3方向（上・左・右）には最低3マスの火炎弾射線クリアランスが確保されます。
-
-#### タイポロジー動的付与アルゴリズム
-各セクターのアスペクト比 $R = \frac{w}{h}$ と面積に応じて、以下のセクタータイポロジーを割り当てます：
-- $R > 1.8$ または $R < 0.55$: `LONG_CORRIDOR`（細長い連絡回廊）
-- $w \ge 16 \land h \ge 16$ かつ角セクター: `GRAND_HALL`（巨大広間）
-- その他: シャッフルされたプール（`GRAND_HALL`, `CRANK_CHAMBER`, `LONG_CORRIDOR`, `PILLAR_GRID`, `NARROW_MAZE`, `SPIRAL_LABYRINTH`, `STANDARD_ROOM`）から順次配分
+#### トポロジー別の生成方式分岐
+- **`STANDARD_ROOMS` / `CLASSIC_FIXED`（100%ブロック充填方式）**:
+  - 大（16×16 / 12×12）→ 中（8×8）→ 小（4×4）の階層パッキングで全256セルを充填（`fillRemaining: true`）。
+- **ハイブリッド対象5トポロジー（`PILLAR_GRID` / `NARROW_MAZE` / `SPIRAL_LABYRINTH` / `FORTRESS_ARENA` / `MULTI_SECTOR`）**:
+  - `mediumMaxCount: 0`, `fillRemaining: false` とし、ドラゴン・我が家・厳選大ブロック（`GRAVE_16x16_NECROPOLIS`, `TREASURE_12x12_COMPLEX` 等最大2基）のみを配置。
+  - 残余の広大な未占有ベース空間（約75〜80%）に対し、`TopologyTerrainBuilder.build()` が保護マスク（配置済みブロック・ドラゴン7×7・我が家3×3）を尊重しつつ連続地形を生成し、その後 `weldAndConnectBlocks()` によって全領域の連結性（MST＋ループ扉開通）を保証。
 
 ---
 
-### 2.3 トポロジー別構造生成ロジック
+### 2.3 トポロジー別構造生成ロジック (`TopologyTerrainBuilder` / ブロック配合)
 
-1. **`GRAND_HALL` (巨大広間型)**:
-   - 広い開口部を持つ外枠ブロック。中央に 2×2 の島ピラー（装飾柱）を配置。
-   - 内部に 6〜12 個のピラーをランダム散布し、視界の広さと適度な遮蔽を両立。
-2. **`LONG_CORRIDOR` (連絡トンネル型)**:
-   - 水平または垂直方向に 1〜2 マス幅のクランク通路を掘削。
-   - 3マス周期で障害ブロックを配置し、一直線の射線を分断。
-3. **`CRANK_CHAMBER` (クランク部屋型)**:
-   - 部屋の中央を L 字・クランク状の壁で 2 つの小部屋に二分割。
-   - 出入口を対角に配置し、迂回と岩押しパズルを要求。
-4. **`PILLAR_GRID` (ピラー広場型)**:
-   - 2マス間隔で格子状にピラーを生成（生成率 85%）。
-   - 35%の確率で十字方向に連結柱を伸ばし、迷路的な窪み（岩押し退避路）を形成。
-5. **`NARROW_MAZE` (幅1マス迷路型)**:
-   - 典型的な通路幅1・壁厚1の古典的迷路。
-   - **重要仕様**: 約15%の壁を意図的に間引き、袋小路を減らしてループやT字路を形成。これにより BREAK 魔法で壁1枚を消した時のショートカット価値を極大化。
-6. **`SPIRAL_LABYRINTH` (渦巻き要塞型)**:
-   - 外周から中心に向かう最大4層の同心円状・渦巻き回廊。
-   - 各層の出入口は東西南北に分散。壁厚1マスのため、BREAK 魔法での直通掘削が極めて有効。
-7. **`FORTRESS_ARENA` (アリーナ要塞型)**:
-   - 外周壁の中央4箇所に幅3のゲートを持つ大部屋。
-   - 内部に十字型のトーチカ（遮蔽ブロック群）を中央および四隅に計6基配置し、集団戦の防衛拠点として機能。
-8. **`MULTI_SECTOR` (複合セクター型)**:
-   - 7つのセクターにそれぞれ異なるタイポロジーをランダムに割り振り、1つのマップ内で多彩な戦術環境を複合。
+1. **`STANDARD_ROOMS` (標準部屋型)**:
+   - 全50種のブロック群から階層パッキングで全セルを充填する壁共有ブロックモザイク構造。適度な開放度（0.11〜0.19）と迷路度（0.30〜0.39）を持つバランス型。
+2. **`PILLAR_GRID` (ピラー広場型)**:
+   - `TopologyTerrainBuilder.buildPillarGrid` により、保護領域外のベース空間に2マス間隔の孤立1×1ピラー格子を生成（高い孤立ピラー率と迷路度 0.61〜0.64）。
+3. **`NARROW_MAZE` (幅1マス迷路型)**:
+   - `TopologyTerrainBuilder.buildNarrowMaze` により、通路幅1・壁厚1の連続迷路を生成。`weldAndConnectBlocks` で最小限のループ扉（2%）を開通し、BREAK魔法のショートカット価値を極大化（迷路度 0.63〜0.67）。
+4. **`SPIRAL_LABYRINTH` (渦巻き要塞型)**:
+   - `TopologyTerrainBuilder.buildSpiralLabyrinth` により、ドラゴン中心を取り囲む幅2マスの同心回廊と軸別ゲートを連続生成（開放度 0.05〜0.08、壁厚1マスによるBREAK直通掘削が有効）。
+5. **`FORTRESS_ARENA` (アリーナ要塞型)**:
+   - `DRAGON_16x16_GRAND_HALL` を中核とし、`TopologyTerrainBuilder.buildFortressArena` により広大な開放アリーナ空間と遮蔽トーチカ群を生成（開放度 0.34〜0.38）。
+6. **`MULTI_SECTOR` (複合セクター型)**:
+   - `TopologyTerrainBuilder.buildMultiSector` により、64×64空間を異なる地形性質（迷路・ピラー・アリーナ・回廊等）を持つ複数セクターへ連続分割し、高いセクター分断度（0.70〜0.87）と多彩な戦術環境を複合。
 
 ---
 
@@ -440,9 +425,9 @@ flowchart TD
 
 ### 6.4 カタログ生成とプリセット連携 (`harvest-seeds.ts`, `MapPresetManager.ts`)
 - **バッチ収穫スクリプト (`scripts/harvest-seeds.ts`)**:
-  `npm run harvest-seeds --count=30` で複数シードをプロファイリングし、良質シードとボット未踏破チャレンジシードを自動分類して `src/services/SeedCatalogData.json` に出力。
-- **公式プリセット (`CURATED_PRESETS`) への未踏破チャレンジ追加**:
-  - `curated_unbeaten_nightmare`（Seed: 833139、奈落の深層要塞、`UNBEATEN_BY_BOT` / `NIGHTMARE` / `MARATHON`）
+  `npm run harvest-seeds`（デフォルト `--count=12`、任意で `--count=30` 等を指定可能）で複数シードをプロファイリングし、良質シードとボット未踏破チャレンジシードを自動分類して `src/services/SeedCatalogData.json` に出力。
+- **公式プリセット (`CURATED_PRESETS`) の休止と保存シード運用**:
+  - `MapPresetManager.ts` の `CURATED_PRESETS` は現在空配列（休止中）とし、UI上はユーザーがプレイ中に保存・共有コード（`DS1MAP:...`）でインポートしたシードの管理・再挑戦に限定運用しています。
 - **クリア報告と共有コード**:
   - プレイヤーが高難度シードやボット未踏破シードをクリアした際、ステージクリア画面に「🏆 難関シード踏破達成！」の特別バッジと所要ターン数が表示される。
   - 共有コード（`DS1MAP:...`）およびローカル保存プリセットに `playerCleared` / `playerClearTurns` / `botStatus` がシリアライズされ、仲間同士でクリアタイムを競い合える。

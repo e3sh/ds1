@@ -17,9 +17,9 @@
 
 ### 主な特徴
 
-1. **ダンジョンマップのプロシージャル生成（全域9セクター動的配置 × 6種トポロジー）**:
+1. **ダンジョンマップのプロシージャル生成（ハイブリッド階層ブロック × 6種トポロジー）**:
    - 本作は固定のステージマップを持たず、プレイごとに **64×64 トーラス迷宮（上下左右がループする空間）** のマップ構造を自動生成します。
-   - マップを不規則な9セクターに分割し、シードごとに「我が家」と「3首ドラゴン要塞」の配置セクターおよび地形トポロジー（`MULTI_SECTOR`, `STANDARD_ROOMS`, `PILLAR_GRID`, `NARROW_MAZE`, `SPIRAL_LABYRINTH`, `FORTRESS_ARENA`）を構成します。
+   - 16×16マクロセル上の階層テーマブロック配置（全50種）と、トポロジー固有の連続地形生成（`TopologyTerrainBuilder`）を組み合わせ、`STANDARD_ROOMS`（全セルブロック充填）およびハイブリッド5トポロジー（`MULTI_SECTOR`, `PILLAR_GRID`, `NARROW_MAZE`, `SPIRAL_LABYRINTH`, `FORTRESS_ARENA`）を構成します。
    - マップ内部の壁はすべて破壊・移動可能なブロック（`BLOCK`）で構成され、生成直後にクリア可能性診断（初期導線・重複ゼロ・ドラゴン要塞クリアランス・期待到達STR試算）を行うことで詰みマップを防いでいます。
 2. **攻防2軸（3×3マトリクス）の「敵相対タクティカル脅威度マーカー」**:
    - 刻々と変化するプレイヤーの攻撃力（`STR`・剣所持状態）と防御力（`EXP`・残り`HP`）を敵のステータスとリアルタイム比較し、足元に二重リングマーカー（外枠：倒しやすさ5段階 ／ 中心コア：被弾・即死リスク）を表示します。
@@ -64,7 +64,7 @@
 - **言語**: TypeScript 5.5+ (Strict mode, Node.js / Browser ヘッドレス分離設計)
 - **ビルドツール**: Vite 5.4+
 - **描画・音響**: HTML5 2D Canvas + DOM HUD + Web Audio API (PSG矩形波・ノイズ合成)
-- **テスト・検証**: `tsx` による自動テストスイート（全35スイート）＆ ヘッドレス自動プレイシミュレータ
+- **テスト・検証**: `tsx` による自動テストスイート（全38スイート）＆ ヘッドレス自動プレイシミュレータ
 
 ---
 
@@ -103,6 +103,9 @@ npm run simulate -- --runs=20 --turns=3000 --topology=MULTI_SECTOR --difficulty=
 
 # 複数ボット戦略の比較評価スクリプト実行
 npm run evaluate
+
+# シード観測＆カタログデータ生成
+npm run harvest-seeds
 ```
 
 ---
@@ -118,8 +121,8 @@ npm run evaluate
   - `services/` : セーブ管理、ストレージドライバ、マッププリセット＆共有コード管理（`MapPresetManager`）
   - `view/` : Canvasレンダラー、DOM UIマネージャー、インスペクタモーダル、ドット絵描画コード
   - `audio/` : Web Audio API による PSG風シンセサイザー
-- `scripts/` : ヘッドレスシミュレーションCLI（`simulate.ts`）および戦略比較評価スクリプト（`evaluate-params.ts`）
-- `test/` : ゲームロジック・マップ生成・ボット攻略・アーキテクチャ境界の検証用テストスイート（全36スイート）
+- `scripts/` : ヘッドレスシミュレーションCLI（`simulate.ts`）、戦略比較評価（`evaluate-params.ts`）、シード観測（`harvest-seeds.ts`）、生成解析（`analyze-generator.ts`, `measure-baseline.ts`）スクリプト
+- `test/` : ゲームロジック・マップ生成・ボット攻略・アーキテクチャ境界の検証用テストスイート（全38スイート）
 - `docs/` : 仕様書・設計書・ロードマップ等の技術資料（詳細は [docs/README.md](./docs/README.md) を参照）
 
 ---

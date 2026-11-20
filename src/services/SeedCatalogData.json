@@ -1,45 +1,55 @@
 {
-  "harvestedAt": "2026-11-05T07:47:51.347Z",
-  "totalSeeds": 6,
+  "harvestedAt": "2026-11-19T23:55:15.131Z",
+  "totalSeeds": 12,
   "clearedCount": 0,
-  "unbeatenCount": 5,
+  "unbeatenCount": 12,
   "insolvableCount": 0,
   "unbeatenSeeds": [
     {
-      "seed": 833139,
-      "topology": "FORTRESS_ARENA",
+      "seed": 255164,
+      "topology": "MULTI_SECTOR",
       "rating": 88,
       "turns": 1600,
       "finalStr": 480536,
       "tags": [
-        "PEACEFUL_HOME",
-        "OPEN_ARENA",
+        "DIVIDED_SECTOR",
+        "UNBEATEN_BY_BOT",
+        "MARATHON"
+      ]
+    },
+    {
+      "seed": 833139,
+      "topology": "PILLAR_GRID",
+      "rating": 88,
+      "turns": 1600,
+      "finalStr": 480536,
+      "tags": [
+        "DANGEROUS_HOME",
+        "LABYRINTH",
         "UNBEATEN_BY_BOT",
         "MARATHON"
       ]
     },
     {
       "seed": 480996,
-      "topology": "FORTRESS_ARENA",
+      "topology": "NARROW_MAZE",
       "rating": 88,
       "turns": 1600,
-      "finalStr": 462536,
+      "finalStr": 480536,
       "tags": [
-        "PEACEFUL_HOME",
-        "OPEN_ARENA",
+        "EARLY_SWORD",
+        "LABYRINTH",
         "UNBEATEN_BY_BOT",
         "MARATHON"
       ]
     },
     {
       "seed": 989830,
-      "topology": "FORTRESS_ARENA",
+      "topology": "SPIRAL_LABYRINTH",
       "rating": 88,
       "turns": 1600,
-      "finalStr": 98923,
+      "finalStr": 480536,
       "tags": [
-        "PEACEFUL_HOME",
-        "OPEN_ARENA",
         "UNBEATEN_BY_BOT",
         "MARATHON"
       ]
@@ -49,22 +59,105 @@
       "topology": "FORTRESS_ARENA",
       "rating": 88,
       "turns": 1600,
-      "finalStr": 10,
+      "finalStr": 480536,
       "tags": [
+        "DANGEROUS_HOME",
         "OPEN_ARENA",
+        "FORTIFIED_LAIR",
         "UNBEATEN_BY_BOT",
         "MARATHON"
       ]
     },
     {
       "seed": 501478,
+      "topology": "MULTI_SECTOR",
+      "rating": 88,
+      "turns": 1600,
+      "finalStr": 480536,
+      "tags": [
+        "EARLY_SWORD",
+        "OPEN_ARENA",
+        "DIVIDED_SECTOR",
+        "UNBEATEN_BY_BOT",
+        "MARATHON"
+      ]
+    },
+    {
+      "seed": 878304,
+      "topology": "STANDARD_ROOMS",
+      "rating": 88,
+      "turns": 1600,
+      "finalStr": 480536,
+      "tags": [
+        "UNBEATEN_BY_BOT",
+        "MARATHON"
+      ]
+    },
+    {
+      "seed": 475172,
+      "topology": "PILLAR_GRID",
+      "rating": 88,
+      "turns": 1600,
+      "finalStr": 480536,
+      "tags": [
+        "DANGEROUS_HOME",
+        "LABYRINTH",
+        "UNBEATEN_BY_BOT",
+        "MARATHON"
+      ]
+    },
+    {
+      "seed": 911615,
+      "topology": "NARROW_MAZE",
+      "rating": 88,
+      "turns": 1600,
+      "finalStr": 480536,
+      "tags": [
+        "PEACEFUL_HOME",
+        "LABYRINTH",
+        "UNBEATEN_BY_BOT",
+        "MARATHON"
+      ]
+    },
+    {
+      "seed": 765271,
+      "topology": "SPIRAL_LABYRINTH",
+      "rating": 88,
+      "turns": 1600,
+      "finalStr": 98923,
+      "tags": [
+        "DISTANT_SWORD",
+        "PEACEFUL_HOME",
+        "UNBEATEN_BY_BOT",
+        "MARATHON"
+      ]
+    },
+    {
+      "seed": 498695,
       "topology": "FORTRESS_ARENA",
       "rating": 88,
       "turns": 1600,
       "finalStr": 480536,
       "tags": [
-        "DISTANT_SWORD",
+        "EARLY_SWORD",
+        "DANGEROUS_HOME",
         "OPEN_ARENA",
+        "FORTIFIED_LAIR",
+        "UNBEATEN_BY_BOT",
+        "MARATHON"
+      ]
+    },
+    {
+      "seed": 110023,
+      "topology": "MULTI_SECTOR",
+      "rating": 88,
+      "turns": 1600,
+      "finalStr": 480536,
+      "tags": [
+        "DISTANT_SWORD",
+        "PEACEFUL_HOME",
+        "OPEN_ARENA",
+        "DIVIDED_SECTOR",
         "UNBEATEN_BY_BOT",
         "MARATHON"
       ]
@@ -72,28 +165,56 @@
   ],
   "curatedPresets": [
     {
-      "id": "curated_unbeaten_833139",
-      "name": "🤖 ボット未踏破: 超迷宮の試練 (Seed: 833139)",
+      "id": "curated_unbeaten_255164",
+      "name": "🤖 ボット未踏破: 超迷宮の試練 (Seed: 255164)",
       "description": "解法性は100%保証されているが、標準AutoPlayBotが1600ターン以内に踏破できなかった超高難度・長時間耐久シード。勇者の手で完全攻略せよ！",
       "createdAt": 1730000010000,
       "isCurated": true,
-      "seed": 833139,
+      "seed": 255164,
       "options": {
         "difficulty": "HARD",
         "pacing": "MARATHON",
-        "topology": "FORTRESS_ARENA",
+        "topology": "MULTI_SECTOR",
         "archetype": "BALANCED"
       },
       "metrics": {
-        "estimatedTopology": "FORTRESS_ARENA",
+        "estimatedTopology": "MULTI_SECTOR",
         "estimatedDifficulty": "NIGHTMARE",
         "estimatedPacing": "MARATHON",
         "botStatus": "UNBEATEN_BY_BOT",
         "botTurns": 1600,
         "challengeRating": 88,
         "tags": [
-          "PEACEFUL_HOME",
-          "OPEN_ARENA",
+          "DIVIDED_SECTOR",
+          "UNBEATEN_BY_BOT",
+          "MARATHON"
+        ],
+        "isUnbeatenChallenge": true
+      }
+    },
+    {
+      "id": "curated_unbeaten_833139",
+      "name": "🤖 ボット未踏破: 超迷宮の試練 (Seed: 833139)",
+      "description": "解法性は100%保証されているが、標準AutoPlayBotが1600ターン以内に踏破できなかった超高難度・長時間耐久シード。勇者の手で完全攻略せよ！",
+      "createdAt": 1730000011000,
+      "isCurated": true,
+      "seed": 833139,
+      "options": {
+        "difficulty": "HARD",
+        "pacing": "MARATHON",
+        "topology": "PILLAR_GRID",
+        "archetype": "BALANCED"
+      },
+      "metrics": {
+        "estimatedTopology": "PILLAR_GRID",
+        "estimatedDifficulty": "NIGHTMARE",
+        "estimatedPacing": "MARATHON",
+        "botStatus": "UNBEATEN_BY_BOT",
+        "botTurns": 1600,
+        "challengeRating": 88,
+        "tags": [
+          "DANGEROUS_HOME",
+          "LABYRINTH",
           "UNBEATEN_BY_BOT",
           "MARATHON"
         ],
@@ -104,54 +225,25 @@
       "id": "curated_unbeaten_480996",
       "name": "🤖 ボット未踏破: 超迷宮の試練 (Seed: 480996)",
       "description": "解法性は100%保証されているが、標準AutoPlayBotが1600ターン以内に踏破できなかった超高難度・長時間耐久シード。勇者の手で完全攻略せよ！",
-      "createdAt": 1730000011000,
+      "createdAt": 1730000012000,
       "isCurated": true,
       "seed": 480996,
       "options": {
         "difficulty": "HARD",
         "pacing": "MARATHON",
-        "topology": "FORTRESS_ARENA",
+        "topology": "NARROW_MAZE",
         "archetype": "BALANCED"
       },
       "metrics": {
-        "estimatedTopology": "FORTRESS_ARENA",
+        "estimatedTopology": "NARROW_MAZE",
         "estimatedDifficulty": "NIGHTMARE",
         "estimatedPacing": "MARATHON",
         "botStatus": "UNBEATEN_BY_BOT",
         "botTurns": 1600,
         "challengeRating": 88,
         "tags": [
-          "PEACEFUL_HOME",
-          "OPEN_ARENA",
-          "UNBEATEN_BY_BOT",
-          "MARATHON"
-        ],
-        "isUnbeatenChallenge": true
-      }
-    },
-    {
-      "id": "curated_unbeaten_989830",
-      "name": "🤖 ボット未踏破: 超迷宮の試練 (Seed: 989830)",
-      "description": "解法性は100%保証されているが、標準AutoPlayBotが1600ターン以内に踏破できなかった超高難度・長時間耐久シード。勇者の手で完全攻略せよ！",
-      "createdAt": 1730000012000,
-      "isCurated": true,
-      "seed": 989830,
-      "options": {
-        "difficulty": "HARD",
-        "pacing": "MARATHON",
-        "topology": "FORTRESS_ARENA",
-        "archetype": "BALANCED"
-      },
-      "metrics": {
-        "estimatedTopology": "FORTRESS_ARENA",
-        "estimatedDifficulty": "NIGHTMARE",
-        "estimatedPacing": "MARATHON",
-        "botStatus": "UNBEATEN_BY_BOT",
-        "botTurns": 1600,
-        "challengeRating": 88,
-        "tags": [
-          "PEACEFUL_HOME",
-          "OPEN_ARENA",
+          "EARLY_SWORD",
+          "LABYRINTH",
           "UNBEATEN_BY_BOT",
           "MARATHON"
         ],

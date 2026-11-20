@@ -1,11 +1,13 @@
 import { WorldMap } from '../src/models/WorldMap.js';
 import { SeedRandom } from '../src/core/SeedRandom.js';
+import { DungeonTopology } from '../src/models/Types.js';
 import { TuningPresetResolver } from '../src/config/TuningPresetResolver.js';
 import { ProceduralMapGenerator } from '../src/systems/ProceduralMapGenerator.js';
 import {
   HierarchicalThemeBlockGenerator,
 } from '../src/systems/generator/HierarchicalThemeBlockGenerator.js';
 import { ThemeBlockAllocator } from '../src/systems/generator/ThemeBlockAllocator.js';
+import { TopologyTerrainBuilder } from '../src/systems/generator/TopologyTerrainBuilder.js';
 import {
   ALL_THEME_BLOCKS,
   DRAGON_8x8_MAZE_LAIR,
@@ -121,7 +123,16 @@ function runStepByStep(seed: number, topology: string = 'STANDARD_ROOMS') {
   // 2. テンプレート選定
   // HierarchicalThemeBlockGenerator の private selectTemplatesForConfiguration を模擬
   const anyGen = HierarchicalThemeBlockGenerator as any;
-  const config = anyGen.selectTemplatesForConfiguration(topology, undefined, rng);
+  const tuningParams = TuningPresetResolver.resolve(
+    topology as DungeonTopology,
+    'NORMAL',
+    'STANDARD',
+    undefined,
+    'BALANCED'
+  );
+  const isClassic = tuningParams.progressionConfig.ruleMode === 'CLASSIC';
+  const isHybridTopology = topology !== 'STANDARD_ROOMS' && topology !== 'CLASSIC_FIXED';
+  const config = anyGen.selectTemplatesForConfiguration(topology, undefined, rng, isClassic);
 
   // 3. アロケーション
   const allocator = new ThemeBlockAllocator(seed);
@@ -131,11 +142,14 @@ function runStepByStep(seed: number, topology: string = 'STANDARD_ROOMS') {
     homeTemplate: config.homeTemplate,
     landmarkMinDistanceTiles: 20,
     largeTemplates: config.largeTemplates,
+    largeMaxCount: config.largeMaxCount,
     mediumTemplates: config.mediumTemplates,
+    mediumMaxCount: isHybridTopology ? 0 : undefined,
     smallTemplates: config.smallTemplates,
     subSlotSmallTemplates: config.subSlotSmallTemplates,
     subSlotMediumTemplates: config.subSlotMediumTemplates,
     maxInstancesPerBlock: config.maxInstancesPerBlock,
+    fillRemaining: !isHybridTopology,
   });
 
   // ブロック統計
@@ -162,8 +176,20 @@ function runStepByStep(seed: number, topology: string = 'STANDARD_ROOMS') {
   anyGen.syncDragonAndHomePositions(map, placedBlocks, undefined, rng);
   const statsAfterStep5 = countStats(map);
 
-  // Step 6: connectEdgePorts
+  // Step 5.5: ハイブリッド生成（未占有ベース空間へのトポロジー固有連続地形生成）
+  if (isHybridTopology) {
+    TopologyTerrainBuilder.build(map, {
+      topology: topology as DungeonTopology,
+      placedBlocks,
+      dragonCenter: map.dragonCenter,
+      homePos: map.homePos,
+      rng,
+    });
+  }
+
+  // Step 6: connectEdgePorts & weldAndConnectBlocks
   anyGen.connectEdgePorts(map, placedBlocks, rng);
+  anyGen.weldAndConnectBlocks(map, placedBlocks, topology, rng);
   const statsAfterStep6 = countStats(map);
 
   // Step 7: activateBudgets
@@ -171,8 +197,11 @@ function runStepByStep(seed: number, topology: string = 'STANDARD_ROOMS') {
   const statsAfterStep7 = countStats(map);
 
   // Step 8: ensureBootstrapRequirements
-  anyGen.ensureBootstrapRequirements(map, 'NORMAL', 'STANDARD', 'BALANCED', rng);
+  anyGen.ensureBootstrapRequirements(map, 'NORMAL', 'STANDARD', 'BALANCED', tuningParams, rng);
   const statsAfterStep8 = countStats(map);
+
+  // Step 8.5: placeAdditionalHomes
+  anyGen.placeAdditionalHomes(map, undefined, isClassic, rng);
 
   // Step 9: setupWarpNetwork
   anyGen.setupWarpNetwork(map, 'BALANCED', rng);
